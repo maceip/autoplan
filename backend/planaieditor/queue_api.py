@@ -60,6 +60,24 @@ def setup_queue(
     app.config["QUEUE_STORE"] = store
     app.config["CHIEF"] = chief
 
+    @app.route("/queue", methods=["GET"])
+    def queue_page():
+        # Flask's built-in static route (static_url_path="/") 404s unknown
+        # paths before the editor's SPA catch-all runs, so the queue page
+        # needs an explicit route in production mode. In development the
+        # Vite dev server serves /queue directly.
+        if app.static_folder and (Path(app.static_folder) / "index.html").is_file():
+            return send_from_directory(app.static_folder, "index.html")
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "Queue UI is served by the frontend dev server in development mode.",
+                }
+            ),
+            404,
+        )
+
     @app.route("/api/queue/items", methods=["POST"])
     def queue_create_item():
         data = request.get_json(silent=True) or {}

@@ -161,6 +161,18 @@ def test_landing_refuses_repo_outside_root(tmp_path):
     assert store.get_item(item_id)["status"] == "failed"
 
 
+def test_chief_recovers_interrupted_items(tmp_path):
+    client, store, _chief = make_client(tmp_path)
+    resp = client.post(
+        "/api/queue/items",
+        json={"source_agent": "a", "kind": "task", "title": "Interrupted"},
+    )
+    item_id = resp.get_json()["item"]["id"]
+    store.update_item(item_id, status="in_progress")
+    make_client(tmp_path)  # constructing a new chief runs recovery
+    assert store.get_item(item_id)["status"] == "queued"
+
+
 @pytest.mark.parametrize("payload", [{}, {"kind": "bogus", "title": "x"}])
 def test_api_rejects_invalid_submissions(tmp_path, payload):
     client, _, _ = make_client(tmp_path)

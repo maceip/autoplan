@@ -14,9 +14,11 @@ Provider credentials come from the provider's usual environment
 variables (e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY) or a local Ollama.
 """
 
+import json
 import os
 import shlex
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -53,6 +55,18 @@ class ChiefOfStaff:
         self.llm_status = "not configured (set CHIEF_LLM_PROVIDER and CHIEF_LLM_MODEL)"
         self._init_llm()
         self.last_tick_at: float = 0.0
+        self._recover_interrupted()
+
+    def _recover_interrupted(self) -> None:
+        """Requeue work interrupted by a previous chief process exit."""
+        for item in self.store.list_items(status="in_progress"):
+            self.store.add_event(item["id"], "recovered", "Re-queued after chief restart.")
+            self.store.update_item(item["id"], status="queued")
+        for item in self.store.list_items(status="landing"):
+            self.store.add_event(
+                item["id"], "recovered", "Landing interrupted by chief restart; returned to review."
+            )
+            self.store.update_item(item["id"], status="needs_review")
 
     # ---- LLM triage graph (PlanAI) -------------------------------------
 
@@ -180,31 +194,30 @@ class ChiefOfStaff:
             }
 
     def _capture_evidence(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        """Real Playwright capture: screenshot + video of the demo URL."""
-        evidence: Dict[str, Any] = {}
+        """Real Playwright capture in a subprocess (eventlet-safe)."""
         if not item.get("demo_url"):
-            return evidence
+            return {}
         out_dir = self.evidence_root / item["id"]
         out_dir.mkdir(parents=True, exist_ok=True)
         try:
-            from playwright.sync_api import sync_playwright
-
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch()
-                context = browser.new_context(record_video_dir=str(out_dir))
-                page = context.new_page()
-                page.goto(item["demo_url"], wait_until="networkidle", timeout=30000)
-                page.screenshot(path=str(out_dir / "demo.png"), full_page=True)
-                video = page.video
-                context.close()
-                browser.close()
-                evidence["screenshot"] = "demo.png"
-                if video is not None:
-                    evidence["video"] = Path(video.path()).name
-                evidence["demo_url"] = item["demo_url"]
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "planaieditor.evidence_capture",
+                    item["demo_url"],
+                    str(out_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(_tail(proc.stderr) or f"exit {proc.returncode}")
+            return json.loads(proc.stdout.strip().splitlines()[-1])
         except Exception as exc:
             self.store.add_event(item["id"], "evidence_failed", f"Playwright capture failed: {exc}")
-        return evidence
+            return {}
 
     # ---- landing ---------------------------------------------------------
 

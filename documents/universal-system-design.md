@@ -1,8 +1,7 @@
 # Design: Universal Lead-Agent System on PlanAI + PlanAI Editor
 
-Status: design only (no implementation in this pass)
+Status: SUPERSEDED as a plan of record — the operator redirected scope from design-only/new-repo to a running system built inside this repo. Implemented on branch `chief-queue`: persistent queue (`backend/planaieditor/queue_store.py`, `queue_api.py`), chief-of-staff agent (`chief.py`, PlanAI triage graph + deterministic labeled fallback, real test runs, subprocess Playwright evidence via `evidence_capture.py`, git-merge landing), queue web UI (`frontend/src/routes/queue/+page.svelte`). Sections 2–4 remain accurate as a review of PlanAI Editor and PlanAI; one correction: `WorkspaceLLMTaskWorker`/`WorkspaceTask` exist on upstream `planai` main but not in the pinned PyPI `planai 0.6.1` used by this repo.
 Basis: `provos/planaieditor` (this repo, fork `maceip/autoplan`) and its dependency `provos/planai`
-Decisions recorded: design-document-only deliverable; universal system lives in a new repo with a forked `planai` as an editable dependency; first template is a universal code template (Chief + Code lead + Review lead + Comms lead, domain-configurable, provider selected through existing LLM config, no hard-coded vendor).
 
 ## 1. Goal system (from the quoted description)
 
