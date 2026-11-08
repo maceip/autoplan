@@ -36,6 +36,7 @@ from planaieditor.python import (
     format_python_code,
     generate_python_module,
 )
+from planaieditor.queue_api import setup_queue
 from planaieditor.socket_server import SocketServer
 from planaieditor.utils import parse_traceback
 from planaieditor.venv import discover_python_environments
@@ -1384,10 +1385,9 @@ def main():
         help="Additional arguments to pass to the jedi-language-server.",
     )
     args = parser.parse_args()
-    if args.root_path:
-        setup_filesystem(app, args.root_path)
-    else:
-        setup_filesystem(app, Path.cwd())
+    queue_root = args.root_path if args.root_path else Path.cwd()
+    setup_filesystem(app, queue_root)
+    setup_queue(app, socketio, queue_root)
 
     # Store LSP arguments in app.config
     app.config["LSP_ARGS"] = [
