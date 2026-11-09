@@ -1,7 +1,19 @@
 # Design: Universal Lead-Agent System on PlanAI + PlanAI Editor
 
-Status: SUPERSEDED as a plan of record — the operator redirected scope from design-only/new-repo to a running system built inside this repo. Implemented on branch `chief-queue`: persistent queue (`backend/planaieditor/queue_store.py`, `queue_api.py`), chief-of-staff agent (`chief.py`, PlanAI triage graph + deterministic labeled fallback, real test runs, subprocess Playwright evidence via `evidence_capture.py`, git-merge landing), queue web UI (`frontend/src/routes/queue/+page.svelte`). Sections 2–4 remain accurate as a review of PlanAI Editor and PlanAI; one correction: `WorkspaceLLMTaskWorker`/`WorkspaceTask` exist on upstream `planai` main but not in the pinned PyPI `planai 0.6.1` used by this repo.
+> **How to read this revision (Rev 2, 2026-11-08).** Every line of the original (Rev 1, commits `3d0ee11` / `a5ae3e4`) is still here.
+> ~~Struck text~~ is original content we changed our minds on. Each strike is followed by a **Rev 2** note saying what replaced it and why.
+> Unstruck original text still stands. Blocks marked **Rev 2** are additions at the place they apply.
+> §8 and §9 were referenced by the original but never written; Rev 2 writes them. §10–13 are new.
+> Most Rev 2 changes are driven by an analysis of the first user's real agent transcripts: `documents/operator-transcript-analysis.md` (19,150 operator prompts, 958 sessions, 246 repos, 8 agent services, May–Nov 2026).
+
+Status: ~~SUPERSEDED as a plan of record~~ — the operator redirected scope from design-only/new-repo to a running system built inside this repo. Implemented on branch `chief-queue`: persistent queue (`backend/planaieditor/queue_store.py`, `queue_api.py`), chief-of-staff agent (`chief.py`, PlanAI triage graph + deterministic labeled fallback, real test runs, subprocess Playwright evidence via `evidence_capture.py`, git-merge landing), queue web UI (`frontend/src/routes/queue/+page.svelte`). Sections 2–4 remain accurate as a review of PlanAI Editor and PlanAI; one correction: `WorkspaceLLMTaskWorker`/`WorkspaceTask` exist on upstream `planai` main but not in the pinned PyPI `planai 0.6.1` used by this repo.
+
+> **Rev 2:** This document is the **plan of record** again. It describes both what exists on `chief-queue` and what remains to be built, and each section marks which is which.
+> The "deterministic labeled fallback" listed above conflicts with CLAUDE.md Law 2 (no fallback substitution without a verbatim authorization from the operator). It stays open as decision D1 (§13).
+
 Basis: `provos/planaieditor` (this repo, fork `maceip/autoplan`) and its dependency `provos/planai`
+
+> **Rev 2 basis added:** the first user's transcripts across Codex, Cursor, Antigravity (IDE + CLI), Muse, MiMo, Claude Code and MiniMax. Extraction tooling: `tools/operator-brain/`.
 
 ## 1. Goal system (from the quoted description)
 
@@ -12,15 +24,34 @@ Basis: `provos/planaieditor` (this repo, fork `maceip/autoplan`) and its depende
 - System distills operator judgment into a preference store ("operator brain") so first drafts need fewer corrections over time.
 - Every change still passes the same human review and security checks. Automation removes tasks, not judgment.
 
+> **Rev 2: the goals stay as written. Added an observable acceptance test for each one**, because Rev 1 had no definition of "done":
+>
+> | Goal | Acceptance test |
+> |---|---|
+> | Always-running leads + chief | `GET /api/leads` lists each lead with heartbeat < 60 s; a killed lead is restarted by the chief and logged `lead_restarted` |
+> | Leads manage sub-agents | Every review item links ≥ 1 sub-agent run (service, session id, branch) |
+> | One prioritized queue | Leads ask the operator nothing outside the queue; adapters flag direct asks as `bypass` |
+> | Screenshots + video | An item cannot reach `needs_review` without ≥ 1 screenshot and ≥ 1 video captured on its declared target |
+> | Batch, voice, keyboard | One command approves/rejects N marked items; each writes a `decisions` row |
+> | Ideas | `kind=idea` items exist and score below directed work |
+> | Brain / fewer corrections | Rules are versioned in git; corrections per landed change are tracked weekly (§11) |
+> | Same review + security | Merge only with green chief-run tests + clean scans + approval on the current diff hash |
+>
+> **Rev 2: the transcripts also show load the goal list doesn't name.** The operator's biggest costs are policing reality (9.3% of prompts ask for verification, 2.1% ask whether something is fake) and acting as the message bus between agents (395 relay or paste prompts). §4, §6 and §7 add mechanisms for both.
+
 ## 2. Review findings: PlanAI Editor (this repo)
 
 Verified from source (`README.md`, `backend/pyproject.toml`, `backend/planaieditor/`, `frontend/src/`):
 
-- Frontend: Svelte 5 + SvelteKit + svelte-flow node editor, Monaco, single route `frontend/src/routes/+page.svelte`. Node components exist for every PlanAI construct needed here, including `SubGraphWorkerNode.svelte`, `LLMTaskWorkerNode.svelte`, `JoinedTaskWorkerNode.svelte`, `ChatTaskWorkerNode.svelte`, `DataInputNode`/`DataOutputNode`.
+- Frontend: Svelte 5 + SvelteKit + svelte-flow node editor, Monaco, ~~single route `frontend/src/routes/+page.svelte`~~. Node components exist for every PlanAI construct needed here, including `SubGraphWorkerNode.svelte`, `LLMTaskWorkerNode.svelte`, `JoinedTaskWorkerNode.svelte`, `ChatTaskWorkerNode.svelte`, `DataInputNode`/`DataOutputNode`.
+  > **Rev 2:** there are now two routes, the editor at `frontend/src/routes/+page.svelte` and the queue at `frontend/src/routes/queue/+page.svelte`.
 - Backend: Flask + Flask-SocketIO (`backend/planaieditor/app.py`, `socket_server.py`), serves the built frontend at `http://localhost:5001`, executes exported graphs and streams debug/execution events over SocketIO (`register_for_debug_events`, `export_graph`), imports PlanAI Python via AST (`/api/import-python`, `patch.py`), validates Pydantic data and tools, lists LLM models via `llm-interface` (`/api/llm/list-models`), exposes a local filesystem API (`backend/planaieditor/filesystem.py`).
+  > **Rev 2:** the backend also contains `queue_store.py`, `queue_api.py`, `chief.py` and `evidence_capture.py`.
 - Dependency: `planai[all] >= 0.6.0` from PyPI (`backend/pyproject.toml:14`); graphs are authored visually, exported to runnable PlanAI Python (`backend/planaieditor/codesnippets/export_execute.py`), and examples ship as graph JSON (`frontend/src/lib/examples/*.json`).
 - Tests: backend unit tests plus Playwright e2e (`backend/tests/`, `pytest-playwright` in dev deps).
+  > **Rev 2:** queue coverage lives in `backend/tests/test_queue.py` plus the queue UI Playwright e2e.
 - Security posture (per `README.md`): backend executes Python from graphs and exposes unauthenticated localhost REST/WebSocket APIs. Acceptable for a single-operator local tool; must stay localhost-bound in the universal system.
+  > **Rev 2: unchanged, with one addition.** The transcripts contain credentials pasted into agent chats, so intake text and diffs must be secret-scanned (§6 `ReviewItem`, §7.5).
 
 ## 3. Review findings: PlanAI (`provos/planai`)
 
@@ -28,30 +59,42 @@ Verified from the upstream README and `src/planai/__init__.py`:
 
 - Core model: `Graph` routes Pydantic-typed `Task` objects between `TaskWorker` nodes by type; `LLMTaskWorker` adds prompt-driven LLM steps; `CachedTaskWorker`/`CachedLLMTaskWorker` cache results; `JoinedTaskWorker` fans in multiple upstream results; `SubGraphWorker` runs a nested graph as one node.
 - Code-writing primitives already exist: `WorkspaceTask`, `WorkspaceLLMTaskWorker`, `Workspace`, `make_file_tools`, `hash_files` (LLM edits files inside a workspace directory with file tools). `ChatTaskWorker`/`ChatTask` support conversational tasks.
+  > **Rev 2:** these exist upstream but not in pinned `0.6.1` (see Status). They are also no longer the primary code-writer (§4 row "Sub-agents write code").
 - Human-in-the-loop primitive already exists: `UserInputRequest` (a worker can request operator input mid-graph).
 - Audit primitive already exists: `ProvenanceChain` tracks lineage of every task through the graph; the built-in monitoring dashboard (`graph.run(..., run_dashboard=True)`, SSE, `http://localhost:5000`) shows Queued/Active/Completed tasks with provenance. The dashboard blocks the main thread and is positioned by upstream as a development/debugging tool.
 - Execution model: `graph.run(initial_tasks=[(worker, task), ...])` runs one graph invocation to completion. PlanAI has no built-in always-on scheduler, queue persistence, or multi-run supervision; long-running operation is the host application's job.
+  > **Rev 2:** the host is now `ChiefOfStaff.run_forever()`, with `_recover_interrupted()` for restart recovery, in `chief.py`.
 - Providers: LLM access goes through `llm-interface` (`llm_from_config`, `LLMInterface`, `tool`/`Tool` function calling); multiple vendors including local Ollama are supported by configuration, matching the "no hard-coded vendor" decision.
 
 ## 4. Mapping: goal system → existing primitives → gaps
 
+> **Rev 2: biggest change of mind.** Rev 1 assumed leads would write code through PlanAI workers. The transcripts show the operator already runs a shifting mix of external agents: Codex 42% of prompts, Cursor 31%, then Antigravity, Muse, MiMo, Claude Code and MiniMax. Cursor faded after September while Muse and MiMo rose. So **leads become supervisors that dispatch to and observe those services through adapters.** PlanAI remains the chief's triage graph and one possible adapter. In the table, original cells stay; a struck cell is followed by its Rev 2 replacement. ✅ = built on `chief-queue`.
+
 | Goal element | Existing primitive | Gap to build |
 |---|---|---|
-| Chief of staff agent | Top-level `Graph` + one `LLMTaskWorker` (triage/router) | Chief prompt + routing task types (new code, no fork change) |
-| Lead agent per area | `SubGraphWorker` per lead (visualized by `SubGraphWorkerNode`) | Lead subgraph definitions (Code, Review, Comms) |
-| Sub-agents write code | `WorkspaceLLMTaskWorker` + `make_file_tools` | Worktree-per-change convention + repo allowlist config |
-| Sub-agents test code | Plain `TaskWorker` running the target repo test command | Test-command config per repo; structured `TestReport` task |
+| Chief of staff agent | Top-level `Graph` + one `LLMTaskWorker` (triage/router) | Chief prompt + routing task types (new code, no fork change). **Rev 2:** ✅ triage, tests, evidence, landing in `chief.py`. Still needed: adapter intake, ownership registry, stall watch, digest, inter-lead message bus |
+| Lead agent per area | ~~`SubGraphWorker` per lead (visualized by `SubGraphWorkerNode`)~~ **Rev 2:** long-running lead process over service adapters; `SubGraphWorker` only for in-process PlanAI leads | ~~Lead subgraph definitions (Code, Review, Comms)~~ **Rev 2:** leads are *areas of focus* (as the goal says), proposed from repo frequency (§10). Code / Review / Comms become sub-agent *roles* inside each lead |
+| Sub-agents write code | ~~`WorkspaceLLMTaskWorker` + `make_file_tools`~~ **Rev 2:** adapters to Codex, Cursor, Antigravity, Muse, MiMo, Claude Code, MiniMax; `WorkspaceLLMTaskWorker` is one adapter (needs a `planai` upgrade, §9) | Worktree-per-change convention + repo allowlist config. **Rev 2:** plus a per-service adapter contract (§7.3) and a `runs` table |
+| Sub-agents test code | Plain `TaskWorker` running the target repo test command | Test-command config per repo; structured `TestReport` task. **Rev 2:** ✅ the chief runs the command itself; lead-reported results are not trusted |
 | Sub-agents chase reviews / coordinate | `TaskWorker` + `tool` function calling (GitHub/messaging APIs) | Connector workers; credentials handling |
-| Always running | None (one-shot `graph.run`) | Supervisor loop: durable intake queue → dispatch graph runs → sleep/poll |
-| One prioritized decision queue (local web app) | `UserInputRequest` (in-graph ask); dashboard task lists (read-only) | Persistent review-queue store + queue web UI with approve/edit/reject resume semantics |
-| Screenshots + video demo per review | Editor dev deps already include Playwright (`pytest-playwright`) | Evidence-capture worker (Playwright screenshots + video) attached to review items |
-| Voice + keyboard batch triage | None | Keyboard-first queue UI; voice = speech-to-text → same command parser as keyboard |
-| "Operator brain" preference learning | None (prompt optimization exists upstream for single workers) | Decision log → distilled preference profile injected into lead/chief system prompts |
-| Unsolicited ideas from leads | Any worker can publish a task | `IdeaProposal` task type routed to the queue at low priority |
-| Human review + security checks before merge | `UserInputRequest` gate; provenance for audit | Policy gate worker: tests green + security scan + human approval required before merge task exists |
-| Visual authoring of the whole system | PlanAI Editor (this repo) end to end | Ship the universal template as editor example JSON + exported Python |
+| Always running | None (one-shot `graph.run`) | Supervisor loop: durable intake queue → dispatch graph runs → sleep/poll. **Rev 2:** ✅ chief loop. Still needed: lead heartbeats and restart |
+| One prioritized decision queue (local web app) | `UserInputRequest` (in-graph ask); dashboard task lists (read-only) | Persistent review-queue store + queue web UI with approve/edit/reject resume semantics. **Rev 2:** ✅ `queue_store.py`, `queue_api.py`, `/queue` |
+| Screenshots + video demo per review | Editor dev deps already include Playwright (`pytest-playwright`) | Evidence-capture worker (Playwright screenshots + video) attached to review items. **Rev 2:** ✅ web capture. Add Android device/emulator and iOS simulator capture (331 prompts concern real-device testing) |
+| Voice + keyboard batch triage | None | Keyboard-first queue UI; voice = speech-to-text → same command parser as keyboard. **Rev 2:** ✅ single-item actions. Still needed: batch mark/approve (§7.4) |
+| "Operator brain" preference learning | None (prompt optimization exists upstream for single workers) | Decision log → distilled preference profile injected into lead/chief system prompts. **Rev 2:** §8, pre-seeded from 394 standing-rule prompts |
+| Unsolicited ideas from leads | Any worker can publish a task | `IdeaProposal` task type routed to the queue at low priority. **Rev 2:** ✅ `kind=idea` |
+| Human review + security checks before merge | `UserInputRequest` gate; provenance for audit | Policy gate worker: tests green + security scan + human approval required before merge task exists. **Rev 2:** partly built. ✅ landing re-runs tests, refuses a dirty tree, aborts a failed merge. ❌ no security scan, no diff-hash binding, no push |
+| Visual authoring of the whole system | PlanAI Editor (this repo) end to end | ~~Ship the universal template as editor example JSON + exported Python~~ **Rev 2: deferred.** No transcript evidence that the operator authors agent graphs visually; revisit after phase 3 (§12) |
+| **Rev 2 new:** agents coordinate without the operator relaying | None | Chief as message bus: inter-lead messages pass through the chief and are logged as events (removes ~14/week relay prompts) |
+| **Rev 2 new:** one owner per workspace | None | Ownership registry (repo, worktree, branch → lead/run); refuse conflicting dispatch (collisions, wrong-clone and history-rewrite incidents in transcripts) |
+| **Rev 2 new:** stalls caught without the operator | None | Heartbeat + progress watch per run; stalled run → re-dispatch or a `stall` queue item (replaces ~66/week "keep going / STILL" prompts) |
+| **Rev 2 new:** proof of reality | None | Reality scan: diff markers for mock/fake/stub/placeholder/fallback, which must cite an operator authorization quote (CLAUDE.md Law 2) |
 
-## 5. Target repository layout (new repo)
+## 5. Target repository layout ~~(new repo)~~
+
+> **Rev 2: we changed our minds on a new repo.** As the Status line says, the system is being built inside this repo. The original layout is kept verbatim below for provenance and is **superseded**. After it comes a mapping of each original path to where it lives now or will live.
+
+**Original Rev 1 layout (superseded, kept verbatim):**
 
 ```
 universal-system/                  # new repo (name placeholder)
@@ -75,205 +118,121 @@ universal-system/                  # new repo (name placeholder)
   examples/universal-template.json # PlanAI Editor graph JSON for the whole system
 ```
 
+> **Rev 2 mapping (in this repo):**
+>
+> | Rev 1 path | Rev 2 location | State |
+> |---|---|---|
+> | `planai/` fork submodule | PyPI pin in `backend/pyproject.toml`; fork only per §9 | unchanged policy |
+> | `planaieditor/` submodule | this repo | n/a |
+> | `universal/tasks.py` | `queue_store.py` tables (`items`, `decisions`, `events`); add `runs`, `ownership` | ✅ partial |
+> | `universal/chief.py` | `backend/planaieditor/chief.py` | ✅ |
+> | `leads/code_lead.py`, `review_lead.py`, `comms_lead.py` | `backend/planaieditor/leads/<area>.py` + `backend/planaieditor/adapters/<service>.py` | ❌ |
+> | `workers/evidence.py` | `backend/planaieditor/evidence_capture.py` (web); add device capture | ✅ web |
+> | `workers/policy_gate.py` | `chief.py::_land` → extract to `policy_gate.py` with hash + scans | ❌ partial |
+> | `queue/store.py`, `queue/server.py`, `queue/web/` | `queue_store.py`, `queue_api.py`, `frontend/src/routes/queue/` | ✅ |
+> | `brain/profile.md`, `brain/distill.py` | `brain/profile.md`, `backend/planaieditor/brain.py`; corpus tools in `tools/operator-brain/` | tools ✅, rest ❌ |
+> | `supervisor.py` | `ChiefOfStaff.run_forever` | ✅ |
+> | `config.py` | `backend/planaieditor/system_config.py` (repo allowlist, test commands, lead areas, adapter capabilities) | ❌ |
+> | `examples/universal-template.json` | deferred (§4 last original row) | deferred |
+
 Fork policy (minimal-edit rule): the `planai` fork starts pinned and unmodified. Everything in sections 6–8 is expressible with upstream public API (`Graph`, workers, `UserInputRequest`, `ProvenanceChain`). The fork earns its first patch only when a concrete need appears (candidate list in section 9); each patch must carry an upstream-style test so rebasing stays cheap.
+
+> **Rev 2:** the fork policy stands. §9 now exists.
 
 ## 6. Data model (PlanAI `Task` subclasses)
 
+> **Rev 2:** the implementation stores these as rows (`items.kind` / `status`, `decisions`, `events`) rather than as separate `Task` classes. The concepts below remain the contract. Changes are noted per item.
+
 - `IntakeItem` — raw incoming work (operator request, GitHub event, schedule tick, lead-generated idea).
+  > **Rev 2:** add the source "adapter scan", meaning runs and asks discovered in the service session stores.
 - `WorkOrder` — chief-approved unit of work: area, goal, repo, priority, acceptance criteria, provenance link to `IntakeItem`.
+  > **Rev 2:** add the owning lead and the claimed workspace from the ownership registry.
 - `LeadPlan` — lead decomposition of a `WorkOrder` into sub-agent steps.
-- `CodeChange` — branch/worktree reference, diff summary, files touched (produced via `WorkspaceTask` flow).
+- `CodeChange` — branch/worktree reference, diff summary, files touched ~~(produced via `WorkspaceTask` flow)~~.
+  > **Rev 2:** produced by any adapter run. The **chief** computes the diff hash and records the pushed SHA.
 - `TestReport` — command, exit status, failing test names, log excerpt (real output only, never summarized into existence).
 - `EvidenceBundle` — screenshot paths, video path, capture script reference, target URL/build identifier.
+  > **Rev 2:** add `target_kind` (web, android-device, android-emulator, ios-simulator, desktop) and the device serial or build id.
 - `ReviewItem` — the queue unit: kind (code review, decision, comms draft, idea), priority score + rationale, links to `CodeChange`/`TestReport`/`EvidenceBundle`, chief recommendation, allowed actions (approve, request changes, reject, snooze, reassign).
+  > **Rev 2:** add the kinds `stall`, `digest` and `brain_rule`. Add required fields: reality-scan result, secret/security-scan result, Brain rules applied, sub-agent run links. **The chief sends an incomplete bundle back to the lead and never puts it in the queue.**
 - `Decision` — operator action on a `ReviewItem`, plus free-text/voice-transcript rationale. Append-only; `Decision` rows are the training signal for section 8.
+  > **Rev 2:** add `diff_hash` at decision time, plus `grant`, a scoped and expiring standing authority (e.g. "approve all green in devices for 24 h"). The transcripts show broad grants like "approve all --continue" being given implicitly.
 - `MergeAuthorization` — emitted only by the policy gate after green tests + security scan + a recorded approving `Decision`. No other path may create a merge task.
+  > **Rev 2:** also requires a clean (or authorized) reality scan and a clean secret scan. **Not yet implemented.**
+- **Rev 2 new:** `Run` — `{lead, service, session_id, cwd, branch, started_at, last_output_at, state}`.
+- **Rev 2 new:** `Ownership` — `{repo, worktree, branch, lead, run_id, claimed_at}`.
 
 Priority scoring lives in the chief graph as a deterministic `TaskWorker` (deadline, blocking-others, risk class, age) with an `LLMTaskWorker` rationale field. The queue sorts by score; the operator can pin/snooze, and pin/snooze events are `Decision` rows too.
+
+> **Rev 2:** this stands as designed: a deterministic score plus an LLM *rationale*. The current code goes further, falling back to `_deterministic_triage` text when the LLM fails. Recommendation for D1: show the deterministic score with its inputs, and when the LLM is unavailable display "rationale unavailable" rather than substitute text.
 
 ## 7. Runtime flows
 
 1. Intake: supervisor polls configured sources (operator submissions from the queue UI, GitHub webhooks/polling, cron ticks) and writes `IntakeItem` rows. Graph runs stay one-shot; the supervisor provides the always-on property by dispatching chief/lead graph runs as work arrives and recording run outcomes. Crash recovery = re-read queue store; in-flight graph runs are restartable because every cross-run handoff is a persisted task row, not in-memory state.
+   > **Rev 2:** add adapter scans as a source. Each adapter reads its service's local session store read-only. The stores and selectors are already decoded in `tools/operator-brain/README.md`. This turns runs the operator started by hand into `Run` rows, so they get stall detection and recaps.
 2. Triage: chief graph consumes `IntakeItem`, emits `WorkOrder` per lead area (or a `ReviewItem` when the chief needs a decision before routing). Chief system prompt includes `brain/profile.md` (section 8).
-3. Lead execution (Code lead example): `LeadPlan` → `WorkspaceLLMTaskWorker` edits code in an isolated git worktree → test `TaskWorker` runs the configured test command → evidence worker captures screenshots/video with Playwright against the changed build → lead emits one `ReviewItem` bundling change + tests + evidence + recommendation. Review lead and Comms lead follow the same shape with domain workers; Comms sends nothing externally without an approving `Decision`.
+   > **Rev 2:** triage also claims the workspace in the ownership registry. If the workspace is already claimed, the chief queues a `decision` item instead of dispatching.
+3. Lead execution (Code lead example): `LeadPlan` → ~~`WorkspaceLLMTaskWorker` edits code in an isolated git worktree~~ → test `TaskWorker` runs the configured test command → evidence worker captures screenshots/video with Playwright against the changed build → lead emits one `ReviewItem` bundling change + tests + evidence + recommendation. ~~Review lead and Comms lead follow the same shape with domain workers~~; Comms sends nothing externally without an approving `Decision`.
+   > **Rev 2:** the lead dispatches through an adapter into an isolated git worktree: `dispatch(prompt, cwd, branch) → run_id`, `status(run_id)`, `stop(run_id)`, `scan_sessions()`. A service with no verified headless mode gets an **observe-only** adapter, and no adapter may claim dispatch it cannot do. Review and Comms are roles within each area lead. Evidence is captured on the declared target (web or device).
 4. Human queue: queue UI lists `ReviewItem` rows by priority. Keyboard: `j/k` navigate, `a` approve, `x` request changes, `r` reject, `s` snooze, `e` expand evidence (screenshots/video inline). Voice input transcribes to the same command set (`approve`, `request changes: …`, `snooze one day`) and requires an on-screen confirmation render before the `Decision` is written. Every action writes a `Decision` and resumes the owning lead graph with the decision payload (request-changes text becomes the next `WorkOrder` revision).
+   > **Rev 2:** add `space` to mark, and `A`/`R` to approve or reject the marked batch. Voice "approve all green in devices" resolves to a selection that is shown for confirmation first. A `digest` item is pinned at the top: per lead, what landed, what's in review, what's stalled, and what's blocked on the operator, ≤ 5 lines each. *Current behaviour:* request-changes requeues the item with the note appended for `source_agent`; resuming a live lead run needs adapters.
 5. Merge path: policy gate verifies (a) latest `TestReport` green, (b) security scan clean (configured scanner per repo), (c) approving `Decision` on the current diff hash. Only then `MergeAuthorization` → merge worker. Diff changes after approval invalidate the authorization (hash mismatch), forcing re-review.
+   > **Rev 2:** add (d) a clean or authorized reality scan and (e) a clean secret scan. After merging, the chief **pushes and records the SHA**; "did you push" appears repeatedly in the transcripts. *Current state:* `_land` does (a) via a re-run plus a dirty-tree check; (b), (c)-hash, (d), (e) and push are missing. This is phase 1 (§12).
 6. Ideas: leads may emit `IntakeItem(kind=idea)` at any time; chief scores ideas below directed work by default, so unsolicited proposals appear in the same queue without preempting operator-directed items.
+7. **Rev 2 new: Stall handling.** If a run shows no output past its threshold, or loops on the same error, the chief re-dispatches it once with the transcript tail. If it stalls again, the chief emits a `stall` item (tail + last diff + suggested next step).
+8. **Rev 2 new: Inter-lead messaging.** A lead needing another lead's output sends a chief-mediated message (event-logged). The operator is never the relay.
+9. **Rev 2 new: Daily digest.** The chief writes the `digest` item from `runs`, `items` and `events`. It replaces "where are we / 360 update" prompts (~22/week).
 
----
+## 8. Operator brain (Rev 2 — referenced by the original, not previously written)
 
-# Review and additions (revision 2, 2026-11-08)
+- **Inputs:** every `Decision` (action + note + diff hash), request-changes text, and live correction signals the adapters see in new operator prompts in any service (same patterns as `tools/operator-brain/signals.py`).
+- **Store:** `brain/profile.md` in git (the path named in Rev 1). Each rule records its text, scope (global / area / repo), evidence count, first and last seen, and example quotes.
+- **Seed:** the standing rules in `operator-transcript-analysis.md` §4. Examples: no fake or mocked data without authorization; never claim done without running on the real target; commit continuously and push with a SHA; follow the operator's to-do order; research before inventing; ≤ 5-line answers with absolute paths.
+- **Distillation:** run weekly or every 25 decisions. Cluster new corrections; any cluster with ≥ 3 occurrences becomes a `brain_rule` queue item. Only approved rules are written, and the Brain never edits itself without a `Decision`.
+- **Use:** leads receive global rules plus their area slice at dispatch. The chief mechanically checks the machine-checkable ones (evidence present, reality scan, pushed, summary length).
+- **Rebuild:** `tools/operator-brain/extract.py` regenerates the history corpus in ~80 s into `~/.autoplan/brain/`. The corpus is never stored in the repo.
 
-Evidence base: `documents/operator-transcript-analysis.md`. It covers 19,150 operator prompts across 958 sessions, 246 repos and 8 agent services.
+## 9. `planai` fork patch candidates (Rev 2 — referenced by the original, not previously written)
 
-## Recommended changes to the original sections
+None is required yet; each needs a concrete trigger first.
+1. A version bump (not a fork patch) to an upstream release containing `WorkspaceLLMTaskWorker`, if an in-process PlanAI code adapter is wanted.
+2. A non-blocking dashboard mode (Rev 1 §3: the dashboard blocks the main thread). Needed only if the chief embeds it.
+3. Persistence hooks for cross-run task handoff. Needed only if chief/lead graphs grow beyond single-step triage.
 
-- **§1 Goal system:** keep it. Add the acceptance tests in §R1.
-- **§2–3 PlanAI / Editor review:** keep it. It is still accurate (pinned `planai 0.6.1` lacks `WorkspaceLLMTaskWorker`, as the status line already says).
-- **§4 Mapping table:** keep it, with one change. In the "Sub-agents write code" row, make `WorkspaceLLMTaskWorker` one adapter rather than the backbone (§R2.1, §R4). Add rows for adapters, the ownership registry, stall detection and the digest (§R2).
-- **§5 New-repo layout:** **recommend removing it.** The status line says the system is being built inside this repo, so the new-repo/submodule layout no longer applies. Keep the fork policy paragraph.
-- **§6 Data model:** keep it. Add `runs`, `stall`, `digest` and `brain_rule`, plus the review-bundle fields in §R5. `MergeAuthorization` on the diff hash is designed but not implemented (§R8).
-- **§7 Runtime flows:** keep flows 1–6. Flow 3 should dispatch through adapters (§R4). Flow 4 needs the batch actions in §R7. Flow 5 is not in the current `_land` code yet (§R8).
-- **Missing sections:** the original refers to "section 8" (operator brain) and "section 9" (fork patch candidates), but neither exists. §R6 supplies the brain. The fork patch list is still owed.
+## 10. First-user evidence summary (Rev 2 new)
 
-## R0. Where we are (honest status of branch `chief-queue`)
+Full analysis: `documents/operator-transcript-analysis.md`. Key numbers:
+- 19,150 prompts, 958 sessions, 246 repos, 183 active days. Median 5 sessions touched per day, p90 14.
+- Share of prompts: UI feedback 11.1%, keep-going/STILL 9.4%, verification demands 9.3%, security 8.9%, frustration 8.2%, commit/push 8.1%, explicit corrections 5.2%, honesty checks 2.1%.
+- Correction + honesty-check share is **flat at 6–9% per month**, which is the baseline the Brain must move.
+- Proposed lead areas from repo frequency, for the operator to confirm: `agent-infra` (agent-hosting, agentdns, substrate), `devices` (ambient-link-meta, glasses/Android), `web-products` (jevalin-web, webagent-ui, accountbox), `games` (marblemadness, synth), `research` (MTPLX, neural).
 
-Built and tested: SQLite queue (`queue_store.py`: `items`, `decisions`, `events`), queue REST API (`queue_api.py`),
-`ChiefOfStaff` loop (`chief.py`: triage → run test command → Playwright evidence subprocess → `needs_review`;
-`changes_requested` → requeue with note; `approved` → re-test + `git merge --no-ff`), keyboard + voice queue UI
-(`frontend/src/routes/queue/+page.svelte`) with Playwright e2e.
+## 11. Metrics (Rev 2 new)
 
-Not built, and required by the goal: lead agents, sub-agents, intake from the agent services the operator actually uses,
-the Brain, security scan, approval bound to a diff hash, push, device/emulator evidence, cross-agent ownership.
-
-Conflict to resolve: `_deterministic_triage` is a labeled fallback used when the LLM is absent or fails. CLAUDE.md Law 2
-bans fallback substitution without a verbatim authorization. **Decision needed (§R11 D1):** authorize it in writing, or
-replace it with "triage unavailable — item shown unscored" (recommended).
-
-## R1. Goal (from the quoted description) and acceptance tests
-
-| Goal statement | Acceptance test (observable) |
-|---|---|
-| One lead per focus area, always running; a chief of staff oversees them | `GET /api/leads` lists each lead with heartbeat < 60 s; killing a lead process makes the chief restart it and log `lead_restarted` |
-| Leads manage sub-agents that write code, test, chase reviews, coordinate | Each review item links ≥ 1 sub-agent run (service, session id, branch) |
-| Everything to decide/review lands in one prioritized queue (local web app) | No lead may ask the operator anything except via a queue item; adapters flag direct asks as `bypass` |
-| Product reviews include screenshots and a video demo | Item cannot reach `needs_review` without ≥ 1 screenshot + 1 video captured on the declared target |
-| Clear the queue in batches by voice and keyboard | Batch approve/reject of N items in one command; every action is a `decisions` row |
-| Leads bring back ideas | `kind=idea` items exist, scored below directed work |
-| Learns preferences into a "brain"; fewer corrections per change | Brain rules versioned in git; corrections-per-landed-change tracked weekly (§R9) |
-| Same human review and security checks on every change | Merge only with green tests + clean scans + approval on the current diff hash |
-
-## R2. What the first user's transcripts change in the design
-
-The analysis (§2–3 of `operator-transcript-analysis.md`) shows the operator's real load is not "approving things"; it is **policing reality**
-and **routing between agents**. Revision 1 under-weighted both. Changes:
-
-1. **Leads wrap the existing agent services; they are not new PlanAI code-writers.** The operator runs Codex (42% of
-   prompts), Cursor (31%), Antigravity, Muse, MiMo, Claude Code, MiniMax, and the mix shifts month to month. A lead is a
-   supervisor that dispatches to those services through adapters (§R4). PlanAI's `WorkspaceLLMTaskWorker` becomes one
-   adapter, not the backbone (it is also absent from pinned `planai 0.6.1`).
-2. **Proof-of-reality is the queue's entry ticket** (§R5). 9.3% of prompts demand verification, 2.1% ask whether something
-   is fake, 5.4% are the operator attaching their own screenshots. A lead that cannot attach evidence gets the item back,
-   not the operator.
-3. **The chief is the message bus.** 304 prompts paste one agent's output into another and 91 explicitly relay
-   ("what should I tell the ribbon agent"). Inter-lead messages go through the chief and are logged as events.
-4. **Workspace ownership registry.** Collisions ("different clone than another agent", "about to rewrite git history in
-   this directory") require one owner per repo/worktree/branch, enforced by the chief.
-5. **Stall detection replaces "keep going".** 9.4% of prompts are continue/you-stopped/STILL. The chief watches
-   adapter heartbeats and progress; a stalled run is re-dispatched or escalated as one queue item, with the transcript tail.
-6. **The chief writes the recap.** 591 status requests and "360 degree update" asks become a standing digest item.
-7. **The Brain starts pre-seeded**, from 394 standing-rule prompts plus CLAUDE.md Laws (`operator-transcript-analysis.md` §4), not empty.
-
-## R3. Components
-
-```
- agent services (Codex, Cursor, Antigravity, Muse, MiMo, Claude Code, MiniMax, PlanAI workers)
-        ▲ dispatch / tail                       │ session stores (read-only tail)
-        │                                       ▼
-   ┌─ Lead: <area> ─┐  ...   ┌─ Lead: <area> ─┐        adapters/  (one per service)
-   │ plan, sub-runs │        │                │
-   └──────┬─────────┘        └──────┬─────────┘
-          │ ReviewItem + Evidence   │
-          ▼                         ▼
-   Chief of staff: intake · dedupe · ownership registry · stall watch · scoring · digest · gates
-          │                                   ▲
-          ▼                                   │ Decision (keyboard / voice)
-   Queue store (SQLite) ── Queue web UI (localhost) ── Operator
-          │
-   Brain: decisions + corrections → proposed rules (themselves queue items) → injected into leads
-```
-
-All servers bind to `127.0.0.1` only (backend executes code; see revision-1 security note, unchanged).
-
-## R4. Leads and adapters
-
-- **Lead** = long-running process with: area name, allowed repos, preferred service(s), Brain slice, budget. Areas are
-  config, not code. Suggested initial set from the repo frequency data: `agent-infra` (agent-hosting, agentdns,
-  substrate), `devices` (ambient-link-meta, glasses/Android work), `web-products` (jevalin-web, webagent-ui, accountbox),
-  `games` (marblemadness, synth), `research` (MTPLX, neural). Operator confirms the set (§R11 D2).
-- **Adapter contract** (per service): `dispatch(prompt, cwd, branch) → run_id`, `status(run_id) → {state, last_output_at,
-  tail}`, `stop(run_id)`, and `scan_sessions()` that reads the service's local store read-only to find runs the operator
-  started by hand. Store locations and selectors are already decoded in `tools/operator-brain/README.md`.
-- Dispatch mechanism per service (CLI/headless mode, IDE, or none) must be verified before an adapter is marked
-  dispatch-capable. Services without a headless mode get **observe-only** adapters: their runs still feed status,
-  stall detection and recaps into the queue; dispatch stays manual. No adapter may claim dispatch it cannot do.
-- Sub-agent runs are recorded as `runs` rows: `{lead, service, session_id, cwd, branch, started_at, state}`.
-
-## R5. Queue item contract (the review bundle)
-
-A lead submits; the chief **rejects back to the lead** (never to the operator) unless all required fields are present.
-
-| Field | Required for | Source |
+| Metric | Baseline (May–Nov 2026) | Direction |
 |---|---|---|
-| title, kind, area, lead, why-now | all | lead |
-| diff hash + branch + pushed SHA | code_change | git (chief computes the hash itself) |
-| test command, exit code, log tail | code_change | chief runs it; lead output is not trusted |
-| screenshots (≥1) + video (≥1) on declared target | any user-visible change | Playwright (web), `adb screenrecord`/emulator (Android), simulator (iOS) |
-| "reality scan" result | code_change | chief greps diff for mock/fake/stub/placeholder/fallback/hardcoded markers; hits must cite an authorization quote or the item is flagged red |
-| secret scan + dependency/security scan | code_change | configured per repo (e.g. gitleaks + repo's audit tool) |
-| recommendation + confidence + Brain rules applied | all | lead, checked by chief |
-| sub-agent run links | all | `runs` |
-
-Item kinds: `code_change`, `decision`, `comms_draft`, `idea`, `stall` (stuck run + tail), `digest` (daily recap),
-`brain_rule` (proposed preference). Priority = deterministic score (deadline, blocks-others, risk, age) shown with its
-inputs, plus the LLM rationale when available.
-
-## R6. The Brain
-
-- **Inputs:** every `decisions` row (action + note), request-changes text, and live correction signals from adapters
-  (the same regexes as `tools/operator-brain/signals.py`, applied to new operator prompts in any service).
-- **Store:** `brain/rules.md` in git, each rule with: text, scope (global / area / repo), evidence count, first/last
-  seen, example quotes. Seeded from `operator-transcript-analysis.md` §4.
-- **Distillation:** weekly (or every 25 decisions), cluster new corrections; any cluster with ≥ 3 occurrences becomes a
-  `brain_rule` queue item. Only approved rules are written. The Brain never edits itself without a decision.
-- **Use:** leads receive global rules + their area slice in the dispatch prompt; the chief checks submissions against
-  machine-checkable rules (evidence present, no unauthorized mocks, pushed, ≤ 5-line summary, absolute paths).
-- **Rebuild:** `tools/operator-brain/extract.py` regenerates the full history corpus in ~80 s; corpus lives in
-  `~/.autoplan/brain/`, never in the repo.
-
-## R7. Operator interface
-
-Keep revision-1 bindings (`j/k`, `a` approve, `x` request changes, `r` reject, `s` snooze, `e` evidence) and add:
-- `space` mark, `A`/`R` approve/reject marked batch; voice "approve all green in devices" maps to the same parser and
-  renders the selection for confirmation before writing decisions.
-- Inline video player and screenshot strip; red banner for reality-scan or security hits.
-- Digest item pinned at top: per lead — landed, in review, stalled, blocked on operator (≤ 5 lines each).
-- Standing-authority grants ("approve all --continue") are recorded as scoped, expiring grants per lead.
-
-## R8. Gates (unchanged principle, tightened mechanism)
-
-Merge requires, all on the **current diff hash**: latest test run green (chief-run), reality scan clean or authorized,
-secret + security scan clean, approving decision. Any new commit invalidates the approval. Chief then merges, pushes,
-and records the pushed SHA. Comms never leave the machine without an approving decision. Current `_land` lacks the hash
-binding, scans and push — these are the first gaps to close.
-
-## R9. Metrics (baselines from `operator-transcript-analysis.md`)
-
-| Metric | Baseline (May–Nov 2026) | Target direction |
-|---|---|---|
-| Correction + honesty-check prompts / all prompts | 6–9% per month, flat | down |
-| Corrections per landed change | not measurable today | establish in phase 1, then down |
-| Operator relay/paste prompts per week | ~14/week (395 over 27 weeks) | → 0 |
-| "keep going / still" prompts per week | ~66/week | down |
-| Status/recap requests per week | ~22/week | → 0 (digest) |
+| Correction + honesty prompts / all prompts | 6–9% per month | down |
+| Corrections per landed change | not measurable yet | establish in phase 1, then down |
+| Relay / paste-between-agents prompts | ~14/week | → 0 |
+| "Keep going / still" prompts | ~66/week | down |
+| Status / recap requests | ~22/week | → 0 |
 | Items reaching review without evidence | n/a | 0 (enforced) |
 
-## R10. Phased plan
+## 12. Phased plan (Rev 2 new)
 
-1. **Close gates on existing code:** diff-hash-bound approval, push + SHA, secret/reality scans, resolve D1. Add `runs` table.
-2. **Observe-only adapters** for all 8 services (session tailing): stall items, daily digest, ownership registry. This
-   removes recap/relay/"keep going" load before any dispatch exists.
-3. **Dispatch adapters** for services with a verified headless mode; first lead runs end-to-end on one area.
-4. **Evidence beyond web:** Android device/emulator capture, then iOS simulator.
-5. **Brain:** seed rules, decision clustering, `brain_rule` items, metric dashboard in the queue UI.
-6. **Ideas** and remaining leads.
+1. Close the §7.5 gates on existing code: diff-hash approval, push + SHA, reality and secret scans, resolve D1. Add `runs` and `ownership`.
+2. Observe-only adapters for all 8 services, producing stall items, the digest and the ownership registry.
+3. Dispatch adapters for services with a verified headless mode; the first area lead runs end to end.
+4. Device evidence: Android device/emulator, then iOS simulator.
+5. Brain (§8) and the metrics view in the queue UI.
+6. Remaining leads and ideas; revisit visual authoring (§4).
 
 Each phase ships with Playwright e2e for every new control and is verified in the running app before it is called done.
 
-## R11. Decisions needed from the operator
+## 13. Decisions needed from the operator (Rev 2 new)
 
-- **D1** Deterministic-triage fallback: authorize verbatim, or replace with "unscored" (recommended: replace).
-- **D2** Lead areas: confirm or edit the five proposed in §R4.
-- **D3** Which services may be dispatched to automatically (vs observe-only) and with what spend limits.
+- **D1** Deterministic triage fallback: authorize it verbatim, or replace it with "rationale unavailable" (recommended: replace).
+- **D2** Lead areas: confirm or edit the five in §10.
+- **D3** Which services may be dispatched to automatically (vs observe-only), and their spend limits.
 - **D4** Security scanners per repo (proposed default: gitleaks + the repo's native audit command).
 - **D5** Rotate credentials that were pasted into chats (`operator-transcript-analysis.md` §5).
