@@ -831,6 +831,15 @@ export function ChatScreen({
       onSelectSession={handleSelectSession}
       onActiveSessionDelete={handleActiveSessionDelete}
       hideBrandHeader={!isMobile}
+      services={services}
+      selectedService={selectedService}
+      onSelectService={(svc) => void handleSelectService(svc)}
+      chiefLlmConfigured={chiefLlmConfigured}
+      chiefLlmStatus={chiefLlmStatus}
+      needsReviewCount={needsReviewCount}
+      onFocusOrchestratorQueue={handleFocusOrchestratorQueue}
+      onRunSimpleTask={() => void handleRunSimpleTask()}
+      runningSimpleTask={busyDemoService !== null}
     />
   )
 
@@ -894,15 +903,7 @@ export function ChatScreen({
         showExport={!isNewChat}
         usedTokens={activeSession?.totalTokens}
         maxTokens={activeSession?.contextTokens}
-        services={services}
-        selectedService={selectedService}
-        onSelectService={(svc) => void handleSelectService(svc)}
-        chiefLlmConfigured={chiefLlmConfigured}
-        chiefLlmStatus={chiefLlmStatus}
         needsReviewCount={needsReviewCount}
-        onFocusOrchestratorQueue={handleFocusOrchestratorQueue}
-        onRunSimpleTask={() => void handleRunSimpleTask()}
-        runningSimpleTask={busyDemoService !== null}
         inspectorOpen={isInspectorOpen}
         onToggleInspector={handleToggleInspector}
       />

@@ -199,7 +199,7 @@ export function SettingsDialog({
           <SettingsSection title="About">
             <div className="flex items-center gap-2 text-sm text-primary-800">
               <img
-                src="/autobot-icon.png"
+                src="/autobot-icon.png?v=2"
                 alt=""
                 aria-hidden="true"
                 className="size-5 shrink-0 object-contain"

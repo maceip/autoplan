@@ -17,6 +17,7 @@ import { SessionRenameDialog } from './sidebar/session-rename-dialog'
 import { SessionDeleteDialog } from './sidebar/session-delete-dialog'
 import { SidebarSessions } from './sidebar/sidebar-sessions'
 import { CommandSessionDialog } from './command-session'
+import type { AgentServiceInfo } from './autoplan-inspector'
 import type { SessionMeta } from '../types'
 import {
   TooltipContent,
@@ -38,6 +39,15 @@ type ChatSidebarProps = {
   onSelectSession?: () => void
   onActiveSessionDelete?: () => void
   hideBrandHeader?: boolean
+  services?: Array<AgentServiceInfo>
+  selectedService?: string
+  onSelectService?: (service: string) => void
+  chiefLlmConfigured?: boolean
+  chiefLlmStatus?: string
+  needsReviewCount?: number
+  onFocusOrchestratorQueue?: () => void
+  onRunSimpleTask?: () => void
+  runningSimpleTask?: boolean
 }
 
 function ChatSidebarComponent({
@@ -50,7 +60,19 @@ function ChatSidebarComponent({
   onSelectSession,
   onActiveSessionDelete,
   hideBrandHeader = false,
+  services = [],
+  selectedService = '',
+  onSelectService,
+  chiefLlmConfigured = false,
+  chiefLlmStatus = '',
+  needsReviewCount = 0,
+  onFocusOrchestratorQueue,
+  onRunSimpleTask,
+  runningSimpleTask = false,
 }: ChatSidebarProps) {
+  const activeSvcInfo = services.find((s) => s.service === selectedService)
+  const canDispatchSelected = activeSvcInfo ? activeSvcInfo.dispatch_ready : true
+  const chiefModeLabel = chiefLlmConfigured ? 'live' : 'triage'
   const {
     settingsOpen,
     setSettingsOpen,
@@ -201,7 +223,121 @@ function ChatSidebarComponent({
         </motion.div>
       ) : null}
 
-      <div className={cn('px-2 mb-3 gap-0.5 flex flex-col', hideBrandHeader && 'pt-2')}>
+      {!isCollapsed ? (
+        <div
+          data-testid="sidebar-routing-strip"
+          className="mx-2 mt-2.5 mb-2 flex flex-col gap-1.5 rounded-xl border border-primary-200 bg-surface/80 p-1.5 text-xs"
+        >
+          {services.length > 0 && onSelectService ? (
+            <div className="relative flex h-8 w-full items-center rounded-lg border border-primary-300 bg-primary-100 px-2.5 hover:border-primary-400 transition-colors">
+              <span
+                className={cn(
+                  'size-2 shrink-0 rounded-full',
+                  canDispatchSelected ? 'bg-[#7aae66]' : 'bg-primary-500',
+                )}
+                aria-hidden="true"
+              />
+              <select
+                aria-label="Lead agent service"
+                data-testid="agent-service-selector"
+                value={selectedService}
+                onChange={(e) => onSelectService(e.target.value)}
+                className="h-full w-full cursor-pointer appearance-none bg-transparent pl-2 pr-5 text-xs font-medium text-primary-950 outline-none"
+              >
+                {services.map((svc) => (
+                  <option
+                    key={svc.service}
+                    value={svc.service}
+                    className="bg-surface text-primary-900"
+                  >
+                    {svc.display_name}
+                    {svc.mode === 'observe_only' ? ' (observe)' : ''}
+                  </option>
+                ))}
+              </select>
+              <svg
+                viewBox="0 0 16 16"
+                className="pointer-events-none absolute right-2 size-3.5 text-primary-600"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.75}
+                aria-hidden="true"
+              >
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </div>
+          ) : null}
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              data-testid="orchestrator-role-chip"
+              onClick={onFocusOrchestratorQueue}
+              title={`Chief of Staff orchestrator (${chiefLlmStatus || 'deterministic triage'}) — open review queue`}
+              className="flex h-7 min-w-0 flex-1 items-center justify-between gap-1.5 rounded-lg border border-primary-200 bg-primary-100 px-2.5 text-xs font-medium text-primary-900 hover:bg-primary-200/80 transition-colors"
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span
+                  className={cn(
+                    'size-2 shrink-0 rounded-full',
+                    chiefLlmConfigured ? 'bg-[#268bd2]' : 'bg-[#7aae66]',
+                  )}
+                  aria-hidden="true"
+                />
+                <span className="truncate text-primary-950">Chief</span>
+                <span className="text-[11px] text-primary-600">
+                  {chiefModeLabel}
+                </span>
+              </span>
+              {needsReviewCount > 0 ? (
+                <span
+                  data-testid="orchestrator-review-badge"
+                  className="shrink-0 rounded-full bg-[#268bd2]/20 px-1.5 py-px font-mono text-[10px] font-semibold text-primary-950 tabular-nums"
+                >
+                  {needsReviewCount}
+                </span>
+              ) : null}
+            </button>
+
+            {onRunSimpleTask ? (
+              <button
+                type="button"
+                data-testid="header-run-simple-task"
+                disabled={!canDispatchSelected || runningSimpleTask}
+                onClick={onRunSimpleTask}
+                title={
+                  canDispatchSelected
+                    ? 'Spin up a real isolated agent run and route commit to Chief review queue'
+                    : activeSvcInfo?.auth_status ||
+                      'Selected service is observe-only'
+                }
+                className="flex h-7 shrink-0 items-center rounded-lg border border-[#268bd2]/40 bg-[#268bd2]/15 px-2.5 text-xs font-medium text-primary-950 hover:bg-[#268bd2]/25 transition-colors disabled:opacity-35 disabled:pointer-events-none"
+              >
+                {runningSimpleTask ? 'Spinning up…' : '+ Simple Task'}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <div className="flex justify-center pt-2 pb-1">
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            title="Expand sidebar for orchestrator & lead-agent routing"
+            aria-label="Expand sidebar for orchestrator & lead-agent routing"
+            className="flex size-8 items-center justify-center rounded-lg border border-primary-200 bg-surface/80 hover:bg-primary-200/70"
+          >
+            <span
+              className={cn(
+                'size-2 rounded-full',
+                canDispatchSelected ? 'bg-[#7aae66]' : 'bg-primary-500',
+              )}
+            />
+          </button>
+        </div>
+      )}
+
+      <div className="px-2 mb-3 gap-0.5 flex flex-col">
         <motion.div
           layout
           transition={{ layout: transition }}

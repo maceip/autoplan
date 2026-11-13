@@ -7,7 +7,7 @@ export type WebClawIconProps = {
 export function WebClawIcon({ className }: WebClawIconProps) {
   return (
     <img
-      src="/autobot-icon.png"
+      src="/autobot-icon.png?v=2"
       alt=""
       aria-hidden="true"
       data-testid="autobot-brand-icon"

@@ -52,16 +52,31 @@ def open_webclaw(page: Page) -> None:
 def test_webclaw_agents_registry_and_session_scan(page: Page):
     open_webclaw(page)
 
-    # Verify autobot brand title, icon asset load, and segmented top app bar
+    # Verify autobot brand title, transparent-bg icon asset, and routing strip at top of sessions list
     assert page.title() == "autobot"
     brand_link = page.locator('[data-testid="desktop-brand-link"]')
     expect(brand_link).to_be_visible()
     expect(brand_link).to_contain_text("autobot")
-    icon_loaded = page.locator('[data-testid="autobot-brand-icon"]').first.evaluate(
-        "img => img.complete && img.naturalWidth > 0"
+    icon_alpha_check = page.locator('[data-testid="autobot-brand-icon"]').first.evaluate(
+        """img => {
+            if (!img.complete || img.naturalWidth === 0) return { ok: false, reason: 'not_loaded' };
+            const c = document.createElement('canvas');
+            c.width = img.naturalWidth;
+            c.height = img.naturalHeight;
+            const ctx = c.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const cornerAlpha = ctx.getImageData(0, 0, 1, 1).data[3];
+            const innerBgAlpha = ctx.getImageData(20, 20, 1, 1).data[3];
+            return { ok: cornerAlpha === 0 && innerBgAlpha === 0, cornerAlpha, innerBgAlpha };
+        }"""
     )
-    assert icon_loaded, "Expected /autobot-icon.png to load with naturalWidth > 0"
-    expect(page.locator('[data-testid="orchestrator-role-chip"]')).to_be_visible()
+    assert icon_alpha_check["ok"], f"Expected transparent autobot icon bg, got {icon_alpha_check}"
+
+    routing_strip = page.locator('[data-testid="sidebar-routing-strip"]')
+    expect(routing_strip).to_be_visible()
+    expect(routing_strip.locator('[data-testid="agent-service-selector"]')).to_be_visible()
+    expect(routing_strip.locator('[data-testid="orchestrator-role-chip"]')).to_be_visible()
+    expect(routing_strip.locator('[data-testid="header-run-simple-task"]')).to_be_visible()
 
     # Switch to Agents tab in Right Inspector and verify all 3 target services
     page.locator('[data-testid="inspector-tab-agents"]').click()
@@ -255,8 +270,10 @@ def test_webclaw_mobile_antigravity_three_stage_flow(page: Page):
         "img => img.complete && img.naturalWidth > 0"
     )
     assert mobile_icon_loaded, "Expected mobile /autobot-icon.png to load"
-    expect(page.locator('[data-testid="mobile-orchestrator-chip"]')).to_be_visible()
-    expect(page.locator('[data-testid="mobile-top-run-task"]')).to_be_visible()
+    mobile_routing = page.locator('[data-testid="mobile-sessions-routing-strip"]')
+    expect(mobile_routing).to_be_visible()
+    expect(mobile_routing.locator('[data-testid="mobile-orchestrator-chip"]')).to_be_visible()
+    expect(mobile_routing.locator('[data-testid="mobile-top-run-task"]')).to_be_visible()
 
     bg_color = sessions_screen.evaluate("el => getComputedStyle(el).backgroundColor")
     assert bg_color == "rgb(0, 43, 54)", f"Expected Antigravity #002b36 bg, got {bg_color}"

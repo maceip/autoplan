@@ -74,7 +74,7 @@ export const Route = createRootRoute({
       },
       {
         property: 'og:image',
-        content: 'https://queue.secure.build/autobot-icon-512.png',
+        content: 'https://queue.secure.build/autobot-icon-512.png?v=2',
       },
       {
         property: 'og:image:type',
@@ -86,7 +86,7 @@ export const Route = createRootRoute({
       },
       {
         name: 'twitter:image',
-        content: 'https://queue.secure.build/autobot-icon-512.png',
+        content: 'https://queue.secure.build/autobot-icon-512.png?v=2',
       },
     ],
     links: [
@@ -97,15 +97,15 @@ export const Route = createRootRoute({
       {
         rel: 'icon',
         type: 'image/png',
-        href: '/favicon.png',
+        href: '/favicon.png?v=2',
       },
       {
         rel: 'apple-touch-icon',
-        href: '/apple-touch-icon.png',
+        href: '/apple-touch-icon.png?v=2',
       },
       {
         rel: 'manifest',
-        href: '/manifest.json',
+        href: '/manifest.json?v=2',
       },
     ],
   }),

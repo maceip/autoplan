@@ -139,13 +139,13 @@ function sessionDisplayTitle(session: SessionMeta): string {
 function AutobotBrandMark({ size = 'md' }: { size?: 'sm' | 'md' }) {
   return (
     <img
-      src="/autobot-icon.png"
+      src="/autobot-icon.png?v=2"
       alt=""
       aria-hidden="true"
       data-testid="mobile-autobot-icon"
       className={cn(
         'shrink-0 object-contain',
-        size === 'sm' ? 'size-5 rounded' : 'size-7 rounded-md',
+        size === 'sm' ? 'size-5' : 'size-6',
       )}
     />
   )
@@ -643,10 +643,26 @@ export function MobileAntigravityWorkbench({
               </button>
             </div>
           </div>
+        </header>
 
+        {searchOpen ? (
+          <div className="px-4 pt-2 pb-1">
+            <input
+              type="search"
+              data-testid="mobile-search-input"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Filter sessions or lead agents…"
+              className="h-9 w-full rounded-xl border border-[#1e444e] bg-[#0c3540] px-3 text-sm text-[#c9d8db] placeholder:text-[#586e75] outline-none"
+            />
+          </div>
+        ) : null}
+
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-3">
+          {/* Top of Sessions List: Orchestrator & Lead-Agent Routing Strip */}
           <div
-            data-testid="mobile-orchestrator-segment"
-            className="flex items-center gap-1.5 border-t border-[#133b45]/80 bg-[#06303b]/70 px-3 py-1.5"
+            data-testid="mobile-sessions-routing-strip"
+            className="mb-3 flex items-center gap-1.5 rounded-2xl border border-[#133b45] bg-[#06303b]/85 p-1.5"
           >
             <button
               type="button"
@@ -656,7 +672,7 @@ export function MobileAntigravityWorkbench({
                 onChangeMobileView('session')
                 onChangeMobileDetailOpen(true)
               }}
-              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-[#1e444e] bg-[#0c3540] px-2.5 text-xs font-medium text-[#e6f0f2] active:bg-[#133b45]"
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-xl border border-[#1e444e] bg-[#0c3540] px-2.5 text-xs font-medium text-[#e6f0f2] active:bg-[#133b45]"
             >
               <span
                 className={cn(
@@ -677,7 +693,7 @@ export function MobileAntigravityWorkbench({
               )}
             </button>
 
-            <div className="relative flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-full border border-[#1e444e] bg-[#0c3540] pl-2.5 pr-6">
+            <div className="relative flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-xl border border-[#1e444e] bg-[#0c3540] pl-2.5 pr-6">
               <span
                 className={cn(
                   'size-2 shrink-0 rounded-full',
@@ -720,27 +736,11 @@ export function MobileAntigravityWorkbench({
               data-testid="mobile-top-run-task"
               disabled={!canDispatchSelected || busyDemoService !== null}
               onClick={() => void handleQuickDemoTask(selectedService)}
-              className="flex h-8 shrink-0 items-center rounded-full border border-[#268bd2]/40 bg-[#268bd2]/15 px-2.5 text-xs font-medium text-[#e6f0f2] active:bg-[#268bd2]/25 disabled:opacity-35"
+              className="flex h-8 shrink-0 items-center rounded-xl border border-[#268bd2]/40 bg-[#268bd2]/15 px-2.5 text-xs font-medium text-[#e6f0f2] active:bg-[#268bd2]/25 disabled:opacity-35"
             >
               {busyDemoService ? 'Running…' : '+ Task'}
             </button>
           </div>
-        </header>
-
-        {searchOpen ? (
-          <div className="px-4 pb-2">
-            <input
-              type="search"
-              data-testid="mobile-search-input"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Filter sessions or lead agents…"
-              className="h-9 w-full rounded-xl border border-[#1e444e] bg-[#0c3540] px-3 text-sm text-[#c9d8db] placeholder:text-[#586e75] outline-none"
-            />
-          </div>
-        ) : null}
-
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-3">
           {pinnedSessions.length > 0 ? (
             <section className="mb-4">
               <button
@@ -1070,31 +1070,6 @@ export function MobileAntigravityWorkbench({
         </div>
 
         <div className="relative flex shrink-0 items-center gap-0.5 rounded-xl border border-[#133b45] bg-[#0c3540]/80 p-0.5">
-          <button
-            type="button"
-            data-testid="mobile-session-role-chip"
-            onClick={() => {
-              setMoreMenuOpen(false)
-              setDetailTab('queue')
-              onChangeMobileDetailOpen(true)
-            }}
-            className="flex h-7 max-w-[104px] items-center gap-1 rounded-lg px-2 text-[11px] font-medium text-[#c9d8db] active:bg-[#133b45]"
-          >
-            <span
-              className={cn(
-                'size-1.5 shrink-0 rounded-full',
-                canDispatchSelected ? 'bg-[#7aae66]' : 'bg-[#586e75]',
-              )}
-              aria-hidden="true"
-            />
-            <span className="truncate">{selectedService}</span>
-            {needsReviewCount > 0 ? (
-              <span className="shrink-0 rounded-full bg-[#268bd2]/25 px-1 font-mono text-[10px] text-[#e6f0f2] tabular-nums">
-                {needsReviewCount}
-              </span>
-            ) : null}
-          </button>
-
           <button
             type="button"
             data-testid="mobile-session-more-button"

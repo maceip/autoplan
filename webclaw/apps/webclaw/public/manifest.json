@@ -3,17 +3,17 @@
   "name": "autobot",
   "icons": [
     {
-      "src": "/favicon.png",
+      "src": "/favicon.png?v=2",
       "sizes": "64x64",
       "type": "image/png"
     },
     {
-      "src": "/autobot-icon.png",
+      "src": "/autobot-icon.png?v=2",
       "sizes": "256x256",
       "type": "image/png"
     },
     {
-      "src": "/autobot-icon-512.png",
+      "src": "/autobot-icon-512.png?v=2",
       "sizes": "512x512",
       "type": "image/png"
     }
