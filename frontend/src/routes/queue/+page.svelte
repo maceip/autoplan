@@ -85,7 +85,11 @@
 	});
 
 	const selectedIndex = $derived(items.findIndex((item) => item.id === selectedId));
-	const selectedItem = $derived(detail?.item ?? items.find((item) => item.id === selectedId) ?? null);
+	const selectedItem = $derived(
+		(detail?.item.id === selectedId ? detail.item : null) ??
+			items.find((item) => item.id === selectedId) ??
+			null
+	);
 
 	async function api(path: string, options?: RequestInit): Promise<Record<string, unknown>> {
 		const response = await fetch(`${backendUrl}${path}`, {
@@ -146,14 +150,18 @@
 		if (selectedId !== itemId) {
 			showChangesForm = false;
 			changesNote = '';
+			detail = null;
 		}
 		selectedId = itemId;
 		try {
-			detail = (await api(`/api/queue/items/${itemId}`)) as unknown as {
+			const fetched = (await api(`/api/queue/items/${itemId}`)) as unknown as {
 				item: QueueItem;
 				events: QueueEvent[];
 				decisions: QueueDecision[];
 			};
+			if (selectedId === itemId) {
+				detail = fetched;
+			}
 		} catch (error) {
 			errorMessage = error instanceof Error ? error.message : String(error);
 		}
@@ -161,15 +169,16 @@
 
 	async function decide(action: string, note = '') {
 		if (!selectedItem) return;
+		const targetId = selectedItem.id;
 		try {
-			await api(`/api/queue/items/${selectedItem.id}/decision`, {
+			await api(`/api/queue/items/${targetId}/decision`, {
 				method: 'POST',
 				body: JSON.stringify({ action, note, actor: 'human-queue-ui' })
 			});
 			showChangesForm = false;
 			changesNote = '';
 			await refreshList();
-			await selectItem(selectedItem.id);
+			await selectItem(targetId);
 		} catch (error) {
 			errorMessage = error instanceof Error ? error.message : String(error);
 		}
@@ -177,10 +186,11 @@
 
 	async function wake() {
 		if (!selectedItem) return;
+		const targetId = selectedItem.id;
 		try {
-			await api(`/api/queue/items/${selectedItem.id}/wake`, { method: 'POST', body: '{}' });
+			await api(`/api/queue/items/${targetId}/wake`, { method: 'POST', body: '{}' });
 			await refreshList();
-			await selectItem(selectedItem.id);
+			await selectItem(targetId);
 		} catch (error) {
 			errorMessage = error instanceof Error ? error.message : String(error);
 		}
@@ -271,7 +281,11 @@
 				if (selectedId && !showChangesForm) void selectItem(selectedId);
 			});
 		});
-		pollTimer = setInterval(() => void refreshList(), 5000);
+		pollTimer = setInterval(() => {
+			void refreshList().then(() => {
+				if (selectedId && !showChangesForm) void selectItem(selectedId);
+			});
+		}, 4000);
 		window.addEventListener('keydown', onKeydown);
 	});
 
