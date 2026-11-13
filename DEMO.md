@@ -1,8 +1,8 @@
-# AutoPlan + WebClaw Multi-Agent Demo
+# AutoPlan + autobot Multi-Agent Demo
 
 ## Live Hosted Demo (`https://queue.secure.build`)
 
-- **WebClaw Workbench**: `https://queue.secure.build/`
+- **autobot Workbench**: `https://queue.secure.build/`
 - **Chief of Staff Queue UI**: `https://queue.secure.build/queue`
 - **DNS (`secure.build`)**: Knot DNS `queue.secure.build. 300 A 142.248.222.1` (DNSSEC signed)
 - **Reverse Proxy (`secure.build`)**: `/etc/caddy/Caddyfile` (`queue.secure.build` with HTTP Basic Auth + unbuffered SSE `flush_interval -1`):
