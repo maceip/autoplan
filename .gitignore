@@ -7,3 +7,7 @@ webclaw/**/.nitro/
 webclaw/**/.output/
 
 .build/
+
+# lefthook postinstall stub and fake-agent test artifacts
+lefthook.yml
+backend/task_result.txt
