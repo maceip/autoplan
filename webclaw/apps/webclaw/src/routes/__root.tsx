@@ -12,7 +12,7 @@ const themeScript = `
 (() => {
   try {
     const stored = localStorage.getItem('chat-settings')
-    let theme = 'system'
+    let theme = 'dark'
     if (stored) {
       const parsed = JSON.parse(stored)
       const storedTheme = parsed?.state?.settings?.theme
@@ -33,7 +33,9 @@ const themeScript = `
     media.addEventListener('change', () => {
       if (theme === 'system') apply()
     })
-  } catch {}
+  } catch {
+    document.documentElement.classList.add('dark')
+  }
 })()
 `
 
@@ -45,7 +47,7 @@ export const Route = createRootRoute({
       },
       {
         name: 'viewport',
-        content: 'width=device-width, initial-scale=1',
+        content: 'width=device-width, initial-scale=1, viewport-fit=cover',
       },
       {
         title: 'WebClaw',

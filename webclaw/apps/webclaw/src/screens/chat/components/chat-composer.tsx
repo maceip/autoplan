@@ -97,7 +97,7 @@ function ChatComposerComponent({
 
   return (
     <div
-      className="mx-auto w-full max-w-full px-5 sm:max-w-[768px] sm:min-w-[400px] relative pb-3"
+      className="mx-auto w-full max-w-full px-4 sm:px-5 sm:max-w-[768px] min-w-0 relative pb-3"
       ref={wrapperRef}
     >
       <TooltipProvider>

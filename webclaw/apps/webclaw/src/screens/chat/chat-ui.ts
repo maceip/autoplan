@@ -3,6 +3,8 @@ import type { QueryClient } from '@tanstack/react-query'
 export type ChatUiState = {
   isSidebarCollapsed: boolean
   isInspectorOpen: boolean
+  mobileView: 'sessions' | 'session'
+  mobileDetailOpen: boolean
 }
 
 const INSPECTOR_STORAGE_KEY = 'webclaw:inspector-open'
@@ -22,6 +24,8 @@ function readStoredInspectorOpen(): boolean {
 const defaultChatUiState: ChatUiState = {
   isSidebarCollapsed: false,
   isInspectorOpen: true,
+  mobileView: 'sessions',
+  mobileDetailOpen: false,
 }
 
 export const chatUiQueryKey = ['chat', 'ui'] as const

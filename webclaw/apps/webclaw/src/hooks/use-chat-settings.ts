@@ -24,7 +24,7 @@ export const useChatSettingsStore = create<ChatSettingsState>()(
         showToolMessages: true,
         showReasoningBlocks: true,
         thinkingLevel: 'medium',
-        theme: 'system',
+        theme: 'dark',
       },
       updateSettings: (updates) =>
         set((state) => ({

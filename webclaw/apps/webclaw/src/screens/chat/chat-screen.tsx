@@ -26,6 +26,8 @@ import { ChatComposer } from './components/chat-composer'
 import { GatewayStatusMessage } from './components/gateway-status-message'
 import { AutoplanInspector } from './components/autoplan-inspector'
 import type { AgentServiceInfo } from './components/autoplan-inspector'
+import { MobileAntigravityWorkbench } from './components/mobile-antigravity-workbench'
+import type { MobileStageView } from './components/mobile-antigravity-workbench'
 import {
   hasPendingGeneration,
   hasPendingSend,
@@ -190,6 +192,8 @@ export function ChatScreen({
   }, [gatewayStatusQuery])
   const isSidebarCollapsed = uiQuery.data.isSidebarCollapsed
   const isInspectorOpen = uiQuery.data.isInspectorOpen
+  const mobileView = uiQuery.data.mobileView
+  const mobileDetailOpen = uiQuery.data.mobileDetailOpen
 
   const handleActiveSessionDelete = useCallback(() => {
     setIsRedirecting(true)
@@ -653,6 +657,58 @@ export function ChatScreen({
     })
   }, [queryClient])
 
+  const handleChangeMobileView = useCallback(
+    (nextView: MobileStageView) => {
+      setChatUiState(queryClient, function setView(state) {
+        return {
+          ...state,
+          mobileView: nextView,
+          mobileDetailOpen:
+            nextView === 'sessions' ? false : state.mobileDetailOpen,
+        }
+      })
+    },
+    [queryClient],
+  )
+
+  const handleChangeMobileDetailOpen = useCallback(
+    (nextOpen: boolean) => {
+      setChatUiState(queryClient, function setDetail(state) {
+        return { ...state, mobileDetailOpen: nextOpen }
+      })
+    },
+    [queryClient],
+  )
+
+  const handleMobileCreateSessionForService = useCallback(
+    async (targetService: string) => {
+      setDispatchError('')
+      try {
+        setNewChatService(targetService)
+        const created = await createSessionForMessage(targetService)
+        setRecentSession(created.friendlyId)
+        setChatUiState(queryClient, function enterSession(state) {
+          return { ...state, mobileView: 'session', mobileDetailOpen: false }
+        })
+        await sessionsQuery.refetch()
+        navigate({
+          to: '/chat/$sessionKey',
+          params: { sessionKey: created.friendlyId },
+        })
+      } catch (err) {
+        setDispatchError(err instanceof Error ? err.message : String(err))
+      }
+    },
+    [createSessionForMessage, navigate, queryClient, sessionsQuery],
+  )
+
+  const handleRefreshAll = useCallback(() => {
+    void sessionsQuery.refetch()
+    void agentsQuery.refetch()
+    void queueStatsQuery.refetch()
+    refreshHistory()
+  }, [agentsQuery, queueStatsQuery, refreshHistory, sessionsQuery])
+
   const historyLoading = historyQuery.isLoading || isRedirecting
   const showGatewayDown = Boolean(gatewayStatusError)
   const showGatewayNotice =
@@ -765,36 +821,64 @@ export function ChatScreen({
     return <Navigate to="/connect" replace />
   }
 
+  if (isMobile) {
+    return (
+      <MobileAntigravityWorkbench
+        sessions={sessions}
+        activeFriendlyId={activeFriendlyId}
+        activeTitle={activeTitle}
+        activeCanonicalKey={activeCanonicalKey}
+        isNewChat={isNewChat}
+        creatingSession={creatingSession}
+        services={services}
+        selectedService={selectedService}
+        chiefLlmStatus={chiefLlmStatus}
+        displayMessages={displayMessages}
+        historyLoading={historyLoading}
+        historyEmpty={historyEmpty}
+        gatewayNotice={gatewayNotice}
+        waitingForResponse={waitingForResponse}
+        pinToTop={pinToTop}
+        pinGroupMinHeight={pinGroupMinHeight}
+        headerHeight={48}
+        stableContentStyle={stableContentStyle}
+        sending={sending}
+        dispatchError={dispatchError}
+        onDismissError={() => setDispatchError('')}
+        busyDemoService={busyDemoService}
+        onSelectService={handleSelectService}
+        onRunSimpleTask={handleRunSimpleTask}
+        onCreateSessionForService={handleMobileCreateSessionForService}
+        onSendMessage={send}
+        onExportMarkdown={() => exportConversation('markdown')}
+        onRefreshAll={handleRefreshAll}
+        onRefreshHistory={refreshHistory}
+        onRunFinished={finishRun}
+        mobileView={mobileView}
+        onChangeMobileView={handleChangeMobileView}
+        mobileDetailOpen={mobileDetailOpen}
+        onChangeMobileDetailOpen={handleChangeMobileDetailOpen}
+      />
+    )
+  }
+
   return (
-    <div className="h-screen bg-surface text-primary-900">
+    <div className="h-dvh bg-surface text-primary-900">
       <div
         className={cn(
-          'h-full overflow-hidden',
-          isMobile
-            ? 'relative'
-            : isInspectorOpen
-              ? 'grid grid-cols-[auto_1fr_auto]'
-              : 'grid grid-cols-[auto_1fr]',
+          'h-full overflow-hidden max-md:grid-cols-1',
+          isInspectorOpen
+            ? 'grid grid-cols-[auto_1fr_auto]'
+            : 'grid grid-cols-[auto_1fr]',
         )}
       >
-        {hideUi ? null : isMobile ? (
-          <div
-            className={cn(
-              'fixed inset-y-0 left-0 z-50 w-[300px] transition-transform duration-200',
-              isSidebarCollapsed ? '-translate-x-full' : 'translate-x-0',
-            )}
-          >
-            {sidebar}
-          </div>
-        ) : (
-          sidebar
-        )}
+        {hideUi ? null : <div className="max-md:hidden h-full">{sidebar}</div>}
 
         <main className="flex flex-col h-full min-h-0 min-w-0" ref={mainRef}>
           <ChatHeader
             activeTitle={activeTitle}
             wrapperRef={headerRef}
-            showSidebarButton={isMobile}
+            showSidebarButton={false}
             onOpenSidebar={handleOpenSidebar}
             onExport={exportConversation}
             exportDisabled={historyLoading || displayMessages.length === 0}
@@ -814,7 +898,7 @@ export function ChatScreen({
             <div
               data-testid="dispatch-error-banner"
               role="alert"
-              className="flex items-center justify-between border-b border-red-500/40 bg-red-500/10 px-4 py-1.5 text-xs text-red-600"
+              className="flex items-center justify-between border-b border-red-500/40 bg-red-500/10 px-4 py-1.5 text-xs text-red-400"
             >
               <span className="truncate">{dispatchError}</span>
               <button
@@ -852,16 +936,18 @@ export function ChatScreen({
           )}
         </main>
 
-        {!hideUi && !isMobile && isInspectorOpen ? (
-          <AutoplanInspector
-            services={services}
-            chiefLlmStatus={chiefLlmStatus}
-            onRunSimpleTask={handleRunSimpleTask}
-            busyDemoService={busyDemoService}
-            onRefreshAgents={refreshAgents}
-            onRefreshHistory={refreshHistory}
-            onRunFinished={finishRun}
-          />
+        {!hideUi && isInspectorOpen ? (
+          <div className="max-md:hidden h-full">
+            <AutoplanInspector
+              services={services}
+              chiefLlmStatus={chiefLlmStatus}
+              onRunSimpleTask={handleRunSimpleTask}
+              busyDemoService={busyDemoService}
+              onRefreshAgents={refreshAgents}
+              onRefreshHistory={refreshHistory}
+              onRunFinished={finishRun}
+            />
+          </div>
         ) : null}
       </div>
     </div>

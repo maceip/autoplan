@@ -219,3 +219,83 @@ def test_webclaw_live_antigravity_simple_task_spinup(page: Page):
     )
     run_after = _api_get(f"/api/agents/runs/{run_id}")["run"]
     assert run_after["queue_item_id"], f"Expected queue_item_id for antigravity run: {run_after}"
+
+
+def test_webclaw_mobile_antigravity_three_stage_flow(page: Page):
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(WEBCLAW_URL)
+    page.wait_for_url("**/chat/**", timeout=20000)
+
+    # Stage 1: Full-screen All Sessions view with Antigravity #002b36 token palette
+    sessions_screen = page.locator('[data-testid="mobile-sessions-screen"]')
+    expect(sessions_screen).to_be_visible(timeout=20000)
+    expect(page.locator('[data-testid="autoplan-inspector"]')).to_have_count(0)
+
+    bg_color = sessions_screen.evaluate("el => getComputedStyle(el).backgroundColor")
+    assert bg_color == "rgb(0, 43, 54)", f"Expected Antigravity #002b36 bg, got {bg_color}"
+    scroll_width = page.evaluate("() => document.documentElement.scrollWidth")
+    assert scroll_width <= 390, f"Expected zero mobile horizontal overflow, got {scroll_width}"
+
+    # Verify all 3 lead agent groups appear on the mobile All Sessions screen
+    for svc in ("antigravity", "xiaomi-mimo", "minimax"):
+        expect(page.locator(f'[data-testid="mobile-service-group-{svc}"]')).to_be_visible(
+            timeout=10000
+        )
+
+    # Exercise search toggle & live session filtering
+    page.locator('[data-testid="mobile-search-toggle"]').click()
+    search_input = page.locator('[data-testid="mobile-search-input"]')
+    expect(search_input).to_be_visible()
+    search_input.fill("Chief")
+    search_input.fill("")
+    page.locator('[data-testid="mobile-search-toggle"]').click()
+
+    # Exercise local CLI session expansion on mobile home
+    page.locator('[data-testid="mobile-observed-toggle-minimax"]').click()
+
+    # Stage 2: Click a session -> Full-screen Session view
+    first_session = page.locator('[data-testid^="mobile-session-row-"]').first
+    expect(first_session).to_be_visible(timeout=10000)
+    first_session.click()
+
+    session_screen = page.locator('[data-testid="mobile-session-screen"]')
+    expect(session_screen).to_be_visible(timeout=15000)
+    expect(sessions_screen).to_have_count(0)
+    expect(page.locator('[data-testid="mobile-back-to-sessions"]')).to_be_visible()
+    expect(page.locator('[data-testid="mobile-footer-detail-button"]')).to_be_visible()
+    expect(page.locator('[data-testid="mobile-session-composer"]')).to_be_visible()
+
+    session_box = session_screen.bounding_box()
+    assert session_box is not None and abs(session_box["width"] - 390) <= 2
+
+    # Stage 3: Tap top 'footer' icon -> Detail panel sheet opens over session
+    footer_btn = page.locator('[data-testid="mobile-footer-detail-button"]')
+    footer_btn.click()
+
+    detail_sheet = page.locator('[data-testid="mobile-detail-sheet"]')
+    expect(detail_sheet).to_be_visible(timeout=10000)
+    expect(page.locator('[data-testid="mobile-overview-agents-row"]')).to_be_visible()
+    expect(page.locator('[data-testid="mobile-overview-queue-row"]')).to_be_visible()
+    expect(page.locator('[data-testid="mobile-overview-runs-row"]')).to_be_visible()
+
+    # Expand Lead Agents inside Detail Sheet and verify real modes
+    page.locator('[data-testid="mobile-overview-agents-row"]').click()
+    expect(page.locator('[data-testid="mobile-agent-mode-antigravity"]')).to_have_text(
+        "dispatch"
+    )
+    expect(page.locator('[data-testid="mobile-agent-mode-minimax"]')).to_have_text(
+        "observe_only"
+    )
+
+    # Switch between Queue and Runs tabs inside Detail Sheet
+    page.locator('[data-testid="mobile-detail-tab-queue"]').click()
+    page.locator('[data-testid="mobile-detail-tab-runs"]').click()
+    page.locator('[data-testid="mobile-detail-tab-overview"]').click()
+
+    # Tap top 'footer' icon again -> closes Detail Sheet back to Session view
+    footer_btn.click()
+    expect(detail_sheet).to_have_count(0)
+
+    # Tap Back arrow -> returns to full-screen All Sessions view
+    page.locator('[data-testid="mobile-back-to-sessions"]').click()
+    expect(sessions_screen).to_be_visible(timeout=10000)
