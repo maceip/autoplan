@@ -1,5 +1,15 @@
 # AutoPlan + WebClaw Multi-Agent Demo
 
+## Live Hosted Demo (`https://queue.secure.build`)
+
+- **WebClaw Workbench**: `https://queue.secure.build/`
+- **Chief of Staff Queue UI**: `https://queue.secure.build/queue`
+- **DNS (`secure.build`)**: Knot DNS `queue.secure.build. 300 A 142.248.222.1` (DNSSEC signed)
+- **Reverse Proxy (`secure.build`)**: `/etc/caddy/Caddyfile` (`queue.secure.build` with HTTP Basic Auth + unbuffered SSE `flush_interval -1`):
+  - `/` (WebClaw SSR & SSE routes) → `127.0.0.1:5198` (`autoplan-webclaw.service` running `/opt/autoplan-webclaw`)
+  - `/queue*`, `/_app/*`, `/api/queue/*`, `/api/agents*`, `/api/ownership`, `/socket.io/*` → `100.80.211.36:5051` over Tailscale
+- **Local Agent Bridge (Mac `100.80.211.36:5051`)**: Managed by `launchctl` (`~/Library/LaunchAgents/build.secure.autoplan-backend.plist`, `KeepAlive=true`) so `https://queue.secure.build` reaches local `Antigravity`, `Xiaomi MiMo`, and `MiniMax` stores and CLIs over WireGuard/Tailscale.
+
 ## Remotes
 
 - **AutoPlan**: `https://github.com/maceip/autoplan.git` (`origin`)
@@ -11,27 +21,6 @@
 2. **Xiaomi MiMo (`xiaomi-mimo`)** — headless dispatch via `mimo run --format json -m <provider/model>` + local SQLite session discovery (`~/.local/share/mimocode/mimocode.db`).
 3. **MiniMax (`minimax`)** — local session & config discovery (`~/.minimax/v2/sessions/**/messages.jsonl`, `~/.minimax/config.yaml`). Reports `observe_only` when `MINIMAX_API_KEY` is unset and switches to live tool-loop dispatch when `MINIMAX_API_KEY` (or `provider.minimax.options.apiKey`) is configured.
 
-## Quickstart
-
-### 1. Start the AutoPlan Backend + Chief of Staff
-
-```bash
-cd /Users/mac/autoplan/backend
-.venv/bin/python -m planaieditor.app --root-path /Users/mac/autoplan --host 127.0.0.1 --port 5051
-```
-
-### 2. Start the WebClaw Workbench Frontend
-
-```bash
-cd /Users/mac/autoplan/webclaw
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 AUTOPLAN_BACKEND_URL=http://127.0.0.1:5051 pnpm -C apps/webclaw dev --host 127.0.0.1 --port 3050
-```
-
-Open `http://127.0.0.1:3050`:
-- Select **Xiaomi MiMo** or **Antigravity** in the header service selector and click **Run Simple Task** (or send any prompt in chat).
-- Watch the live subprocess create an isolated git branch in `.planai-queue/demo-workspaces/<run_id>`, commit `task_result.txt`, pass the Chief-of-Staff verification test (`Test exit 0 (passed)`), and reach `needs_review` in the right-hand **Queue** inspector.
-- Click **Approve** to merge onto `main` (`landed`).
-
 ## Automated Verification
 
 ```bash
@@ -39,7 +28,10 @@ Open `http://127.0.0.1:3050`:
 cd /Users/mac/autoplan/backend
 .venv/bin/pytest tests/test_queue.py tests/test_agents_and_webclaw_api.py -q
 
-# End-to-end Playwright verification (requires backend on :5051 and WebClaw on :3050)
-FRONTEND_URL=http://127.0.0.1:5051 BACKEND_TEST_PORT=5051 WEBCLAW_URL=http://127.0.0.1:3050 \
+# Live Playwright E2E against https://queue.secure.build
+E2E_HTTP_USER=autoplan E2E_HTTP_PASS="<demo-password>" \
+  FRONTEND_URL=https://queue.secure.build \
+  BACKEND_TEST_URL=https://queue.secure.build \
+  WEBCLAW_URL=https://queue.secure.build \
   .venv/bin/pytest tests/e2e/test_queue_ui.py tests/e2e/test_webclaw_e2e.py -v
 ```

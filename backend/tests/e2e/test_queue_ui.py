@@ -5,6 +5,7 @@ backendUrl pointing at the backend on :5001, backend in development
 mode so the chief-of-staff loop is running).
 """
 
+import base64
 import json
 import os
 import urllib.request
@@ -18,13 +19,23 @@ if os.environ.get("SKIP_E2E_TESTS") == "true":
     pytest.skip("Skipping e2e tests as SKIP_E2E_TESTS is set", allow_module_level=True)
 
 
+def _auth_headers() -> dict:
+    headers = {"Content-Type": "application/json"}
+    user = os.environ.get("E2E_HTTP_USER", "").strip()
+    pw = os.environ.get("E2E_HTTP_PASS", "").strip()
+    if user and pw:
+        tok = base64.b64encode(f"{user}:{pw}".encode()).decode()
+        headers["Authorization"] = f"Basic {tok}"
+    return headers
+
+
 def submit_via_api(title: str, kind: str = "decision") -> str:
     request = urllib.request.Request(
         f"{BACKEND_TEST_URL}/api/queue/items",
         data=json.dumps(
             {"source_agent": "e2e-agent", "kind": kind, "title": title, "body": "seeded by e2e"}
         ).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=_auth_headers(),
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=10) as response:

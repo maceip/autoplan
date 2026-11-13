@@ -31,6 +31,11 @@ export function useChatGenerationGuard({
       return
     }
 
+    const pollInterval = window.setInterval(() => {
+      if (!waitingRef.current) return
+      refreshHistory()
+    }, 2500)
+
     if (!timeoutTimer.current) {
       timeoutTimer.current = window.setTimeout(() => {
         timeoutTimer.current = null
@@ -40,6 +45,9 @@ export function useChatGenerationGuard({
       }, 120000)
     }
 
+    return () => {
+      window.clearInterval(pollInterval)
+    }
   }, [
     refreshHistory,
     setWaitingForResponse,

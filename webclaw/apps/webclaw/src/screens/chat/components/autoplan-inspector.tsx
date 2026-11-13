@@ -78,6 +78,8 @@ type AutoplanInspectorProps = {
   onRunSimpleTask: (service: string) => Promise<void>
   busyDemoService: string | null
   onRefreshAgents: () => void
+  onRefreshHistory?: () => void
+  onRunFinished?: (runId: string) => void
 }
 
 const DEFAULT_WIDTH = 380
@@ -96,6 +98,8 @@ export function AutoplanInspector({
   onRunSimpleTask,
   busyDemoService,
   onRefreshAgents,
+  onRefreshHistory,
+  onRunFinished,
 }: AutoplanInspectorProps) {
   const [tab, setTab] = useState<'queue' | 'agents' | 'runs'>('queue')
   const [width, setWidth] = useState<number>(DEFAULT_WIDTH)
@@ -111,6 +115,7 @@ export function AutoplanInspector({
   >({})
   const [inspectorError, setInspectorError] = useState<string>('')
   const dragStartRef = useRef<{ x: number; w: number } | null>(null)
+  const prevRunStatesRef = useRef<Record<string, string> | null>(null)
 
   const refreshQueueAndRuns = useCallback(async () => {
     try {
@@ -136,8 +141,29 @@ export function AutoplanInspector({
         throw new Error(rData.error || `Runs HTTP ${rRes.status}`)
       }
       const nextItems = qData.items || []
+      const nextRuns = rData.runs || []
+      const prevStates = prevRunStatesRef.current
+      const nextStates: Record<string, string> = {}
+      let shouldRefreshChat = false
+      for (const run of nextRuns) {
+        nextStates[run.id] = run.state
+        if (prevStates !== null && prevStates[run.id] !== run.state) {
+          shouldRefreshChat = true
+          if (
+            run.state === 'succeeded' ||
+            run.state === 'failed' ||
+            run.state === 'stopped'
+          ) {
+            onRunFinished?.(run.id)
+          }
+        }
+      }
+      prevRunStatesRef.current = nextStates
+      if (shouldRefreshChat) {
+        onRefreshHistory?.()
+      }
       setItems(nextItems)
-      setRuns(rData.runs || [])
+      setRuns(nextRuns)
       setSelectedItemId((prev) => {
         if (prev && nextItems.some((it) => it.id === prev)) return prev
         return nextItems.length > 0 ? nextItems[0].id : null
@@ -146,7 +172,7 @@ export function AutoplanInspector({
     } catch (err) {
       setInspectorError(err instanceof Error ? err.message : String(err))
     }
-  }, [queueFilter])
+  }, [onRefreshHistory, onRunFinished, queueFilter])
 
   useEffect(() => {
     void refreshQueueAndRuns()

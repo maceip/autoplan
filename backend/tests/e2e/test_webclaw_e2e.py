@@ -6,6 +6,7 @@ Antigravity agents, honest observe-only enforcement for MiniMax, Chief-of-Staff
 test triage, and branch merge landing on operator approval.
 """
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -22,7 +23,14 @@ WEBCLAW_URL = os.environ.get("WEBCLAW_URL", "http://localhost:3000")
 
 
 def _api_get(path: str) -> dict:
-    with urllib.request.urlopen(f"{BACKEND_TEST_URL}{path}", timeout=15) as resp:
+    headers = {}
+    user = os.environ.get("E2E_HTTP_USER", "").strip()
+    pw = os.environ.get("E2E_HTTP_PASS", "").strip()
+    if user and pw:
+        tok = base64.b64encode(f"{user}:{pw}".encode()).decode()
+        headers["Authorization"] = f"Basic {tok}"
+    req = urllib.request.Request(f"{BACKEND_TEST_URL}{path}", headers=headers)
+    with urllib.request.urlopen(req, timeout=15) as resp:
         return json.load(resp)
 
 

@@ -17,7 +17,9 @@ from playwright.sync_api import APIResponse, Page, Route, expect
 # --- Configuration Constants ---
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 BACKEND_TEST_PORT = os.environ.get("BACKEND_TEST_PORT", "5001")
-BACKEND_TEST_URL = f"http://localhost:{BACKEND_TEST_PORT}"
+BACKEND_TEST_URL = os.environ.get(
+    "BACKEND_TEST_URL", f"http://localhost:{BACKEND_TEST_PORT}"
+)
 TIMEOUT = 15000  # Default timeout in milliseconds
 
 # Skip e2e tests if SKIP_E2E_TESTS is set

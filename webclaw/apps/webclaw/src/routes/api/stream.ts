@@ -25,11 +25,47 @@ export const Route = createFileRoute('/api/stream')({
               headers: { Accept: 'text/event-stream' },
               signal: request.signal,
             })
-            return new Response(upstream.body, {
+            const reader = upstream.body?.getReader()
+            if (!reader) {
+              return new Response('', {
+                status: upstream.status,
+                headers: {
+                  'Content-Type': 'text/event-stream; charset=utf-8',
+                  'Cache-Control': 'no-cache, no-transform',
+                  'X-Accel-Buffering': 'no',
+                  Connection: 'keep-alive',
+                },
+              })
+            }
+            const proxyStream = new ReadableStream<Uint8Array>({
+              async pull(controller) {
+                try {
+                  const { done, value } = await reader.read()
+                  if (done) {
+                    controller.close()
+                    return
+                  }
+                  if (value) {
+                    controller.enqueue(value)
+                  }
+                } catch {
+                  try {
+                    controller.close()
+                  } catch {
+                    // stream already closed
+                  }
+                }
+              },
+              cancel() {
+                void reader.cancel().catch(() => undefined)
+              },
+            })
+            return new Response(proxyStream, {
               status: upstream.status,
               headers: {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
+                'Content-Type': 'text/event-stream; charset=utf-8',
+                'Cache-Control': 'no-cache, no-transform',
+                'X-Accel-Buffering': 'no',
                 Connection: 'keep-alive',
               },
             })

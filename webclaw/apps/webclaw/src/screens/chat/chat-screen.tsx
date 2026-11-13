@@ -271,9 +271,27 @@ export function ChatScreen({
 
   useEffect(() => {
     return () => {
-      finishAllRuns()
+      const hadLocalRuns = pendingRunTimersRef.current.size > 0
+      for (const [, timer] of pendingRunTimersRef.current) {
+        window.clearTimeout(timer)
+      }
+      pendingRunTimersRef.current.clear()
+      pendingRunIdsRef.current.clear()
+      if (hadLocalRuns) {
+        setPendingGeneration(false)
+      }
     }
-  }, [finishAllRuns])
+  }, [])
+
+  useEffect(() => {
+    if (!waitingForResponse) return
+    if (pendingRunIdsRef.current.size > 0) return
+    const lastMessage = displayMessages[displayMessages.length - 1]
+    if (lastMessage && lastMessage.role === 'assistant') {
+      setPendingGeneration(false)
+      setWaitingForResponse(false)
+    }
+  }, [displayMessages, waitingForResponse])
 
   const handleSelectService = useCallback(
     async (nextService: string) => {
@@ -482,18 +500,22 @@ export function ChatScreen({
         if (!res.ok || payload.success === false) {
           throw new Error(payload.error || `HTTP ${res.status}`)
         }
-        if (payload.run?.id) {
-          startRun(payload.run.id)
-        }
-        refreshHistory()
-        refreshAgents()
-        window.dispatchEvent(new CustomEvent('autoplan:event'))
         if (navigateFriendlyId) {
+          setPendingGeneration(true)
+          refreshAgents()
+          window.dispatchEvent(new CustomEvent('autoplan:event'))
           navigate({
             to: '/chat/$sessionKey',
             params: { sessionKey: navigateFriendlyId },
             replace: true,
           })
+        } else {
+          if (payload.run?.id) {
+            startRun(payload.run.id)
+          }
+          refreshHistory()
+          refreshAgents()
+          window.dispatchEvent(new CustomEvent('autoplan:event'))
         }
       } catch (err) {
         setDispatchError(err instanceof Error ? err.message : String(err))
@@ -837,6 +859,8 @@ export function ChatScreen({
             onRunSimpleTask={handleRunSimpleTask}
             busyDemoService={busyDemoService}
             onRefreshAgents={refreshAgents}
+            onRefreshHistory={refreshHistory}
+            onRunFinished={finishRun}
           />
         ) : null}
       </div>
