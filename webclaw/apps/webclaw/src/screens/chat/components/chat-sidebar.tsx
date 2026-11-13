@@ -528,6 +528,7 @@ function areSessionsEqual(
     const next = nextSessions[i]
     if (prev.key !== next.key) return false
     if (prev.friendlyId !== next.friendlyId) return false
+    if (prev.service !== next.service) return false
     if (prev.label !== next.label) return false
     if (prev.title !== next.title) return false
     if (prev.derivedTitle !== next.derivedTitle) return false
@@ -543,6 +544,15 @@ function areSidebarPropsEqual(
   if (prevProps.activeFriendlyId !== nextProps.activeFriendlyId) return false
   if (prevProps.creatingSession !== nextProps.creatingSession) return false
   if (prevProps.isCollapsed !== nextProps.isCollapsed) return false
+  if (prevProps.hideBrandHeader !== nextProps.hideBrandHeader) return false
+  if (prevProps.selectedService !== nextProps.selectedService) return false
+  if (prevProps.chiefLlmConfigured !== nextProps.chiefLlmConfigured) {
+    return false
+  }
+  if (prevProps.chiefLlmStatus !== nextProps.chiefLlmStatus) return false
+  if (prevProps.needsReviewCount !== nextProps.needsReviewCount) return false
+  if (prevProps.runningSimpleTask !== nextProps.runningSimpleTask) return false
+  if (prevProps.services !== nextProps.services) return false
   if (!areSessionsEqual(prevProps.sessions, nextProps.sessions)) return false
   return true
 }
