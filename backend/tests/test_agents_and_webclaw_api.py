@@ -184,8 +184,8 @@ def test_request_changes_redispatches_to_source_agent(tmp_path: Path, monkeypatc
     )
     assert resp.status_code == 200
     chief.process_once()
-    item = store.get_item(item_id)
-    assert item["status"] == "in_progress"
+    # The worker may already have finished (queued) or still be running (in_progress).
+    assert store.get_item(item_id)["status"] in {"in_progress", "queued"}
     rework_runs = [
         r for r in store.list_runs(service="antigravity") if r["metadata"].get("rework_item_id") == item_id
     ]
@@ -209,6 +209,75 @@ def test_request_changes_redispatches_to_source_agent(tmp_path: Path, monkeypatc
     merged = (Path(landed["repo_path"]) / "task_result.txt").read_text(encoding="utf-8")
     assert "AUTOPLAN_DEMO_OK" in merged
     assert "REWORK_APPLIED" in merged
+
+
+def test_rework_refuses_repo_outside_root_and_dirty_workspace(tmp_path: Path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    agy_exec = bin_dir / "agy_noop"
+    agy_exec.write_text(
+        "#!/usr/bin/env python3\nimport json\n"
+        "print(json.dumps({'conversation_id': 'c', 'status': 'SUCCESS', 'response': 'ok'}))\n",
+        encoding="utf-8",
+    )
+    agy_exec.chmod(agy_exec.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("AGY_BIN", str(agy_exec))
+    _, store, chief, manager = make_client(tmp_path)
+
+    # Repo outside the server root: no dispatch, honest fallback requeue.
+    outside = tmp_path.parent / "outside-rework-repo"
+    outside.mkdir(exist_ok=True)
+    subprocess.run(["git", "init", "-b", "main", str(outside)], check=True, capture_output=True)
+    item = store.create_item(
+        {
+            "source_agent": "antigravity",
+            "kind": "code_change",
+            "title": "Escape attempt",
+            "repo_path": str(outside),
+            "branch": "feature-x",
+        }
+    )
+    store.update_item(item["id"], status="changes_requested")
+    store.add_decision(item["id"], "request_changes", note="try it")
+    chief.process_once()
+    updated = store.get_item(item["id"])
+    assert updated["status"] == "queued"
+    assert any(e["type"] == "requeued_for_rework" for e in store.list_events(item["id"]))
+
+    # Dirty workspace inside root: dispatch refused so unrelated work is not committed.
+    dirty = tmp_path / "dirty-repo"
+    dirty.mkdir()
+    subprocess.run(["git", "init", "-b", "main", str(dirty)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(dirty), "config", "user.email", "t@e.c"], check=True)
+    subprocess.run(["git", "-C", str(dirty), "config", "user.name", "T"], check=True)
+    (dirty / "a.txt").write_text("x\n")
+    subprocess.run(["git", "-C", str(dirty), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(dirty), "commit", "-m", "base"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(dirty), "checkout", "-b", "feature-y"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(dirty), "checkout", "main"], check=True, capture_output=True)
+    (dirty / "untracked.txt").write_text("user work in flight\n")
+    item2 = store.create_item(
+        {
+            "source_agent": "antigravity",
+            "kind": "code_change",
+            "title": "Dirty workspace",
+            "repo_path": str(dirty),
+            "branch": "feature-y",
+        }
+    )
+    store.update_item(item2["id"], status="changes_requested")
+    store.add_decision(item2["id"], "request_changes", note="change something")
+    chief.process_once()
+    events = {e["type"] for e in store.list_events(item2["id"])}
+    assert "rework_dispatch_failed" in events
+    assert store.get_item(item2["id"])["status"] == "queued"
+    # The user's untracked file was never committed anywhere.
+    assert (dirty / "untracked.txt").read_text() == "user work in flight\n"
+    log = subprocess.run(
+        ["git", "-C", str(dirty), "log", "--all", "--name-only", "--format="],
+        capture_output=True, text=True,
+    ).stdout
+    assert "untracked.txt" not in log
 
 
 def test_request_changes_falls_back_to_requeue_for_non_dispatchable_agent(tmp_path: Path):

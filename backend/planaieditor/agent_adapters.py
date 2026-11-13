@@ -1081,12 +1081,16 @@ class AgentRunManager:
         staged = self._git(repo, "diff", "--cached", "--name-only").stdout.strip()
         if not staged:
             return False, ""
-        self._git(
+        commit = self._git(
             repo,
             "commit",
             "-m",
             f"rework({service}): address operator feedback for {run_id}",
         )
+        if commit.returncode != 0:
+            raise RuntimeError(
+                f"Rework commit failed: {_tail(commit.stdout + commit.stderr, 400)}"
+            )
         return True, self._git(repo, "rev-parse", "HEAD").stdout.strip()
 
     def dispatch_async(
@@ -1213,10 +1217,15 @@ class AgentRunManager:
                 queue_item_id = rework_item_id
                 item = self.store.get_item(rework_item_id)
                 if item is not None:
+                    finalize_error = ""
                     if result.passed:
-                        committed, commit_sha = self._finalize_rework_commit(
-                            workspace_dir, branch_name, run_id, service
-                        )
+                        try:
+                            committed, commit_sha = self._finalize_rework_commit(
+                                workspace_dir, branch_name, run_id, service
+                            )
+                        except Exception as exc:
+                            finalize_error = str(exc)
+                    if result.passed and not finalize_error:
                         note = (
                             f"commit {commit_sha[:10]}"
                             if committed
@@ -1235,10 +1244,14 @@ class AgentRunManager:
                             + (result.response_text or "").strip()[:500],
                         )
                     else:
+                        reason = (
+                            finalize_error
+                            or f"run failed (exit {result.exit_code})"
+                        )
                         self.store.add_event(
                             rework_item_id,
                             "rework_failed",
-                            f"Rework run {run_id} failed (exit {result.exit_code}); returned to review.",
+                            f"Rework run {run_id}: {reason}; returned to review.",
                         )
                         updated_item = self.store.update_item(
                             rework_item_id, status="needs_review"
@@ -1287,6 +1300,7 @@ class AgentRunManager:
 
             meta = dict(result.metadata or {})
             meta["is_demo_repo"] = is_demo_repo
+            meta["rework_item_id"] = rework_item_id
             meta["duration_s"] = result.duration_s
             if commit_sha:
                 meta["branch_commit"] = commit_sha
@@ -1403,6 +1417,18 @@ class AgentRunManager:
         branch = str(item.get("branch") or "").strip()
         if not branch or not (repo / ".git").exists():
             return None
+        try:
+            repo.relative_to(self.root_path)
+        except ValueError:
+            # Same boundary the dispatch endpoint and landing enforce: a queue
+            # item must not be able to point an agent at an arbitrary repo.
+            return None
+        status = self._git(repo, "status", "--porcelain")
+        if status.stdout.strip():
+            raise RuntimeError(
+                f"Workspace '{repo}' has uncommitted changes; refusing rework dispatch "
+                "so unrelated work is not folded into the rework commit."
+            )
         prompt = (
             f"You previously completed this task in workspace '{repo}':\n"
             f"{item.get('title', '')}\n\n"
@@ -1435,5 +1461,25 @@ class AgentRunManager:
             state="stopped",
             finished_at=time.time(),
         )
+        # A stopped rework run must not leave its queue item stranded in
+        # in_progress (the worker returns early on stopped state).
+        rework_item_id = str(
+            run.get("queue_item_id")
+            or (run.get("metadata") or {}).get("rework_item_id")
+            or ""
+        )
+        if rework_item_id:
+            item = self.store.get_item(rework_item_id)
+            if item is not None and item["status"] == "in_progress":
+                self.store.add_event(
+                    rework_item_id,
+                    "rework_stopped",
+                    f"Rework run {run_id} stopped by operator; returned to review.",
+                )
+                updated_item = self.store.update_item(
+                    rework_item_id, status="needs_review"
+                )
+                if updated_item is not None:
+                    self._on_event("queue_item_created", {"item": updated_item})
         self._on_event("run_updated", {"run": updated})
         return updated

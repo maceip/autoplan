@@ -361,6 +361,11 @@ class ChiefOfStaff:
                 and item.get("repo_path")
                 and item.get("branch")
             ):
+                # Transition BEFORE dispatching: the rework worker thread may
+                # finish (and set queued/needs_review) before dispatch returns,
+                # and a late in_progress write would strand the item.
+                self._transition(item, status="in_progress")
+                run = None
                 try:
                     run = self.rework_dispatcher(item, last_note)
                 except Exception as exc:
@@ -369,16 +374,14 @@ class ChiefOfStaff:
                         "rework_dispatch_failed",
                         f"Could not dispatch rework to {item['source_agent']}: {exc}",
                     )
-                else:
-                    if run:
-                        self.store.add_event(
-                            item["id"],
-                            "rework_dispatched",
-                            f"Rework run {run['id']} started on {item['source_agent']} "
-                            f"(branch {item['branch']}) with operator note.",
-                        )
-                        self._transition(item, status="in_progress")
-                        dispatched = True
+                if run:
+                    self.store.add_event(
+                        item["id"],
+                        "rework_dispatched",
+                        f"Rework run {run['id']} started on {item['source_agent']} "
+                        f"(branch {item['branch']}) with operator note.",
+                    )
+                    dispatched = True
             if dispatched:
                 continue
             body = (item["body"] or "") + f"\n\n[Operator requested changes] {last_note}"

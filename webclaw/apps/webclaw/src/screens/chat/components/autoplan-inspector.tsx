@@ -86,6 +86,7 @@ const MAX_WIDTH = 560
 
 const DECISION_ALLOWED: Record<string, Array<string>> = {
   approve: ['needs_review'],
+  request_changes: ['needs_review'],
   reject: ['needs_review', 'queued', 'triaged', 'in_progress'],
   snooze: ['needs_review', 'queued', 'triaged'],
 }
@@ -110,11 +111,17 @@ export function AutoplanInspector({
     Record<string, Array<ScannedSession>>
   >({})
   const [inspectorError, setInspectorError] = useState<string>('')
+  const [changesNoteItemId, setChangesNoteItemId] = useState<string | null>(
+    null,
+  )
+  const [changesNote, setChangesNote] = useState<string>('')
   const dragStartRef = useRef<{ x: number; w: number } | null>(null)
 
   const refreshQueueAndRuns = useCallback(async () => {
     try {
-      const qQuery = queueFilter ? `?status=${encodeURIComponent(queueFilter)}` : ''
+      const qQuery = queueFilter
+        ? `?status=${encodeURIComponent(queueFilter)}`
+        : ''
       const [qRes, rRes] = await Promise.all([
         fetch(`/api/autoplan/queue/items${qQuery}`),
         fetch('/api/autoplan/agents/runs?limit=30'),
@@ -187,14 +194,17 @@ export function AutoplanInspector({
     }
   }, [])
 
-  async function decideItem(itemId: string, action: string) {
+  async function decideItem(itemId: string, action: string, note = '') {
     try {
       const res = await fetch(`/api/autoplan/queue/items/${itemId}/decision`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action, actor: 'webclaw-operator' }),
+        body: JSON.stringify({ action, note, actor: 'webclaw-operator' }),
       })
-      const payload = (await res.json()) as { success?: boolean; error?: string }
+      const payload = (await res.json()) as {
+        success?: boolean
+        error?: string
+      }
       if (!res.ok || payload.success === false) {
         throw new Error(payload.error || `Decision HTTP ${res.status}`)
       }
@@ -211,7 +221,10 @@ export function AutoplanInspector({
         headers: { 'content-type': 'application/json' },
         body: '{}',
       })
-      const payload = (await res.json()) as { success?: boolean; error?: string }
+      const payload = (await res.json()) as {
+        success?: boolean
+        error?: string
+      }
       if (!res.ok || payload.success === false) {
         throw new Error(payload.error || `Wake HTTP ${res.status}`)
       }
@@ -228,7 +241,10 @@ export function AutoplanInspector({
         headers: { 'content-type': 'application/json' },
         body: '{}',
       })
-      const payload = (await res.json()) as { success?: boolean; error?: string }
+      const payload = (await res.json()) as {
+        success?: boolean
+        error?: string
+      }
       if (!res.ok || payload.success === false) {
         throw new Error(payload.error || `Stop HTTP ${res.status}`)
       }
@@ -325,7 +341,8 @@ export function AutoplanInspector({
                 : 'border-transparent text-primary-700 hover:bg-primary-100'
             }`}
           >
-            Runs ({activeRunsCount > 0 ? `${activeRunsCount} live` : runs.length})
+            Runs (
+            {activeRunsCount > 0 ? `${activeRunsCount} live` : runs.length})
           </button>
         </div>
 
@@ -412,7 +429,8 @@ export function AutoplanInspector({
                       <span data-testid="webclaw-detail-status">
                         {selectedItem.status}
                       </span>
-                      {' · '}P{selectedItem.priority} · {selectedItem.source_agent}
+                      {' · '}P{selectedItem.priority} ·{' '}
+                      {selectedItem.source_agent}
                       {selectedItem.branch
                         ? ` · ${selectedItem.branch} → ${selectedItem.target_branch}`
                         : ''}
@@ -441,7 +459,8 @@ export function AutoplanInspector({
                       data-testid="webclaw-merged-commit"
                       className="border border-primary-200 p-2 font-mono text-[11px]"
                     >
-                      Landed commit: {selectedItem.result.merged_commit.slice(0, 12)}
+                      Landed commit:{' '}
+                      {selectedItem.result.merged_commit.slice(0, 12)}
                     </div>
                   ) : null}
 
@@ -458,10 +477,31 @@ export function AutoplanInspector({
                       disabled={
                         !DECISION_ALLOWED.approve.includes(selectedItem.status)
                       }
-                      onClick={() => void decideItem(selectedItem.id, 'approve')}
+                      onClick={() =>
+                        void decideItem(selectedItem.id, 'approve')
+                      }
                       className="border border-primary-800 bg-primary-900 px-2.5 py-1 font-medium text-surface disabled:opacity-30"
                     >
                       Approve
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="webclaw-request-changes-button"
+                      disabled={
+                        !DECISION_ALLOWED.request_changes.includes(
+                          selectedItem.status,
+                        )
+                      }
+                      onClick={() =>
+                        setChangesNoteItemId(
+                          changesNoteItemId === selectedItem.id
+                            ? null
+                            : selectedItem.id,
+                        )
+                      }
+                      className="border border-primary-300 px-2.5 py-1 font-medium disabled:opacity-30"
+                    >
+                      Request changes
                     </button>
                     <button
                       type="button"
@@ -497,6 +537,36 @@ export function AutoplanInspector({
                       </button>
                     ) : null}
                   </div>
+
+                  {changesNoteItemId === selectedItem.id ? (
+                    <div className="flex flex-col gap-1.5 border border-primary-200 p-2">
+                      <textarea
+                        data-testid="webclaw-changes-note"
+                        value={changesNote}
+                        onChange={(e) => setChangesNote(e.target.value)}
+                        placeholder="What should the agent change?"
+                        rows={3}
+                        className="w-full border border-primary-200 p-1.5 font-mono text-[11px]"
+                      />
+                      <button
+                        type="button"
+                        data-testid="webclaw-request-changes-submit"
+                        disabled={!changesNote.trim()}
+                        onClick={() => {
+                          void decideItem(
+                            selectedItem.id,
+                            'request_changes',
+                            changesNote.trim(),
+                          )
+                          setChangesNoteItemId(null)
+                          setChangesNote('')
+                        }}
+                        className="self-start border border-primary-800 px-2.5 py-1 font-medium disabled:opacity-30"
+                      >
+                        Send to agent
+                      </button>
+                    </div>
+                  ) : null}
                 </>
               ) : (
                 <div className="text-primary-500">
