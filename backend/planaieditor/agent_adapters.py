@@ -641,6 +641,23 @@ class MiniMaxAdapter(AgentAdapter):
         except Exception:
             return {}
 
+    @staticmethod
+    def _clean_api_key(raw_key: str) -> str:
+        key = (raw_key or "").strip()
+        if not key:
+            return ""
+        if key.lower() in {
+            "sk-xxx",
+            "sk-xxxx",
+            "your-api-key",
+            "your_api_key",
+            "placeholder",
+            "none",
+            "null",
+        } or len(key) < 12:
+            return ""
+        return key
+
     def _api_credentials(self) -> tuple[str, str, str, List[str]]:
         """Return (api_key, base_url, default_model, available_models)."""
         cfg = self._config()
@@ -654,14 +671,16 @@ class MiniMaxAdapter(AgentAdapter):
             "minimax/MiniMax-M3.1-Flash",
         ]
         default_model = str(cfg.get("defaultModel") or models[0])
+        env_key = self._clean_api_key(os.environ.get("MINIMAX_API_KEY", ""))
+        cfg_key = self._clean_api_key(str(options.get("apiKey") or ""))
+        api_key = env_key or cfg_key
+        cfg_base = str(options.get("baseURL") or "").strip()
+        if env_key and not os.environ.get("MINIMAX_BASE_URL", "").strip() and "/mavis/" in cfg_base:
+            cfg_base = ""
         base_url = (
             os.environ.get("MINIMAX_BASE_URL", "").strip()
-            or str(options.get("baseURL") or "").strip()
+            or cfg_base
             or "https://api.minimax.io/anthropic/v1"
-        )
-        api_key = (
-            os.environ.get("MINIMAX_API_KEY", "").strip()
-            or str(options.get("apiKey") or "").strip()
         )
         return api_key, base_url, default_model, models
 
@@ -1010,27 +1029,41 @@ class AgentRunManager:
 
     def _finalize_demo_repo_commit(
         self, repo: Path, branch: str, run_id: str, service: str
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, str]:
+        head_branch = self._git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        active_branch = (
+            head_branch if head_branch and head_branch not in {"main", "HEAD"} else branch
+        )
+        if head_branch == "main":
+            self._git(repo, "checkout", active_branch)
+
         self._git(repo, "add", "-A")
         diff_cached = self._git(repo, "diff", "--cached", "--name-only")
         changed_files = [f.strip() for f in diff_cached.stdout.splitlines() if f.strip()]
-        if not changed_files:
+        if changed_files:
+            self._git(
+                repo,
+                "commit",
+                "-m",
+                f"feat({service}): complete simple task for {run_id}",
+            )
+
+        ahead_raw = self._git(repo, "rev-list", "--count", f"main..{active_branch}").stdout.strip()
+        try:
+            ahead_count = int(ahead_raw or "0")
+        except ValueError:
+            ahead_count = 0
+
+        if ahead_count <= 0:
             self._git(repo, "checkout", "main")
-            return False, ""
-        commit = self._git(
-            repo,
-            "commit",
-            "-m",
-            f"feat({service}): complete simple task for {run_id}",
-        )
-        if commit.returncode != 0:
-            self._git(repo, "checkout", "main")
-            return False, ""
-        sha = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+            self._git(repo, "clean", "-fd")
+            return False, "", active_branch
+
+        sha = self._git(repo, "rev-parse", active_branch).stdout.strip()
         self._git(repo, "checkout", "main")
         # Remove untracked agent scratch dirs so Chief's clean-tree check passes on main.
         self._git(repo, "clean", "-fd")
-        return True, sha
+        return True, sha, active_branch
 
     def dispatch_async(
         self,
@@ -1071,13 +1104,14 @@ class AgentRunManager:
             run_id=run_id,
         )
 
+        effective_prompt = prompt.replace("{WORKSPACE_DIR}", str(workspace_dir))
         selected_model = model or str(probe.get("default_model") or "")
         run = self.store.create_run(
             {
                 "id": run_id,
                 "service": service,
                 "model": selected_model,
-                "prompt": redact_secrets(prompt),
+                "prompt": redact_secrets(effective_prompt),
                 "cwd": str(workspace_dir),
                 "branch": branch_name,
                 "webclaw_session_key": webclaw_session_key,
@@ -1114,7 +1148,7 @@ class AgentRunManager:
 
             try:
                 result = adapter.dispatch(
-                    prompt=prompt,
+                    prompt=effective_prompt,
                     cwd=workspace_dir,
                     model=selected_model,
                     timeout=timeout,
@@ -1140,8 +1174,9 @@ class AgentRunManager:
             committed = False
             commit_sha = ""
             queue_item_id = ""
+            final_branch = branch_name
             if is_demo_repo and result.passed:
-                committed, commit_sha = self._finalize_demo_repo_commit(
+                committed, commit_sha, final_branch = self._finalize_demo_repo_commit(
                     workspace_dir, branch_name, run_id, service
                 )
                 if committed and submit_to_queue:
@@ -1152,13 +1187,13 @@ class AgentRunManager:
                             "title": queue_title or f"[{service}] {SIMPLE_DEMO_TASK_TITLE}",
                             "body": (
                                 f"Agent `{service}` (`{result.model}`) completed run `{run_id}` "
-                                f"in `{workspace_dir}` on branch `{branch_name}` (commit `{commit_sha[:10]}`).\n\n"
+                                f"in `{workspace_dir}` on branch `{final_branch}` (commit `{commit_sha[:10]}`).\n\n"
                                 f"Agent response:\n{result.response_text}"
                             ),
                             "repo_path": str(workspace_dir),
-                            "branch": branch_name,
+                            "branch": final_branch,
                             "target_branch": "main",
-                            "test_command": f"git grep -q {SIMPLE_DEMO_TASK_TOKEN} {branch_name} -- task_result.txt",
+                            "test_command": f"git grep -q {SIMPLE_DEMO_TASK_TOKEN} {final_branch} -- task_result.txt",
                             "priority": 25,
                         }
                     )
@@ -1250,14 +1285,24 @@ class AgentRunManager:
         webclaw_session_key: str = "",
     ) -> Dict[str, Any]:
         chosen_service = (service or "").strip() or self.default_dispatch_service()
+        resolved_session_key = (webclaw_session_key or "").strip()
+        if resolved_session_key and resolved_session_key != "new":
+            sess = self.store.get_chat_session(resolved_session_key)
+            if sess is None and resolved_session_key == "main":
+                sess = self.store.get_or_create_main_chat_session(default_service=chosen_service)
+            if sess is not None:
+                resolved_session_key = sess["key"]
+        elif resolved_session_key == "new":
+            resolved_session_key = ""
+
         prompt = custom_prompt.strip() or (
-            f"Create a file named task_result.txt in the current working directory containing "
-            f"exact single-line text '{SIMPLE_DEMO_TASK_TOKEN} generated by {chosen_service}' "
-            f"and then reply with a short one-sentence confirmation."
+            f"Create the file '{{WORKSPACE_DIR}}/task_result.txt' inside workspace directory '{{WORKSPACE_DIR}}' "
+            f"containing exact single-line text '{SIMPLE_DEMO_TASK_TOKEN} generated by {chosen_service}' "
+            f"and then reply with a short one-sentence confirmation. Do not write outside '{{WORKSPACE_DIR}}'."
         )
-        if webclaw_session_key:
+        if resolved_session_key:
             self.store.add_chat_message(
-                session_key=webclaw_session_key,
+                session_key=resolved_session_key,
                 role="user",
                 text=f"[Simple Task → {chosen_service}] {prompt}",
                 details={"service": chosen_service, "kind": "demo_task"},
@@ -1265,7 +1310,7 @@ class AgentRunManager:
         return self.dispatch_async(
             service=chosen_service,
             prompt=prompt,
-            webclaw_session_key=webclaw_session_key,
+            webclaw_session_key=resolved_session_key,
             submit_to_queue=True,
             queue_title=f"[{chosen_service}] {SIMPLE_DEMO_TASK_TITLE}",
             is_demo_repo=True,

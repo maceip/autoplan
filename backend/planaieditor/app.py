@@ -1384,6 +1384,18 @@ def main():
         default="",
         help="Additional arguments to pass to the jedi-language-server.",
     )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("PORT", "5001")),
+        help="Port to bind the server on (default: 5001).",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="localhost",
+        help="Host interface to bind (default: localhost).",
+    )
     args = parser.parse_args()
     queue_root = args.root_path if args.root_path else Path.cwd()
     setup_filesystem(app, queue_root)
@@ -1398,8 +1410,8 @@ def main():
     # Use different settings for development vs production
     run_config = {
         "app": app,
-        "host": "localhost",  # Listen only on localhost because of dangerous exposed interfaces
-        "port": 5001,
+        "host": args.host,  # Listen only on localhost because of dangerous exposed interfaces
+        "port": args.port,
     }
     if is_development:
         run_config["debug"] = True

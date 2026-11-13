@@ -1,0 +1,26 @@
+{
+  "name": "webclaw-monorepo",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "pnpm -C apps/webclaw dev",
+    "build": "pnpm -C apps/webclaw build",
+    "landing:dev": "pnpm -C apps/landing dev",
+    "landing:build": "pnpm -C apps/landing build",
+    "landing:deploy": "pnpm landing:build && pnpm -C apps/landing run deploy",
+    "landing:preview": "pnpm -C apps/landing preview",
+    "preview": "pnpm -C apps/webclaw preview",
+    "test": "pnpm -C apps/webclaw test",
+    "lint": "pnpm -C apps/webclaw lint",
+    "format": "pnpm -C apps/webclaw format",
+    "check": "pnpm -C apps/webclaw check",
+    "release:webclaw": "pnpm -C packages/webclaw exec npm publish --access public",
+    "bump:webclaw:patch": "pnpm -C packages/webclaw version patch --no-git-tag-version",
+    "bump:webclaw:minor": "pnpm -C packages/webclaw version minor --no-git-tag-version",
+    "bump:webclaw:major": "pnpm -C packages/webclaw version major --no-git-tag-version",
+    "postinstall": "lefthook install || true"
+  },
+  "devDependencies": {
+    "lefthook": "^1.11.1"
+  }
+}

@@ -1,2 +1,7 @@
 .DS_Store
 .planai-queue/
+webclaw/**/node_modules/
+webclaw/**/dist/
+webclaw/**/.tanstack/
+webclaw/**/.nitro/
+webclaw/**/.output/

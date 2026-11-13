@@ -24,6 +24,15 @@
 	};
 	type QueueEvent = { type: string; message: string; created_at: number };
 	type QueueDecision = { action: string; note: string; actor: string; created_at: number };
+	type AgentService = {
+		service: string;
+		display_name: string;
+		mode: 'dispatch' | 'observe_only';
+		dispatch_ready: boolean;
+		default_model: string;
+		observed_sessions_count: number;
+		auth_status: string;
+	};
 
 	const STATUS_FILTERS = [
 		'',
@@ -53,6 +62,9 @@
 	let statusFilter = $state('');
 	let counts = $state<Record<string, number>>({});
 	let chiefStatus = $state('');
+	let agentServices = $state<AgentService[]>([]);
+	let selectedDemoService = $state('');
+	let spinningDemo = $state(false);
 	let errorMessage = $state('');
 	let changesNote = $state('');
 	let showChangesForm = $state(false);
@@ -102,15 +114,40 @@
 			const stats = await api('/api/queue/stats');
 			counts = stats.counts as Record<string, number>;
 			chiefStatus = (stats.chief as Record<string, unknown>).llm_status as string;
+			const agentsPayload = await api('/api/agents');
+			agentServices = (agentsPayload.services as AgentService[]) ?? [];
+			if (!selectedDemoService && agentServices.length > 0) {
+				selectedDemoService =
+					(agentsPayload.default_service as string) ?? agentServices[0].service;
+			}
 			errorMessage = '';
 		} catch (error) {
 			errorMessage = error instanceof Error ? error.message : String(error);
 		}
 	}
 
+	async function runDemoTask() {
+		if (!selectedDemoService) return;
+		spinningDemo = true;
+		try {
+			await api('/api/agents/demo-task', {
+				method: 'POST',
+				body: JSON.stringify({ service: selectedDemoService })
+			});
+			await refreshList();
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : String(error);
+		} finally {
+			spinningDemo = false;
+		}
+	}
+
 	async function selectItem(itemId: string) {
+		if (selectedId !== itemId) {
+			showChangesForm = false;
+			changesNote = '';
+		}
 		selectedId = itemId;
-		showChangesForm = false;
 		try {
 			detail = (await api(`/api/queue/items/${itemId}`)) as unknown as {
 				item: QueueItem;
@@ -231,7 +268,7 @@
 		socket = io(backendUrl || window.location.origin);
 		socket.on('queue_updated', () => {
 			void refreshList().then(() => {
-				if (selectedId) void selectItem(selectedId);
+				if (selectedId && !showChangesForm) void selectItem(selectedId);
 			});
 		});
 		pollTimer = setInterval(() => void refreshList(), 5000);
@@ -254,7 +291,30 @@
 				<span class="mr-3">{status}: <strong class="text-neutral-100">{n}</strong></span>
 			{/each}
 		</span>
-		<span class="ml-auto flex items-center gap-4 text-xs">
+		<span class="ml-auto flex items-center gap-3 text-xs">
+			{#if agentServices.length > 0}
+				<select
+					aria-label="Demo task agent"
+					data-testid="queue-agent-select"
+					bind:value={selectedDemoService}
+					class="border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs"
+				>
+					{#each agentServices as svc}
+						<option value={svc.service} disabled={!svc.dispatch_ready}>
+							{svc.display_name} ({svc.mode === 'dispatch' ? svc.default_model : 'observe_only'}) · {svc.observed_sessions_count}s
+						</option>
+					{/each}
+				</select>
+				<button
+					type="button"
+					data-testid="queue-demo-task-button"
+					disabled={spinningDemo || !agentServices.find((s) => s.service === selectedDemoService)?.dispatch_ready}
+					onclick={() => void runDemoTask()}
+					class="border border-neutral-100 bg-neutral-100 px-3 py-1 font-bold text-neutral-950 disabled:opacity-40"
+				>
+					{spinningDemo ? 'Spinning up…' : 'Run Simple Task'}
+				</button>
+			{/if}
 			<button
 				type="button"
 				data-testid="voice-button"

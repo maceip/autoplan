@@ -68,7 +68,7 @@ def test_observe_only_minimax_rejects_dispatch_honestly(tmp_path: Path, monkeypa
     fake_minimax_dir = tmp_path / "minimax_home"
     fake_minimax_dir.mkdir()
     (fake_minimax_dir / "config.yaml").write_text(
-        "defaultModel: minimax/MiniMax-M3\nprovider:\n  minimax:\n    options:\n      baseURL: https://api.minimax.io/anthropic/v1\n",
+        "defaultModel: minimax/MiniMax-M3\nprovider:\n  minimax:\n    options:\n      baseURL: https://agent.minimax.io/mavis/api/v1/llm/v1\n      apiKey: sk-xxx\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("MINIMAX_DATA_DIR", str(fake_minimax_dir))
