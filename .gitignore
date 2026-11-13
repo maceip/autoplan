@@ -5,3 +5,5 @@ webclaw/**/dist/
 webclaw/**/.tanstack/
 webclaw/**/.nitro/
 webclaw/**/.output/
+
+.build/
