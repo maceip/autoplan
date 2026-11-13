@@ -194,7 +194,11 @@ export function AutoplanInspector({
     }
   }, [])
 
-  async function decideItem(itemId: string, action: string, note = '') {
+  async function decideItem(
+    itemId: string,
+    action: string,
+    note = '',
+  ): Promise<boolean> {
     try {
       const res = await fetch(`/api/autoplan/queue/items/${itemId}/decision`, {
         method: 'POST',
@@ -209,8 +213,10 @@ export function AutoplanInspector({
         throw new Error(payload.error || `Decision HTTP ${res.status}`)
       }
       await refreshQueueAndRuns()
+      return true
     } catch (err) {
       setInspectorError(err instanceof Error ? err.message : String(err))
+      return false
     }
   }
 
@@ -552,14 +558,16 @@ export function AutoplanInspector({
                         type="button"
                         data-testid="webclaw-request-changes-submit"
                         disabled={!changesNote.trim()}
-                        onClick={() => {
-                          void decideItem(
+                        onClick={async () => {
+                          const ok = await decideItem(
                             selectedItem.id,
                             'request_changes',
                             changesNote.trim(),
                           )
-                          setChangesNoteItemId(null)
-                          setChangesNote('')
+                          if (ok) {
+                            setChangesNoteItemId(null)
+                            setChangesNote('')
+                          }
                         }}
                         className="self-start border border-primary-800 px-2.5 py-1 font-medium disabled:opacity-30"
                       >

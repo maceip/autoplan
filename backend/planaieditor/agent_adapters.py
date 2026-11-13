@@ -1076,7 +1076,12 @@ class AgentRunManager:
         """
         head = self._git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
         if head != branch:
-            self._git(repo, "checkout", branch)
+            checkout = self._git(repo, "checkout", branch)
+            if checkout.returncode != 0:
+                raise RuntimeError(
+                    f"Could not return to rework branch '{branch}' "
+                    f"(agent left HEAD on '{head}'): {_tail(checkout.stdout + checkout.stderr, 400)}"
+                )
         self._git(repo, "add", "-A")
         staged = self._git(repo, "diff", "--cached", "--name-only").stdout.strip()
         if not staged:
@@ -1092,6 +1097,18 @@ class AgentRunManager:
                 f"Rework commit failed: {_tail(commit.stdout + commit.stderr, 400)}"
             )
         return True, self._git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    def _restore_rework_workspace(self, repo: Path, branch: str) -> None:
+        """Discard uncommitted changes after a failed rework run.
+
+        The workspace was verified clean when the rework was dispatched, so
+        everything dirty or untracked at this point was produced by the failed
+        agent run; discarding it keeps the item land-able and the next rework
+        dispatchable.
+        """
+        self._git(repo, "checkout", "-f", branch)
+        self._git(repo, "reset", "--hard", "HEAD")
+        self._git(repo, "clean", "-fd")
 
     def dispatch_async(
         self,
@@ -1203,160 +1220,168 @@ class AgentRunManager:
             finally:
                 with self._proc_lock:
                     self._active_procs.pop(run_id, None)
-                self.store.release_ownership(run_id)
 
-            current = self.store.get_run(run_id)
-            if current and current["state"] == "stopped":
-                return
+            # Hold the workspace ownership claim through commit finalization
+            # and run/item updates, so a concurrent dispatch cannot claim the
+            # same repo+branch while this run is still committing. Released in
+            # the finally below (stop_run releases for stopped runs).
+            try:
+                current = self.store.get_run(run_id)
+                if current and current["state"] == "stopped":
+                    return
 
-            committed = False
-            commit_sha = ""
-            queue_item_id = ""
-            final_branch = branch_name
-            if rework_item_id:
-                queue_item_id = rework_item_id
-                item = self.store.get_item(rework_item_id)
-                if item is not None:
-                    finalize_error = ""
-                    if result.passed:
-                        try:
-                            committed, commit_sha = self._finalize_rework_commit(
-                                workspace_dir, branch_name, run_id, service
+                committed = False
+                commit_sha = ""
+                queue_item_id = ""
+                final_branch = branch_name
+                if rework_item_id:
+                    queue_item_id = rework_item_id
+                    item = self.store.get_item(rework_item_id)
+                    if item is not None:
+                        finalize_error = ""
+                        if result.passed:
+                            try:
+                                committed, commit_sha = self._finalize_rework_commit(
+                                    workspace_dir, branch_name, run_id, service
+                                )
+                            except Exception as exc:
+                                finalize_error = str(exc)
+                        if result.passed and not finalize_error:
+                            note = (
+                                f"commit {commit_sha[:10]}"
+                                if committed
+                                else "agent made no file changes"
                             )
-                        except Exception as exc:
-                            finalize_error = str(exc)
-                    if result.passed and not finalize_error:
-                        note = (
-                            f"commit {commit_sha[:10]}"
-                            if committed
-                            else "agent made no file changes"
+                            self.store.add_event(
+                                rework_item_id,
+                                "rework_completed",
+                                f"Rework run {run_id} finished ({note}); re-queued for chief preparation.",
+                            )
+                            updated_item = self.store.update_item(
+                                rework_item_id,
+                                status="queued",
+                                body=(item["body"] or "")
+                                + f"\n\n[Rework by {service} run {run_id}] "
+                                + (result.response_text or "").strip()[:500],
+                            )
+                        else:
+                            reason = (
+                                finalize_error
+                                or f"run failed (exit {result.exit_code})"
+                            )
+                            self._restore_rework_workspace(workspace_dir, branch_name)
+                            self.store.add_event(
+                                rework_item_id,
+                                "rework_failed",
+                                f"Rework run {run_id}: {reason}; returned to review. "
+                                "Workspace restored to the branch's last commit.",
+                            )
+                            updated_item = self.store.update_item(
+                                rework_item_id, status="needs_review"
+                            )
+                        if updated_item is not None:
+                            self._on_event("queue_item_created", {"item": updated_item})
+                elif is_demo_repo and result.passed:
+                    committed, commit_sha, final_branch = self._finalize_demo_repo_commit(
+                        workspace_dir, branch_name, run_id, service
+                    )
+                    if committed and submit_to_queue:
+                        q_item = self.store.create_item(
+                            {
+                                "source_agent": service,
+                                "kind": "code_change",
+                                "title": queue_title or f"[{service}] {SIMPLE_DEMO_TASK_TITLE}",
+                                "body": (
+                                    f"Agent `{service}` (`{result.model}`) completed run `{run_id}` "
+                                    f"in `{workspace_dir}` on branch `{final_branch}` (commit `{commit_sha[:10]}`).\n\n"
+                                    f"Agent response:\n{result.response_text}"
+                                ),
+                                "repo_path": str(workspace_dir),
+                                "branch": final_branch,
+                                "target_branch": "main",
+                                "test_command": f"git grep -q {SIMPLE_DEMO_TASK_TOKEN} {final_branch} -- task_result.txt",
+                                "priority": 25,
+                            }
                         )
-                        self.store.add_event(
-                            rework_item_id,
-                            "rework_completed",
-                            f"Rework run {run_id} finished ({note}); re-queued for chief preparation.",
-                        )
-                        updated_item = self.store.update_item(
-                            rework_item_id,
-                            status="queued",
-                            body=(item["body"] or "")
-                            + f"\n\n[Rework by {service} run {run_id}] "
-                            + (result.response_text or "").strip()[:500],
-                        )
-                    else:
-                        reason = (
-                            finalize_error
-                            or f"run failed (exit {result.exit_code})"
-                        )
-                        self.store.add_event(
-                            rework_item_id,
-                            "rework_failed",
-                            f"Rework run {run_id}: {reason}; returned to review.",
-                        )
-                        updated_item = self.store.update_item(
-                            rework_item_id, status="needs_review"
-                        )
-                    if updated_item is not None:
-                        self._on_event("queue_item_created", {"item": updated_item})
-            elif is_demo_repo and result.passed:
-                committed, commit_sha, final_branch = self._finalize_demo_repo_commit(
-                    workspace_dir, branch_name, run_id, service
-                )
-                if committed and submit_to_queue:
+                        queue_item_id = q_item["id"]
+                        self._on_event("queue_item_created", {"item": q_item})
+                elif submit_to_queue and result.passed:
                     q_item = self.store.create_item(
                         {
                             "source_agent": service,
-                            "kind": "code_change",
-                            "title": queue_title or f"[{service}] {SIMPLE_DEMO_TASK_TITLE}",
+                            "kind": "task",
+                            "title": queue_title or f"[{service}] {prompt[:64]}",
                             "body": (
-                                f"Agent `{service}` (`{result.model}`) completed run `{run_id}` "
-                                f"in `{workspace_dir}` on branch `{final_branch}` (commit `{commit_sha[:10]}`).\n\n"
-                                f"Agent response:\n{result.response_text}"
+                                f"Run `{run_id}` (`{service}` / `{result.model}`)\n\n"
+                                f"{result.response_text}"
                             ),
-                            "repo_path": str(workspace_dir),
-                            "branch": final_branch,
-                            "target_branch": "main",
-                            "test_command": f"git grep -q {SIMPLE_DEMO_TASK_TOKEN} {final_branch} -- task_result.txt",
-                            "priority": 25,
+                            "priority": 15,
                         }
                     )
                     queue_item_id = q_item["id"]
                     self._on_event("queue_item_created", {"item": q_item})
-            elif submit_to_queue and result.passed:
-                q_item = self.store.create_item(
-                    {
-                        "source_agent": service,
-                        "kind": "task",
-                        "title": queue_title or f"[{service}] {prompt[:64]}",
-                        "body": (
-                            f"Run `{run_id}` (`{service}` / `{result.model}`)\n\n"
-                            f"{result.response_text}"
-                        ),
-                        "priority": 15,
-                    }
-                )
-                queue_item_id = q_item["id"]
-                self._on_event("queue_item_created", {"item": q_item})
 
-            meta = dict(result.metadata or {})
-            meta["is_demo_repo"] = is_demo_repo
-            meta["rework_item_id"] = rework_item_id
-            meta["duration_s"] = result.duration_s
-            if commit_sha:
-                meta["branch_commit"] = commit_sha
-
-            final_state = "succeeded" if result.passed else "failed"
-            updated_run = self.store.update_run(
-                run_id,
-                session_id=result.session_id,
-                queue_item_id=queue_item_id,
-                state=final_state,
-                exit_code=result.exit_code,
-                response_text=result.response_text,
-                stdout_tail=result.stdout_tail,
-                stderr_tail=result.stderr_tail,
-                metadata=meta,
-                finished_at=time.time(),
-            )
-            self._on_event("run_updated", {"run": updated_run})
-
-            if webclaw_session_key:
-                summary_lines = [result.response_text or "(no text output)"]
+                meta = dict(result.metadata or {})
+                meta["is_demo_repo"] = is_demo_repo
+                meta["rework_item_id"] = rework_item_id
+                meta["duration_s"] = result.duration_s
                 if commit_sha:
-                    summary_lines.append(
-                        f"\n\nCommitted `{commit_sha[:10]}` on `{branch_name}` in `{workspace_dir}`."
-                    )
-                if queue_item_id:
-                    summary_lines.append(
-                        f"Queued for Chief of Staff review as item `{queue_item_id}`."
-                    )
-                if not result.passed and result.stderr_tail:
-                    summary_lines.append(f"\n\nStderr:\n```\n{result.stderr_tail[-800:]}\n```")
+                    meta["branch_commit"] = commit_sha
 
-                saved_msg = self.store.add_chat_message(
-                    session_key=webclaw_session_key,
-                    role="assistant",
-                    text="\n".join(summary_lines).strip(),
-                    details={
-                        "runId": run_id,
-                        "service": service,
-                        "model": result.model,
-                        "sessionId": result.session_id,
-                        "queueItemId": queue_item_id,
-                        "exitCode": result.exit_code,
-                        "durationS": result.duration_s,
-                    },
-                    is_error=not result.passed,
+                final_state = "succeeded" if result.passed else "failed"
+                updated_run = self.store.update_run(
+                    run_id,
+                    session_id=result.session_id,
+                    queue_item_id=queue_item_id,
+                    state=final_state,
+                    exit_code=result.exit_code,
+                    response_text=result.response_text,
+                    stdout_tail=result.stdout_tail,
+                    stderr_tail=result.stderr_tail,
+                    metadata=meta,
+                    finished_at=time.time(),
                 )
-                self._on_event(
-                    "webclaw_chat",
-                    {
-                        "runId": run_id,
-                        "sessionKey": webclaw_session_key,
-                        "state": "final" if result.passed else "error",
-                        "message": saved_msg,
-                    },
-                )
+                self._on_event("run_updated", {"run": updated_run})
+
+                if webclaw_session_key:
+                    summary_lines = [result.response_text or "(no text output)"]
+                    if commit_sha:
+                        summary_lines.append(
+                            f"\n\nCommitted `{commit_sha[:10]}` on `{branch_name}` in `{workspace_dir}`."
+                        )
+                    if queue_item_id:
+                        summary_lines.append(
+                            f"Queued for Chief of Staff review as item `{queue_item_id}`."
+                        )
+                    if not result.passed and result.stderr_tail:
+                        summary_lines.append(f"\n\nStderr:\n```\n{result.stderr_tail[-800:]}\n```")
+
+                    saved_msg = self.store.add_chat_message(
+                        session_key=webclaw_session_key,
+                        role="assistant",
+                        text="\n".join(summary_lines).strip(),
+                        details={
+                            "runId": run_id,
+                            "service": service,
+                            "model": result.model,
+                            "sessionId": result.session_id,
+                            "queueItemId": queue_item_id,
+                            "exitCode": result.exit_code,
+                            "durationS": result.duration_s,
+                        },
+                        is_error=not result.passed,
+                    )
+                    self._on_event(
+                        "webclaw_chat",
+                        {
+                            "runId": run_id,
+                            "sessionKey": webclaw_session_key,
+                            "state": "final" if result.passed else "error",
+                            "message": saved_msg,
+                        },
+                    )
+            finally:
+                self.store.release_ownership(run_id)
 
         thread = threading.Thread(target=_worker, daemon=True, name=f"agent-run-{run_id}")
         thread.start()
