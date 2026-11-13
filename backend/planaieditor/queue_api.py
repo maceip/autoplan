@@ -9,6 +9,7 @@ Any agent or UI submits work or dispatches live runs over localhost HTTP:
 
 import json
 import queue
+import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -33,16 +34,9 @@ _ALLOWED_FROM = {
     "snooze": {"needs_review", "queued", "triaged"},
 }
 
-_LOCALHOST_ORIGINS = {
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3001",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:5001",
-    "http://127.0.0.1:5001",
-}
+# Any localhost origin may call the API: the server binds to localhost and the
+# dev ports drift (3000/3050 WebClaw, 5173 Svelte dev, 5001/5051 backend).
+_LOCALHOST_ORIGIN_RE = re.compile(r"^https?://(localhost|127\.0\.0\.1)(:\d{1,5})?$")
 
 
 def setup_queue(
@@ -106,6 +100,7 @@ def setup_queue(
 
     chief = ChiefOfStaff(store, root_path, emit=emit_update)
     agent_manager = AgentRunManager(store, root_path, on_event=on_agent_event)
+    chief.rework_dispatcher = agent_manager.start_rework_for_item
     app.config["QUEUE_STORE"] = store
     app.config["CHIEF"] = chief
     app.config["AGENT_MANAGER"] = agent_manager
@@ -113,7 +108,7 @@ def setup_queue(
     @app.after_request
     def add_localhost_cors(response: Response) -> Response:
         origin = request.headers.get("Origin", "")
-        if origin in _LOCALHOST_ORIGINS:
+        if _LOCALHOST_ORIGIN_RE.match(origin):
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"

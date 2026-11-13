@@ -1,3 +1,16 @@
+# PlanAI Editor + AutoPlan Multi-Agent Orchestrator
+
+This fork layers a lead-agent orchestrator on top of the PlanAI Editor backend:
+
+*   **Chief-of-Staff review queue** (`backend/planaieditor/chief.py`, `queue_store.py`, `queue_api.py`): every agent submits work to one persistent SQLite-backed queue; the chief triages (PlanAI LLM graph when `CHIEF_LLM_PROVIDER`/`CHIEF_LLM_MODEL` are set, deterministic rules otherwise), runs real test commands, captures Playwright evidence, and lands approved code changes via real git merges. Humans only decide: approve, reject, request changes, snooze.
+*   **Agent adapters** (`backend/planaieditor/agent_adapters.py`): Antigravity (`agy`), Xiaomi MiMo (`mimo`), and MiniMax adapters with honest capability probing — a service without headless credentials reports `observe_only` and refuses dispatch. Runs, workspace ownership claims, and chat sessions are persisted in the same store.
+*   **Rework loop**: when an operator requests changes on a code change, the chief re-dispatches the item to its source agent in the item's workspace and branch with the operator's note; the agent's new commit flows back through triage, tests, and review. Items from non-dispatchable sources are re-queued with the note for manual follow-up.
+*   **WebClaw workbench** (`webclaw/`): chat-first frontend with a queue/runs/agents inspector, proxying to the backend (`AUTOPLAN_BACKEND_URL`). A Svelte `/queue` triage UI also ships in `frontend/`.
+
+See [DEMO.md](DEMO.md) for the end-to-end walkthrough and verification commands.
+
+---
+
 # PlanAI Editor
 
 [![PyPI version](https://badge.fury.io/py/planaieditor.svg)](https://badge.fury.io/py/planaieditor)

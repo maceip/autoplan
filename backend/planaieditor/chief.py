@@ -51,6 +51,13 @@ class ChiefOfStaff:
         self.root_path = Path(root_path).resolve()
         self.evidence_root = self.root_path / ".planai-queue" / "evidence"
         self._emit = emit or (lambda item: None)
+        # Set by setup_queue once the AgentRunManager exists. Called with
+        # (item, operator_note); returns the started rework run dict, or None
+        # when the source agent cannot be dispatched (unknown service,
+        # observe-only, missing repo/branch).
+        self.rework_dispatcher: Optional[
+            Callable[[Dict[str, Any], str], Optional[Dict[str, Any]]]
+        ] = None
         self._llm = None
         self.llm_status = "not configured (set CHIEF_LLM_PROVIDER and CHIEF_LLM_MODEL)"
         self._init_llm()
@@ -347,11 +354,39 @@ class ChiefOfStaff:
         for item in self.store.list_items(status="changes_requested"):
             decisions = self.store.list_decisions(item["id"])
             last_note = decisions[-1]["note"] if decisions else ""
+            dispatched = False
+            if (
+                self.rework_dispatcher is not None
+                and item["kind"] == "code_change"
+                and item.get("repo_path")
+                and item.get("branch")
+            ):
+                try:
+                    run = self.rework_dispatcher(item, last_note)
+                except Exception as exc:
+                    self.store.add_event(
+                        item["id"],
+                        "rework_dispatch_failed",
+                        f"Could not dispatch rework to {item['source_agent']}: {exc}",
+                    )
+                else:
+                    if run:
+                        self.store.add_event(
+                            item["id"],
+                            "rework_dispatched",
+                            f"Rework run {run['id']} started on {item['source_agent']} "
+                            f"(branch {item['branch']}) with operator note.",
+                        )
+                        self._transition(item, status="in_progress")
+                        dispatched = True
+            if dispatched:
+                continue
             body = (item["body"] or "") + f"\n\n[Operator requested changes] {last_note}"
             self.store.add_event(
                 item["id"],
                 "requeued_for_rework",
-                f"Returned to {item['source_agent']} via queue with operator note.",
+                f"No dispatchable agent for '{item['source_agent']}'; "
+                "re-queued with the operator note for manual follow-up.",
             )
             self._transition(item, status="queued", body=body)
 

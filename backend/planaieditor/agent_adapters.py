@@ -118,6 +118,9 @@ def _ro_sqlite(path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2.0)
 
 
+Tuple_Models = tuple[str, List[str], List[str]]
+
+
 @dataclass
 class AdapterRunResult:
     passed: bool
@@ -622,9 +625,6 @@ class XiaomiMimoAdapter(AgentAdapter):
         )
 
 
-Tuple_Models = tuple[str, List[str], List[str]]
-
-
 class MiniMaxAdapter(AgentAdapter):
     service_id = "minimax"
     display_name = "MiniMax"
@@ -1065,6 +1065,30 @@ class AgentRunManager:
         self._git(repo, "clean", "-fd")
         return True, sha, active_branch
 
+    def _finalize_rework_commit(
+        self, repo: Path, branch: str, run_id: str, service: str
+    ) -> tuple[bool, str]:
+        """Commit rework output on the item's existing branch.
+
+        Unlike the demo finalize, this never runs `git clean` and leaves the
+        repo on the rework branch: the repo may be a real project checkout,
+        not an isolated demo workspace.
+        """
+        head = self._git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if head != branch:
+            self._git(repo, "checkout", branch)
+        self._git(repo, "add", "-A")
+        staged = self._git(repo, "diff", "--cached", "--name-only").stdout.strip()
+        if not staged:
+            return False, ""
+        self._git(
+            repo,
+            "commit",
+            "-m",
+            f"rework({service}): address operator feedback for {run_id}",
+        )
+        return True, self._git(repo, "rev-parse", "HEAD").stdout.strip()
+
     def dispatch_async(
         self,
         *,
@@ -1077,6 +1101,7 @@ class AgentRunManager:
         submit_to_queue: bool = False,
         queue_title: str = "",
         is_demo_repo: bool = False,
+        rework_item_id: str = "",
         timeout: int = 180,
     ) -> Dict[str, Any]:
         adapter = self.get_adapter(service)
@@ -1104,6 +1129,14 @@ class AgentRunManager:
             run_id=run_id,
         )
 
+        if rework_item_id:
+            checkout = self._git(workspace_dir, "checkout", branch_name)
+            if checkout.returncode != 0:
+                self.store.release_ownership(run_id)
+                raise RuntimeError(
+                    f"Cannot check out rework branch '{branch_name}': {_tail(checkout.stderr, 400)}"
+                )
+
         effective_prompt = prompt.replace("{WORKSPACE_DIR}", str(workspace_dir))
         selected_model = model or str(probe.get("default_model") or "")
         run = self.store.create_run(
@@ -1115,8 +1148,9 @@ class AgentRunManager:
                 "cwd": str(workspace_dir),
                 "branch": branch_name,
                 "webclaw_session_key": webclaw_session_key,
+                "queue_item_id": rework_item_id,
                 "state": "running",
-                "metadata": {"is_demo_repo": is_demo_repo},
+                "metadata": {"is_demo_repo": is_demo_repo, "rework_item_id": rework_item_id},
             }
         )
         self._on_event("run_started", {"run": run})
@@ -1175,7 +1209,43 @@ class AgentRunManager:
             commit_sha = ""
             queue_item_id = ""
             final_branch = branch_name
-            if is_demo_repo and result.passed:
+            if rework_item_id:
+                queue_item_id = rework_item_id
+                item = self.store.get_item(rework_item_id)
+                if item is not None:
+                    if result.passed:
+                        committed, commit_sha = self._finalize_rework_commit(
+                            workspace_dir, branch_name, run_id, service
+                        )
+                        note = (
+                            f"commit {commit_sha[:10]}"
+                            if committed
+                            else "agent made no file changes"
+                        )
+                        self.store.add_event(
+                            rework_item_id,
+                            "rework_completed",
+                            f"Rework run {run_id} finished ({note}); re-queued for chief preparation.",
+                        )
+                        updated_item = self.store.update_item(
+                            rework_item_id,
+                            status="queued",
+                            body=(item["body"] or "")
+                            + f"\n\n[Rework by {service} run {run_id}] "
+                            + (result.response_text or "").strip()[:500],
+                        )
+                    else:
+                        self.store.add_event(
+                            rework_item_id,
+                            "rework_failed",
+                            f"Rework run {run_id} failed (exit {result.exit_code}); returned to review.",
+                        )
+                        updated_item = self.store.update_item(
+                            rework_item_id, status="needs_review"
+                        )
+                    if updated_item is not None:
+                        self._on_event("queue_item_created", {"item": updated_item})
+            elif is_demo_repo and result.passed:
                 committed, commit_sha, final_branch = self._finalize_demo_repo_commit(
                     workspace_dir, branch_name, run_id, service
                 )
@@ -1314,6 +1384,38 @@ class AgentRunManager:
             submit_to_queue=True,
             queue_title=f"[{chosen_service}] {SIMPLE_DEMO_TASK_TITLE}",
             is_demo_repo=True,
+        )
+
+    def start_rework_for_item(
+        self, item: Dict[str, Any], operator_note: str
+    ) -> Optional[Dict[str, Any]]:
+        """Dispatch an operator's change request back to the item's source agent.
+
+        Returns the started run, or None when the source agent is not a
+        dispatch-ready adapter or the item has no usable workspace — the chief
+        then falls back to re-queueing the item with the note for a human.
+        """
+        service = str(item.get("source_agent") or "").strip()
+        adapter = self.adapters.get(service)
+        if adapter is None or not adapter.probe().get("dispatch_ready"):
+            return None
+        repo = Path(str(item.get("repo_path") or "")).resolve()
+        branch = str(item.get("branch") or "").strip()
+        if not branch or not (repo / ".git").exists():
+            return None
+        prompt = (
+            f"You previously completed this task in workspace '{repo}':\n"
+            f"{item.get('title', '')}\n\n"
+            f"A human reviewer requested changes:\n{operator_note or '(no note given)'}\n\n"
+            f"Apply the requested changes to the files in '{repo}'. "
+            f"Do not write outside '{repo}'. Reply with a short summary of what you changed."
+        )
+        return self.dispatch_async(
+            service=service,
+            prompt=prompt,
+            cwd=repo,
+            branch=branch,
+            rework_item_id=item["id"],
         )
 
     def stop_run(self, run_id: str) -> Optional[Dict[str, Any]]:
