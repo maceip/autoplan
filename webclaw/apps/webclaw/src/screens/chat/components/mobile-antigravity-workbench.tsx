@@ -248,7 +248,7 @@ export function MobileAntigravityWorkbench({
   )
   const [openSection, setOpenSection] = useState<
     'queue' | 'runs' | 'agents' | 'observed' | null
-  >('queue')
+  >(null)
   const [queueFilter, setQueueFilter] = useState<string>('')
   const [items, setItems] = useState<Array<QueueItem>>([])
   const [runs, setRuns] = useState<Array<AgentRun>>([])
@@ -1117,22 +1117,24 @@ export function MobileAntigravityWorkbench({
 
       {/* Full-Screen Session Message Stream */}
       <main className="flex flex-1 min-h-0 flex-col overflow-hidden">
-        <ChatMessageList
-          messages={displayMessages}
-          loading={historyLoading}
-          empty={historyEmpty}
-          notice={gatewayNotice}
-          noticePosition="end"
-          waitingForResponse={waitingForResponse}
-          sessionKey={activeCanonicalKey}
-          pinToTop={pinToTop}
-          pinGroupMinHeight={pinGroupMinHeight}
-          headerHeight={headerHeight}
-          contentStyle={stableContentStyle}
-        />
+        <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
+          <ChatMessageList
+            messages={displayMessages}
+            loading={historyLoading}
+            empty={historyEmpty}
+            notice={gatewayNotice}
+            noticePosition="end"
+            waitingForResponse={waitingForResponse}
+            sessionKey={activeCanonicalKey}
+            pinToTop={pinToTop}
+            pinGroupMinHeight={pinGroupMinHeight}
+            headerHeight={headerHeight}
+            contentStyle={stableContentStyle}
+          />
+        </div>
 
         {/* Bottom Antigravity Session Composer */}
-        <div className="shrink-0 px-3 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="z-10 shrink-0 bg-[#002b36] px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <div className="rounded-[24px] border border-[#1e444e] bg-[#0c3540] px-3.5 pt-2.5 pb-2.5">
             <AttachmentPreviewList
               attachments={attachments}
