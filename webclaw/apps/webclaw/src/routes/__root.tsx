@@ -50,27 +50,43 @@ export const Route = createRootRoute({
         content: 'width=device-width, initial-scale=1, viewport-fit=cover',
       },
       {
-        title: 'WebClaw',
+        title: 'autobot',
       },
       {
         name: 'description',
-        content: 'a fast web client for OpenClaw',
+        content: 'Multi-agent Chief of Staff and lead agent workbench',
+      },
+      {
+        name: 'theme-color',
+        content: '#002b36',
+      },
+      {
+        property: 'og:title',
+        content: 'autobot',
+      },
+      {
+        property: 'og:description',
+        content: 'Multi-agent Chief of Staff and lead agent workbench',
+      },
+      {
+        property: 'og:type',
+        content: 'website',
       },
       {
         property: 'og:image',
-        content: '/cover.webp',
+        content: 'https://queue.secure.build/autobot-icon-512.png',
       },
       {
         property: 'og:image:type',
-        content: 'image/webp',
+        content: 'image/png',
       },
       {
         name: 'twitter:card',
-        content: 'summary_large_image',
+        content: 'summary',
       },
       {
         name: 'twitter:image',
-        content: '/cover.webp',
+        content: 'https://queue.secure.build/autobot-icon-512.png',
       },
     ],
     links: [
@@ -80,8 +96,16 @@ export const Route = createRootRoute({
       },
       {
         rel: 'icon',
-        type: 'image/svg+xml',
-        href: '/favicon.svg',
+        type: 'image/png',
+        href: '/favicon.png',
+      },
+      {
+        rel: 'apple-touch-icon',
+        href: '/apple-touch-icon.png',
+      },
+      {
+        rel: 'manifest',
+        href: '/manifest.json',
       },
     ],
   }),

@@ -37,6 +37,7 @@ type ChatSidebarProps = {
   onToggleCollapse: () => void
   onSelectSession?: () => void
   onActiveSessionDelete?: () => void
+  hideBrandHeader?: boolean
 }
 
 function ChatSidebarComponent({
@@ -48,6 +49,7 @@ function ChatSidebarComponent({
   onToggleCollapse,
   onSelectSession,
   onActiveSessionDelete,
+  hideBrandHeader = false,
 }: ChatSidebarProps) {
   const {
     settingsOpen,
@@ -149,54 +151,57 @@ function ChatSidebarComponent({
       transition={transition}
       className={asideProps.className}
     >
-      <motion.div
-        layout
-        transition={{ layout: transition }}
-        className="flex items-center h-12 px-2 justify-between"
-      >
-        <AnimatePresence initial={false}>
-          {!isCollapsed ? (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={transition}
-            >
-              <Link
-                to="/new"
-                className={cn(
-                  buttonVariants({ variant: 'ghost', size: 'sm' }),
-                  'w-full pl-1.5 justify-start',
-                )}
+      {!hideBrandHeader ? (
+        <motion.div
+          layout
+          transition={{ layout: transition }}
+          className="flex items-center h-12 px-2 justify-between"
+        >
+          <AnimatePresence initial={false}>
+            {!isCollapsed ? (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={transition}
               >
-                <WebClawIconBig className="size-5 rounded-sm" />
-                WebClaw
-              </Link>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
-        <TooltipProvider>
-          <TooltipRoot>
-            <TooltipTrigger
-              onClick={onToggleCollapse}
-              render={
-                <Button size="icon-sm" variant="ghost">
-                  <HugeiconsIcon
-                    icon={SidebarLeft01Icon}
-                    size={20}
-                    strokeWidth={1.5}
-                  />
-                </Button>
-              }
-            />
-            <TooltipContent side="right">
-              {isCollapsed ? 'Open Sidebar' : 'Close Sidebar'}
-            </TooltipContent>
-          </TooltipRoot>
-        </TooltipProvider>
-      </motion.div>
+                <Link
+                  to="/new"
+                  data-testid="desktop-brand-link"
+                  className={cn(
+                    buttonVariants({ variant: 'ghost', size: 'sm' }),
+                    'w-full pl-1.5 justify-start',
+                  )}
+                >
+                  <WebClawIconBig className="size-6" />
+                  autobot
+                </Link>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+          <TooltipProvider>
+            <TooltipRoot>
+              <TooltipTrigger
+                onClick={onToggleCollapse}
+                render={
+                  <Button size="icon-sm" variant="ghost">
+                    <HugeiconsIcon
+                      icon={SidebarLeft01Icon}
+                      size={20}
+                      strokeWidth={1.5}
+                    />
+                  </Button>
+                }
+              />
+              <TooltipContent side="right">
+                {isCollapsed ? 'Open Sidebar' : 'Close Sidebar'}
+              </TooltipContent>
+            </TooltipRoot>
+          </TooltipProvider>
+        </motion.div>
+      ) : null}
 
-      <div className="px-2 mb-4 gap-px flex flex-col">
+      <div className={cn('px-2 mb-3 gap-0.5 flex flex-col', hideBrandHeader && 'pt-2')}>
         <motion.div
           layout
           transition={{ layout: transition }}

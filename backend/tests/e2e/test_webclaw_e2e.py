@@ -38,6 +38,9 @@ def open_webclaw(page: Page) -> None:
     page.set_viewport_size({"width": 1440, "height": 900})
     page.goto(WEBCLAW_URL)
     page.wait_for_url("**/chat/**", timeout=20000)
+    expect(page.locator('[data-testid="desktop-top-app-bar"]')).to_be_visible(
+        timeout=20000
+    )
     expect(page.locator('[data-testid="agent-service-selector"]')).to_be_visible(
         timeout=20000
     )
@@ -48,6 +51,17 @@ def open_webclaw(page: Page) -> None:
 
 def test_webclaw_agents_registry_and_session_scan(page: Page):
     open_webclaw(page)
+
+    # Verify autobot brand title, icon asset load, and segmented top app bar
+    assert page.title() == "autobot"
+    brand_link = page.locator('[data-testid="desktop-brand-link"]')
+    expect(brand_link).to_be_visible()
+    expect(brand_link).to_contain_text("autobot")
+    icon_loaded = page.locator('[data-testid="autobot-brand-icon"]').first.evaluate(
+        "img => img.complete && img.naturalWidth > 0"
+    )
+    assert icon_loaded, "Expected /autobot-icon.png to load with naturalWidth > 0"
+    expect(page.locator('[data-testid="orchestrator-role-chip"]')).to_be_visible()
 
     # Switch to Agents tab in Right Inspector and verify all 3 target services
     page.locator('[data-testid="inspector-tab-agents"]').click()
@@ -92,8 +106,13 @@ def test_webclaw_agents_registry_and_session_scan(page: Page):
         timeout=15000
     )
     expect(page.locator('[data-testid="autoplan-inspector"]')).to_have_count(0)
-    page.locator('[data-testid="toggle-inspector"]').click()
+
+    # Clicking Orchestrator Chief chip opens Inspector directly onto Queue tab
+    page.locator('[data-testid="orchestrator-role-chip"]').click()
     expect(page.locator('[data-testid="autoplan-inspector"]')).to_be_visible(
+        timeout=10000
+    )
+    expect(page.locator('[data-testid="webclaw-queue-list"]')).to_be_visible(
         timeout=10000
     )
 
@@ -226,15 +245,30 @@ def test_webclaw_mobile_antigravity_three_stage_flow(page: Page):
     page.goto(WEBCLAW_URL)
     page.wait_for_url("**/chat/**", timeout=20000)
 
-    # Stage 1: Full-screen All Sessions view with Antigravity #002b36 token palette
+    # Stage 1: Full-screen All Sessions view with Antigravity #002b36 token palette + autobot segmented bar
     sessions_screen = page.locator('[data-testid="mobile-sessions-screen"]')
     expect(sessions_screen).to_be_visible(timeout=20000)
     expect(page.locator('[data-testid="autoplan-inspector"]')).to_have_count(0)
+    expect(page.locator('[data-testid="mobile-top-app-bar"]')).to_be_visible()
+    expect(page.locator('[data-testid="mobile-brand"]')).to_contain_text("autobot")
+    mobile_icon_loaded = page.locator('[data-testid="mobile-autobot-icon"]').first.evaluate(
+        "img => img.complete && img.naturalWidth > 0"
+    )
+    assert mobile_icon_loaded, "Expected mobile /autobot-icon.png to load"
+    expect(page.locator('[data-testid="mobile-orchestrator-chip"]')).to_be_visible()
+    expect(page.locator('[data-testid="mobile-top-run-task"]')).to_be_visible()
 
     bg_color = sessions_screen.evaluate("el => getComputedStyle(el).backgroundColor")
     assert bg_color == "rgb(0, 43, 54)", f"Expected Antigravity #002b36 bg, got {bg_color}"
     scroll_width = page.evaluate("() => document.documentElement.scrollWidth")
     assert scroll_width <= 390, f"Expected zero mobile horizontal overflow, got {scroll_width}"
+
+    # Exercise mobile Orchestrator Chief chip -> opens Queue tab in Detail Sheet, then return
+    page.locator('[data-testid="mobile-orchestrator-chip"]').click()
+    expect(page.locator('[data-testid="mobile-detail-sheet"]')).to_be_visible(timeout=10000)
+    page.locator('[data-testid="mobile-footer-detail-button"]').click()
+    page.locator('[data-testid="mobile-back-to-sessions"]').click()
+    expect(sessions_screen).to_be_visible(timeout=10000)
 
     # Verify all 3 lead agent groups appear on the mobile All Sessions screen
     for svc in ("antigravity", "xiaomi-mimo", "minimax"):

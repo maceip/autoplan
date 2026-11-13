@@ -85,6 +85,7 @@ type MobileAntigravityWorkbenchProps = {
   creatingSession: boolean
   services: Array<AgentServiceInfo>
   selectedService: string
+  chiefLlmConfigured?: boolean
   chiefLlmStatus: string
   displayMessages: Array<GatewayMessage>
   historyLoading: boolean
@@ -135,24 +136,18 @@ function sessionDisplayTitle(session: SessionMeta): string {
   )
 }
 
-function AntigravityPrismMark() {
+function AutobotBrandMark({ size = 'md' }: { size?: 'sm' | 'md' }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      className="size-5 shrink-0"
-      fill="none"
+    <img
+      src="/autobot-icon.png"
+      alt=""
       aria-hidden="true"
-    >
-      <path
-        d="M12 3.5L4.5 19.5H8.2L12 11.2L15.8 19.5H19.5L12 3.5Z"
-        fill="#268bd2"
-      />
-      <path
-        d="M9.6 15.2L12 10.2L14.4 15.2H9.6Z"
-        fill="#7aae66"
-        opacity="0.9"
-      />
-    </svg>
+      data-testid="mobile-autobot-icon"
+      className={cn(
+        'shrink-0 object-contain',
+        size === 'sm' ? 'size-5 rounded' : 'size-7 rounded-md',
+      )}
+    />
   )
 }
 
@@ -191,6 +186,7 @@ export function MobileAntigravityWorkbench({
   creatingSession,
   services,
   selectedService,
+  chiefLlmConfigured = false,
   chiefLlmStatus,
   displayMessages,
   historyLoading,
@@ -534,10 +530,154 @@ export function MobileAntigravityWorkbench({
         data-testid="mobile-sessions-screen"
         className="flex h-dvh w-full flex-col overflow-hidden bg-[#002b36] text-[#c9d8db]"
       >
-        <header className="flex h-13 shrink-0 items-center justify-between gap-2 px-3 bg-[#002b36]">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <AntigravityPrismMark />
-            <div className="relative flex h-9 items-center gap-2 rounded-full border border-[#1e444e] bg-[#0c3540] pl-3 pr-7">
+        <header
+          data-testid="mobile-top-app-bar"
+          className="shrink-0 border-b border-[#133b45] bg-[#002b36]"
+        >
+          <div className="flex h-12 items-center justify-between gap-2 px-3">
+            <div
+              data-testid="mobile-brand"
+              className="flex min-w-0 items-center gap-2"
+            >
+              <AutobotBrandMark size="md" />
+              <span className="truncate text-[15px] font-semibold tracking-tight text-[#e6f0f2]">
+                autobot
+              </span>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-0.5 rounded-xl border border-[#133b45] bg-[#0c3540]/80 p-0.5">
+              <button
+                type="button"
+                data-testid="mobile-search-toggle"
+                aria-label="Search sessions"
+                aria-pressed={searchOpen}
+                onClick={() => setSearchOpen((prev) => !prev)}
+                className={cn(
+                  'flex size-8 items-center justify-center rounded-lg text-[#839496]',
+                  searchOpen
+                    ? 'bg-[#133b45] text-[#e6f0f2]'
+                    : 'active:bg-[#133b45]',
+                )}
+              >
+                <svg
+                  viewBox="0 0 20 20"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.6}
+                  aria-hidden="true"
+                >
+                  <circle cx="9" cy="9" r="5.5" />
+                  <path d="M13.2 13.2L17 17" strokeLinecap="round" />
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                data-testid="mobile-settings-button"
+                aria-label="Open settings"
+                onClick={handleOpenSettings}
+                className="flex size-8 items-center justify-center rounded-lg text-[#839496] active:bg-[#133b45]"
+              >
+                <svg
+                  viewBox="0 0 20 20"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.6}
+                  aria-hidden="true"
+                >
+                  <circle cx="10" cy="10" r="2.75" />
+                  <path
+                    d="M10 2.75v1.75M10 15.5v1.75M2.75 10h1.75M15.5 10h1.75M4.87 4.87l1.24 1.24M13.89 13.89l1.24 1.24M15.13 4.87l-1.24 1.24M6.11 13.89l-1.24 1.24"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                data-testid="mobile-refresh-button"
+                aria-label="Refresh sessions and agents"
+                onClick={() => {
+                  onRefreshAll()
+                  void refreshQueueAndRuns()
+                }}
+                className="flex size-8 items-center justify-center rounded-lg text-[#839496] active:bg-[#133b45]"
+              >
+                <svg
+                  viewBox="0 0 20 20"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.6}
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M16 10a6 6 0 1 1-1.6-4.08"
+                    strokeLinecap="round"
+                  />
+                  <path
+                    d="M16 3.5v3.25h-3.25"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                data-testid="mobile-home-detail-button"
+                aria-label="Open queue and runs detail panel"
+                onClick={() => {
+                  setDetailTab('overview')
+                  onChangeMobileView('session')
+                  onChangeMobileDetailOpen(true)
+                }}
+                className="relative flex size-8 items-center justify-center rounded-lg text-[#839496] active:bg-[#133b45]"
+              >
+                <PanelFooterIcon />
+                {needsReviewCount > 0 || activeRunCount > 0 ? (
+                  <span className="absolute right-1 top-1 size-1.5 rounded-full bg-[#268bd2]" />
+                ) : null}
+              </button>
+            </div>
+          </div>
+
+          <div
+            data-testid="mobile-orchestrator-segment"
+            className="flex items-center gap-1.5 border-t border-[#133b45]/80 bg-[#06303b]/70 px-3 py-1.5"
+          >
+            <button
+              type="button"
+              data-testid="mobile-orchestrator-chip"
+              onClick={() => {
+                setDetailTab('queue')
+                onChangeMobileView('session')
+                onChangeMobileDetailOpen(true)
+              }}
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-[#1e444e] bg-[#0c3540] px-2.5 text-xs font-medium text-[#e6f0f2] active:bg-[#133b45]"
+            >
+              <span
+                className={cn(
+                  'size-2 shrink-0 rounded-full',
+                  chiefLlmConfigured ? 'bg-[#268bd2]' : 'bg-[#7aae66]',
+                )}
+                aria-hidden="true"
+              />
+              <span>Chief</span>
+              {needsReviewCount > 0 ? (
+                <span className="rounded-full bg-[#268bd2]/25 px-1.5 py-px font-mono text-[10px] font-semibold text-[#e6f0f2] tabular-nums">
+                  {needsReviewCount}
+                </span>
+              ) : (
+                <span className="text-[11px] text-[#6b8184]">
+                  {chiefLlmConfigured ? 'live' : 'triage'}
+                </span>
+              )}
+            </button>
+
+            <div className="relative flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-full border border-[#1e444e] bg-[#0c3540] pl-2.5 pr-6">
               <span
                 className={cn(
                   'size-2 shrink-0 rounded-full',
@@ -550,7 +690,7 @@ export function MobileAntigravityWorkbench({
                 data-testid="mobile-home-service-select"
                 value={selectedService}
                 onChange={(e) => void onSelectService(e.target.value)}
-                className="appearance-none bg-transparent text-sm font-medium text-[#c9d8db] outline-none pr-1"
+                className="w-full min-w-0 truncate appearance-none bg-transparent text-xs font-medium text-[#e6f0f2] outline-none"
               >
                 {services.map((svc) => (
                   <option
@@ -558,14 +698,14 @@ export function MobileAntigravityWorkbench({
                     value={svc.service}
                     className="bg-[#002b36] text-[#c9d8db]"
                   >
-                    {svc.service}
+                    {svc.display_name}
                     {svc.mode === 'observe_only' ? ' (observe)' : ''}
                   </option>
                 ))}
               </select>
               <svg
                 viewBox="0 0 16 16"
-                className="pointer-events-none absolute right-2.5 size-3.5 text-[#6b8184]"
+                className="pointer-events-none absolute right-2 size-3.5 text-[#6b8184]"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth={1.75}
@@ -574,96 +714,15 @@ export function MobileAntigravityWorkbench({
                 <path d="M4 6l4 4 4-4" />
               </svg>
             </div>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              data-testid="mobile-search-toggle"
-              aria-label="Search sessions"
-              aria-pressed={searchOpen}
-              onClick={() => setSearchOpen((prev) => !prev)}
-              className={cn(
-                'flex size-9 items-center justify-center rounded-lg text-[#839496]',
-                searchOpen ? 'bg-[#0c3540] text-[#e6f0f2]' : 'active:bg-[#0c3540]',
-              )}
-            >
-              <svg
-                viewBox="0 0 20 20"
-                className="size-[18px]"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.6}
-                aria-hidden="true"
-              >
-                <circle cx="9" cy="9" r="5.5" />
-                <path d="M13.2 13.2L17 17" strokeLinecap="round" />
-              </svg>
-            </button>
 
             <button
               type="button"
-              data-testid="mobile-settings-button"
-              aria-label="Open settings"
-              onClick={handleOpenSettings}
-              className="flex size-9 items-center justify-center rounded-lg text-[#839496] active:bg-[#0c3540]"
+              data-testid="mobile-top-run-task"
+              disabled={!canDispatchSelected || busyDemoService !== null}
+              onClick={() => void handleQuickDemoTask(selectedService)}
+              className="flex h-8 shrink-0 items-center rounded-full border border-[#268bd2]/40 bg-[#268bd2]/15 px-2.5 text-xs font-medium text-[#e6f0f2] active:bg-[#268bd2]/25 disabled:opacity-35"
             >
-              <svg
-                viewBox="0 0 20 20"
-                className="size-[18px]"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.6}
-                aria-hidden="true"
-              >
-                <circle cx="10" cy="10" r="2.75" />
-                <path
-                  d="M10 2.75v1.75M10 15.5v1.75M2.75 10h1.75M15.5 10h1.75M4.87 4.87l1.24 1.24M13.89 13.89l1.24 1.24M15.13 4.87l-1.24 1.24M6.11 13.89l-1.24 1.24"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
-
-            <button
-              type="button"
-              data-testid="mobile-refresh-button"
-              aria-label="Refresh sessions and agents"
-              onClick={() => {
-                onRefreshAll()
-                void refreshQueueAndRuns()
-              }}
-              className="flex size-9 items-center justify-center rounded-lg text-[#839496] active:bg-[#0c3540]"
-            >
-              <svg
-                viewBox="0 0 20 20"
-                className="size-[18px]"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.6}
-                aria-hidden="true"
-              >
-                <path
-                  d="M16 10a6 6 0 1 1-1.6-4.08"
-                  strokeLinecap="round"
-                />
-                <path d="M16 3.5v3.25h-3.25" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-
-            <button
-              type="button"
-              data-testid="mobile-home-detail-button"
-              aria-label="Open queue and runs detail panel"
-              onClick={() => {
-                onChangeMobileView('session')
-                onChangeMobileDetailOpen(true)
-              }}
-              className="relative flex size-9 items-center justify-center rounded-lg text-[#839496] active:bg-[#0c3540]"
-            >
-              <PanelFooterIcon />
-              {needsReviewCount > 0 || activeRunCount > 0 ? (
-                <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-[#268bd2]" />
-              ) : null}
+              {busyDemoService ? 'Running…' : '+ Task'}
             </button>
           </div>
         </header>
@@ -966,10 +1025,11 @@ export function MobileAntigravityWorkbench({
       data-testid="mobile-session-screen"
       className="relative flex h-dvh w-full flex-col overflow-hidden bg-[#002b36] text-[#c9d8db]"
     >
-      {/* Top Session Header (matches Screenshot 3 & 4) */}
+      {/* Top Session Segmented App Bar (matches Screenshot 3 & 4 + autobot & role chip) */}
       <header
+        data-testid="mobile-session-top-bar"
         className={cn(
-          'z-50 flex h-12 shrink-0 items-center gap-1 border-b border-[#133b45] px-2 transition-colors',
+          'z-50 flex h-12 shrink-0 items-center gap-1.5 border-b border-[#133b45] px-2 transition-colors',
           mobileDetailOpen ? 'bg-[#002028]' : 'bg-[#002b36]',
         )}
       >
@@ -982,7 +1042,7 @@ export function MobileAntigravityWorkbench({
             onChangeMobileDetailOpen(false)
             onChangeMobileView('sessions')
           }}
-          className="flex size-9 shrink-0 items-center justify-center rounded-lg text-[#839496] active:bg-[#0c3540]"
+          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-[#839496] active:bg-[#0c3540]"
         >
           <svg
             viewBox="0 0 20 20"
@@ -1000,25 +1060,52 @@ export function MobileAntigravityWorkbench({
           </svg>
         </button>
 
+        <AutobotBrandMark size="sm" />
+
         <div
           data-testid="mobile-session-header-title"
-          className="min-w-0 flex-1 truncate px-1 text-[15px] font-medium text-[#839496]"
+          className="min-w-0 flex-1 truncate px-0.5 text-[14px] font-medium text-[#c9d8db]"
         >
           {activeTitle}
         </div>
 
-        <div className="relative flex shrink-0 items-center gap-0.5">
+        <div className="relative flex shrink-0 items-center gap-0.5 rounded-xl border border-[#133b45] bg-[#0c3540]/80 p-0.5">
+          <button
+            type="button"
+            data-testid="mobile-session-role-chip"
+            onClick={() => {
+              setMoreMenuOpen(false)
+              setDetailTab('queue')
+              onChangeMobileDetailOpen(true)
+            }}
+            className="flex h-7 max-w-[104px] items-center gap-1 rounded-lg px-2 text-[11px] font-medium text-[#c9d8db] active:bg-[#133b45]"
+          >
+            <span
+              className={cn(
+                'size-1.5 shrink-0 rounded-full',
+                canDispatchSelected ? 'bg-[#7aae66]' : 'bg-[#586e75]',
+              )}
+              aria-hidden="true"
+            />
+            <span className="truncate">{selectedService}</span>
+            {needsReviewCount > 0 ? (
+              <span className="shrink-0 rounded-full bg-[#268bd2]/25 px-1 font-mono text-[10px] text-[#e6f0f2] tabular-nums">
+                {needsReviewCount}
+              </span>
+            ) : null}
+          </button>
+
           <button
             type="button"
             data-testid="mobile-session-more-button"
             aria-label="Session actions"
             aria-expanded={moreMenuOpen}
             onClick={() => setMoreMenuOpen((prev) => !prev)}
-            className="flex size-9 items-center justify-center rounded-lg text-[#839496] active:bg-[#0c3540]"
+            className="flex size-8 items-center justify-center rounded-lg text-[#839496] active:bg-[#133b45]"
           >
             <svg
               viewBox="0 0 20 20"
-              className="size-[18px]"
+              className="size-4"
               fill="currentColor"
               aria-hidden="true"
             >
@@ -1081,18 +1168,21 @@ export function MobileAntigravityWorkbench({
             aria-pressed={mobileDetailOpen}
             onClick={() => {
               setMoreMenuOpen(false)
+              if (!mobileDetailOpen) {
+                setDetailTab('overview')
+              }
               onChangeMobileDetailOpen(!mobileDetailOpen)
             }}
             className={cn(
-              'relative flex size-9 items-center justify-center rounded-lg transition-colors',
+              'relative flex size-8 items-center justify-center rounded-lg transition-colors',
               mobileDetailOpen
                 ? 'bg-[#1a414a] text-[#e6f0f2]'
-                : 'text-[#839496] active:bg-[#0c3540]',
+                : 'text-[#839496] active:bg-[#133b45]',
             )}
           >
             <PanelFooterIcon active={mobileDetailOpen} />
             {!mobileDetailOpen && (needsReviewCount > 0 || activeRunCount > 0) ? (
-              <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-[#268bd2]" />
+              <span className="absolute right-1 top-1 size-1.5 rounded-full bg-[#268bd2]" />
             ) : null}
           </button>
         </div>

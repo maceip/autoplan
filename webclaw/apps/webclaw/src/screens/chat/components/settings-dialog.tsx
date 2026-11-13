@@ -99,7 +99,7 @@ export function SettingsDialog({
             <div>
               <DialogTitle className="mb-1">Settings</DialogTitle>
               <DialogDescription className="hidden">
-                Configure WebClaw
+                Configure autobot
               </DialogDescription>
             </div>
             <DialogClose
@@ -197,31 +197,29 @@ export function SettingsDialog({
           </SettingsSection>
 
           <SettingsSection title="About">
-            <div className="text-sm text-primary-800">WebClaw (beta)</div>
+            <div className="flex items-center gap-2 text-sm text-primary-800">
+              <img
+                src="/autobot-icon.png"
+                alt=""
+                aria-hidden="true"
+                className="size-5 shrink-0 object-contain"
+              />
+              <span>autobot</span>
+            </div>
             <div className="flex gap-4 pt-2">
               <a
-                href="https://webclaw.dev/"
-                target="_blank"
-                rel="noopener noreferrer"
+                href="/queue"
                 className="text-sm text-primary-600 hover:text-primary-900 hover:underline"
               >
-                Website
+                Chief of Staff Queue
               </a>
               <a
-                href="https://github.com/ibelick/webclaw"
+                href="https://github.com/maceip/autoplan"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-sm text-primary-600 hover:text-primary-900 hover:underline"
               >
                 GitHub
-              </a>
-              <a
-                href="https://docs.openclaw.ai"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-primary-600 hover:text-primary-900 hover:underline"
-              >
-                OpenClaw docs
               </a>
             </div>
           </SettingsSection>

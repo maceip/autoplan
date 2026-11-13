@@ -80,6 +80,8 @@ type AutoplanInspectorProps = {
   onRefreshAgents: () => void
   onRefreshHistory?: () => void
   onRunFinished?: (runId: string) => void
+  activeTab?: 'queue' | 'agents' | 'runs'
+  onTabChange?: (tab: 'queue' | 'agents' | 'runs') => void
 }
 
 const DEFAULT_WIDTH = 380
@@ -100,8 +102,20 @@ export function AutoplanInspector({
   onRefreshAgents,
   onRefreshHistory,
   onRunFinished,
+  activeTab,
+  onTabChange,
 }: AutoplanInspectorProps) {
-  const [tab, setTab] = useState<'queue' | 'agents' | 'runs'>('queue')
+  const [internalTab, setInternalTab] = useState<'queue' | 'agents' | 'runs'>(
+    'queue',
+  )
+  const tab = activeTab ?? internalTab
+  const setTab = useCallback(
+    (next: 'queue' | 'agents' | 'runs') => {
+      setInternalTab(next)
+      onTabChange?.(next)
+    },
+    [onTabChange],
+  )
   const [width, setWidth] = useState<number>(DEFAULT_WIDTH)
   const [items, setItems] = useState<Array<QueueItem>>([])
   const [runs, setRuns] = useState<Array<AgentRun>>([])
@@ -316,43 +330,45 @@ export function AutoplanInspector({
       />
 
       <div className="flex min-w-0 flex-1 flex-col h-full overflow-hidden">
-        <div className="flex h-10 shrink-0 items-center border-b border-primary-200 px-2 gap-1">
-          <button
-            type="button"
-            data-testid="inspector-tab-queue"
-            onClick={() => setTab('queue')}
-            className={`px-2.5 py-1 font-medium border ${
-              tab === 'queue'
-                ? 'border-primary-800 bg-primary-900 text-surface'
-                : 'border-transparent text-primary-700 hover:bg-primary-100'
-            }`}
-          >
-            Queue ({items.length})
-          </button>
-          <button
-            type="button"
-            data-testid="inspector-tab-agents"
-            onClick={() => setTab('agents')}
-            className={`px-2.5 py-1 font-medium border ${
-              tab === 'agents'
-                ? 'border-primary-800 bg-primary-900 text-surface'
-                : 'border-transparent text-primary-700 hover:bg-primary-100'
-            }`}
-          >
-            Agents ({services.length})
-          </button>
-          <button
-            type="button"
-            data-testid="inspector-tab-runs"
-            onClick={() => setTab('runs')}
-            className={`px-2.5 py-1 font-medium border ${
-              tab === 'runs'
-                ? 'border-primary-800 bg-primary-900 text-surface'
-                : 'border-transparent text-primary-700 hover:bg-primary-100'
-            }`}
-          >
-            Runs ({activeRunsCount > 0 ? `${activeRunsCount} live` : runs.length})
-          </button>
+        <div className="flex h-10 shrink-0 items-center border-b border-primary-200 px-2.5">
+          <div className="grid w-full grid-cols-3 gap-0.5 rounded-lg border border-primary-200 bg-primary-100 p-0.5">
+            <button
+              type="button"
+              data-testid="inspector-tab-queue"
+              onClick={() => setTab('queue')}
+              className={`rounded-md px-2 py-1 text-center font-medium transition-colors ${
+                tab === 'queue'
+                  ? 'border border-primary-300 bg-surface text-primary-950'
+                  : 'border border-transparent text-primary-700 hover:text-primary-900'
+              }`}
+            >
+              Queue ({items.length})
+            </button>
+            <button
+              type="button"
+              data-testid="inspector-tab-agents"
+              onClick={() => setTab('agents')}
+              className={`rounded-md px-2 py-1 text-center font-medium transition-colors ${
+                tab === 'agents'
+                  ? 'border border-primary-300 bg-surface text-primary-950'
+                  : 'border border-transparent text-primary-700 hover:text-primary-900'
+              }`}
+            >
+              Agents ({services.length})
+            </button>
+            <button
+              type="button"
+              data-testid="inspector-tab-runs"
+              onClick={() => setTab('runs')}
+              className={`rounded-md px-2 py-1 text-center font-medium transition-colors ${
+                tab === 'runs'
+                  ? 'border border-primary-300 bg-surface text-primary-950'
+                  : 'border border-transparent text-primary-700 hover:text-primary-900'
+              }`}
+            >
+              Runs ({activeRunsCount > 0 ? `${activeRunsCount} live` : runs.length})
+            </button>
+          </div>
         </div>
 
         {inspectorError ? (

@@ -69,7 +69,9 @@ type AgentsApiResponse = {
 
 type QueueStatsResponse = {
   success?: boolean
+  counts?: Record<string, number>
   chief?: {
+    llm_configured?: boolean
     llm_status?: string
   }
 }
@@ -88,6 +90,9 @@ export function ChatScreen({
   const [newChatService, setNewChatService] = useState<string>('')
   const [busyDemoService, setBusyDemoService] = useState<string | null>(null)
   const [dispatchError, setDispatchError] = useState<string>('')
+  const [inspectorTab, setInspectorTab] = useState<'queue' | 'agents' | 'runs'>(
+    'queue',
+  )
   const { headerRef, composerRef, mainRef, pinGroupMinHeight, headerHeight } =
     useChatMeasurements()
   const [waitingForResponse, setWaitingForResponse] = useState(
@@ -154,6 +159,10 @@ export function ChatScreen({
     ? newChatService || defaultService
     : activeSession?.service || defaultService
   const chiefLlmStatus = queueStatsQuery.data?.chief?.llm_status ?? ''
+  const chiefLlmConfigured = Boolean(
+    queueStatsQuery.data?.chief?.llm_configured,
+  )
+  const needsReviewCount = queueStatsQuery.data?.counts?.needs_review ?? 0
 
   const { exportConversation } = useExport({
     currentFriendlyId: activeFriendlyId,
@@ -643,6 +652,13 @@ export function ChatScreen({
     })
   }, [queryClient])
 
+  const handleFocusOrchestratorQueue = useCallback(() => {
+    setInspectorTab('queue')
+    setChatUiState(queryClient, function ensureInspectorOpen(state) {
+      return { ...state, isInspectorOpen: true }
+    })
+  }, [queryClient])
+
   const handleSelectSession = useCallback(() => {
     setDispatchError('')
     if (!isMobile) return
@@ -814,6 +830,7 @@ export function ChatScreen({
       onToggleCollapse={handleToggleSidebarCollapse}
       onSelectSession={handleSelectSession}
       onActiveSessionDelete={handleActiveSessionDelete}
+      hideBrandHeader={!isMobile}
     />
   )
 
@@ -832,6 +849,7 @@ export function ChatScreen({
         creatingSession={creatingSession}
         services={services}
         selectedService={selectedService}
+        chiefLlmConfigured={chiefLlmConfigured}
         chiefLlmStatus={chiefLlmStatus}
         displayMessages={displayMessages}
         historyLoading={historyLoading}
@@ -863,10 +881,35 @@ export function ChatScreen({
   }
 
   return (
-    <div className="h-dvh bg-surface text-primary-900">
+    <div className="flex h-dvh flex-col overflow-hidden bg-surface text-primary-900">
+      <ChatHeader
+        activeTitle={activeTitle}
+        wrapperRef={headerRef}
+        showSidebarButton={false}
+        onOpenSidebar={handleOpenSidebar}
+        isSidebarCollapsed={isSidebarCollapsed}
+        onToggleSidebarCollapse={handleToggleSidebarCollapse}
+        onExport={exportConversation}
+        exportDisabled={historyLoading || displayMessages.length === 0}
+        showExport={!isNewChat}
+        usedTokens={activeSession?.totalTokens}
+        maxTokens={activeSession?.contextTokens}
+        services={services}
+        selectedService={selectedService}
+        onSelectService={(svc) => void handleSelectService(svc)}
+        chiefLlmConfigured={chiefLlmConfigured}
+        chiefLlmStatus={chiefLlmStatus}
+        needsReviewCount={needsReviewCount}
+        onFocusOrchestratorQueue={handleFocusOrchestratorQueue}
+        onRunSimpleTask={() => void handleRunSimpleTask()}
+        runningSimpleTask={busyDemoService !== null}
+        inspectorOpen={isInspectorOpen}
+        onToggleInspector={handleToggleInspector}
+      />
+
       <div
         className={cn(
-          'h-full overflow-hidden max-md:grid-cols-1',
+          'min-h-0 flex-1 overflow-hidden max-md:grid-cols-1',
           isInspectorOpen
             ? 'grid grid-cols-[auto_1fr_auto]'
             : 'grid grid-cols-[auto_1fr]',
@@ -875,25 +918,6 @@ export function ChatScreen({
         {hideUi ? null : <div className="max-md:hidden h-full">{sidebar}</div>}
 
         <main className="flex flex-col h-full min-h-0 min-w-0" ref={mainRef}>
-          <ChatHeader
-            activeTitle={activeTitle}
-            wrapperRef={headerRef}
-            showSidebarButton={false}
-            onOpenSidebar={handleOpenSidebar}
-            onExport={exportConversation}
-            exportDisabled={historyLoading || displayMessages.length === 0}
-            showExport={!isNewChat}
-            usedTokens={activeSession?.totalTokens}
-            maxTokens={activeSession?.contextTokens}
-            services={services}
-            selectedService={selectedService}
-            onSelectService={(svc) => void handleSelectService(svc)}
-            onRunSimpleTask={() => void handleRunSimpleTask()}
-            runningSimpleTask={busyDemoService !== null}
-            inspectorOpen={isInspectorOpen}
-            onToggleInspector={handleToggleInspector}
-          />
-
           {dispatchError ? (
             <div
               data-testid="dispatch-error-banner"
@@ -946,6 +970,8 @@ export function ChatScreen({
               onRefreshAgents={refreshAgents}
               onRefreshHistory={refreshHistory}
               onRunFinished={finishRun}
+              activeTab={inspectorTab}
+              onTabChange={setInspectorTab}
             />
           </div>
         ) : null}

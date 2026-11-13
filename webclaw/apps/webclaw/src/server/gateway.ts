@@ -287,7 +287,7 @@ async function buildConnectParams(
     maxProtocol: 3,
     client: {
       id: clientId,
-      displayName: 'webclaw',
+      displayName: 'autobot',
       version: 'dev',
       platform: process.platform,
       mode: clientMode,
