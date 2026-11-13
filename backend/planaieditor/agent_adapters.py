@@ -1098,16 +1098,18 @@ class AgentRunManager:
             )
         return True, self._git(repo, "rev-parse", "HEAD").stdout.strip()
 
-    def _restore_rework_workspace(self, repo: Path, branch: str) -> None:
-        """Discard uncommitted changes after a failed rework run.
+    def _restore_rework_workspace(self, repo: Path, branch: str, base_sha: str = "") -> None:
+        """Discard a failed or discarded rework run's output.
 
         The workspace was verified clean when the rework was dispatched, so
-        everything dirty or untracked at this point was produced by the failed
-        agent run; discarding it keeps the item land-able and the next rework
-        dispatchable.
+        everything dirty or untracked at this point was produced by that run;
+        discarding it keeps the item land-able and the next rework
+        dispatchable. base_sha is the branch tip captured before dispatch:
+        resetting to it also drops commits the failed agent made, which plain
+        HEAD would keep.
         """
         self._git(repo, "checkout", "-f", branch)
-        self._git(repo, "reset", "--hard", "HEAD")
+        self._git(repo, "reset", "--hard", base_sha or "HEAD")
         self._git(repo, "clean", "-fd")
 
     def dispatch_async(
@@ -1150,6 +1152,7 @@ class AgentRunManager:
             run_id=run_id,
         )
 
+        rework_base_sha = ""
         if rework_item_id:
             checkout = self._git(workspace_dir, "checkout", branch_name)
             if checkout.returncode != 0:
@@ -1157,6 +1160,9 @@ class AgentRunManager:
                 raise RuntimeError(
                     f"Cannot check out rework branch '{branch_name}': {_tail(checkout.stderr, 400)}"
                 )
+            # The branch tip to restore to if the rework fails: an agent may
+            # commit before failing, so plain HEAD is not a safe reset target.
+            rework_base_sha = self._git(workspace_dir, "rev-parse", "HEAD").stdout.strip()
 
         effective_prompt = prompt.replace("{WORKSPACE_DIR}", str(workspace_dir))
         selected_model = model or str(probe.get("default_model") or "")
@@ -1237,7 +1243,20 @@ class AgentRunManager:
                 if rework_item_id:
                     queue_item_id = rework_item_id
                     item = self.store.get_item(rework_item_id)
-                    if item is not None:
+                    if item is not None and item["status"] != "in_progress":
+                        # The operator decided (e.g. rejected) while the rework
+                        # ran; their decision stands. Discard the run's output.
+                        self._restore_rework_workspace(
+                            workspace_dir, branch_name, rework_base_sha
+                        )
+                        self.store.add_event(
+                            rework_item_id,
+                            "rework_result_discarded",
+                            f"Rework run {run_id} finished after the operator moved the "
+                            f"item to '{item['status']}'; output discarded and the "
+                            "decision left in place.",
+                        )
+                    elif item is not None:
                         finalize_error = ""
                         if result.passed:
                             try:
@@ -1269,12 +1288,14 @@ class AgentRunManager:
                                 finalize_error
                                 or f"run failed (exit {result.exit_code})"
                             )
-                            self._restore_rework_workspace(workspace_dir, branch_name)
+                            self._restore_rework_workspace(
+                                workspace_dir, branch_name, rework_base_sha
+                            )
                             self.store.add_event(
                                 rework_item_id,
                                 "rework_failed",
                                 f"Rework run {run_id}: {reason}; returned to review. "
-                                "Workspace restored to the branch's last commit.",
+                                "Workspace restored to its pre-rework commit.",
                             )
                             updated_item = self.store.update_item(
                                 rework_item_id, status="needs_review"
@@ -1454,10 +1475,14 @@ class AgentRunManager:
                 f"Workspace '{repo}' has uncommitted changes; refusing rework dispatch "
                 "so unrelated work is not folded into the rework commit."
             )
+        body_context = (item.get("body") or "").strip()
+        if len(body_context) > 2000:
+            body_context = body_context[:2000] + "\n[... truncated]"
         prompt = (
             f"You previously completed this task in workspace '{repo}':\n"
             f"{item.get('title', '')}\n\n"
-            f"A human reviewer requested changes:\n{operator_note or '(no note given)'}\n\n"
+            + (f"Original task context:\n{body_context}\n\n" if body_context else "")
+            + f"A human reviewer requested changes:\n{operator_note or '(no note given)'}\n\n"
             f"Apply the requested changes to the files in '{repo}'. "
             f"Do not write outside '{repo}'. Reply with a short summary of what you changed."
         )
