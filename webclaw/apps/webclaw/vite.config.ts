@@ -9,6 +9,12 @@ import { defineConfig } from 'vite'
 import viteTsConfigPaths from 'vite-tsconfig-paths'
 
 const config = defineConfig({
+  server: {
+    allowedHosts: ['queue.secure.build', 'localhost', '127.0.0.1'],
+  },
+  preview: {
+    allowedHosts: ['queue.secure.build', 'localhost', '127.0.0.1'],
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

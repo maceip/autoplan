@@ -70,7 +70,12 @@ else:
         app = Flask(__name__)
     else:
         app = Flask(__name__, static_folder=package_static_dir, static_url_path="/")
-    socketio = SocketIO(app)  # No CORS needed when served from same origin
+    raw_cors = os.environ.get(
+        "AUTOPLAN_CORS_ORIGINS",
+        "https://queue.secure.build,http://localhost:5051,http://127.0.0.1:5051,http://100.80.211.36:5051",
+    )
+    allowed_origins = [o.strip() for o in raw_cors.split(",") if o.strip()]
+    socketio = SocketIO(app, cors_allowed_origins=allowed_origins or None)
 
 app.config["SECRET_KEY"] = "secret!"  # Change this in production!
 app.config["SELECTED_VENV_PATH"] = (
