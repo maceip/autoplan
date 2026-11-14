@@ -337,7 +337,9 @@ ipcMain.handle('nucleus:open-external', async (_event, url) => {
 
 app.whenReady().then(async () => {
   startLocalAIUtility();
-  await Promise.all([ensureLocalMlxServer(), ensureLocalWebclawServer()]);
+  // Kick off local Metal MLX warm-up in parallel without blocking macOS window open
+  void ensureLocalMlxServer();
+  await ensureLocalWebclawServer();
   await startLocalShellServer();
   await createMainWindow();
 
