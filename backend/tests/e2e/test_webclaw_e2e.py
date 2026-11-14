@@ -275,6 +275,7 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
                     _api_delete(f"/api/projects/{created_proj_id}")
                 except Exception:
                     pass
+        open_webclaw(page)
 
     # 3. Inspector Rules (Evolution) tab: add rule & evolve prompt generation
     page.locator('[data-testid="inspector-tab-evolution"]').click()
@@ -329,41 +330,53 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
     assert create_mem_resp.value.ok, create_mem_resp.value.text()
     created_mem = create_mem_resp.value.json()["memory"]
     mem_id = created_mem["id"]
+    try:
+        mem_card = page.locator(f'[data-testid="evolution-memory-{mem_id}"]')
+        expect(mem_card).to_be_visible(timeout=10000)
+        expect(mem_card).to_contain_text("MANUAL · r1")
 
-    mem_card = page.locator(f'[data-testid="evolution-memory-{mem_id}"]')
-    expect(mem_card).to_be_visible(timeout=10000)
-    expect(mem_card).to_contain_text("MANUAL · r1")
+        # Edit & save -> revision r2 + unified CONTENT_DIFF
+        page.locator(f'[data-testid="memory-edit-{mem_id}"]').click()
+        expect(page.locator('[data-testid="inspector-memory-key-input"]')).to_have_value(
+            mem_key
+        )
+        page.locator('[data-testid="inspector-memory-content-input"]').fill(
+            "Line 1: isolate worktrees per project\nLine 2: verify PolicyGuardian before gate"
+        )
+        with page.expect_response(
+            lambda r: "/api/autoplan/evolution/memories" in r.url
+            and r.request.method == "POST",
+            timeout=15000,
+        ) as update_mem_resp:
+            page.locator('[data-testid="inspector-memory-save-button"]').click()
+        assert update_mem_resp.value.ok, update_mem_resp.value.text()
+        expect(mem_card).to_contain_text("MANUAL · r2", timeout=10000)
 
-    # Edit & save -> revision r2 + unified CONTENT_DIFF
-    page.locator(f'[data-testid="memory-edit-{mem_id}"]').click()
-    page.locator('[data-testid="inspector-memory-content-input"]').fill(
-        "Line 1: isolate worktrees per project\nLine 2: verify PolicyGuardian before gate"
-    )
-    with page.expect_response(
-        lambda r: "/api/autoplan/evolution/memories" in r.url
-        and r.request.method == "POST",
-        timeout=15000,
-    ) as update_mem_resp:
-        page.locator('[data-testid="inspector-memory-save-button"]').click()
-    assert update_mem_resp.value.ok, update_mem_resp.value.text()
-    expect(mem_card).to_contain_text("MANUAL · r2", timeout=10000)
+        page.locator(f'[data-testid="memory-diff-toggle-{mem_id}"]').click()
+        diff_pre = page.locator(f'[data-testid="memory-diff-{mem_id}"]')
+        expect(diff_pre).to_be_visible()
+        expect(diff_pre).to_contain_text("+Line 2: verify PolicyGuardian before gate")
+        _maybe_screenshot(page, "web_phase2_memories_content_diff.png")
 
-    page.locator(f'[data-testid="memory-diff-toggle-{mem_id}"]').click()
-    diff_pre = page.locator(f'[data-testid="memory-diff-{mem_id}"]')
-    expect(diff_pre).to_be_visible()
-    expect(diff_pre).to_contain_text("+Line 2: verify PolicyGuardian before gate")
-    _maybe_screenshot(page, "web_phase2_memories_content_diff.png")
-
-    with page.expect_response(
-        lambda r: f"/api/autoplan/evolution/memories/{mem_id}" in r.url
-        and r.request.method == "DELETE",
-        timeout=15000,
-    ) as del_mem_resp:
-        page.locator(f'[data-testid="memory-delete-{mem_id}"]').click()
-    assert del_mem_resp.value.ok, del_mem_resp.value.text()
-    expect(mem_card).to_have_count(0, timeout=10000)
-    active_mem_ids = {m["id"] for m in _api_get("/api/evolution/memories")["memories"]}
-    assert mem_id not in active_mem_ids
+        with page.expect_response(
+            lambda r: f"/api/autoplan/evolution/memories/{mem_id}" in r.url
+            and r.request.method == "DELETE",
+            timeout=15000,
+        ) as del_mem_resp:
+            page.locator(f'[data-testid="memory-delete-{mem_id}"]').click()
+        assert del_mem_resp.value.ok, del_mem_resp.value.text()
+        expect(mem_card).to_have_count(0, timeout=10000)
+        active_mem_ids = {
+            m["id"] for m in _api_get("/api/evolution/memories")["memories"]
+        }
+        assert mem_id not in active_mem_ids
+        mem_id = ""
+    finally:
+        if mem_id:
+            try:
+                _api_delete(f"/api/evolution/memories/{mem_id}")
+            except Exception:
+                pass
 
 
 def test_webclaw_agents_registry_and_observe_only_minimax(page: Page):
@@ -572,7 +585,7 @@ def test_webclaw_live_start_demo_through_chief_approval(page: Page):
         first_skill_toggle = page.locator('[data-testid^="skill-md-toggle-"]').first
         expect(first_skill_toggle).to_be_visible()
         first_skill_toggle.click()
-        expect(page.locator('[data-testid^="skill-md-"]').first).to_contain_text(
+        expect(page.locator('pre[data-testid^="skill-md-"]').first).to_contain_text(
             "## Pre-Flight Checklist"
         )
         skills_api = _api_get("/api/evolution/skills")["skills"]
