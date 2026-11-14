@@ -113,8 +113,21 @@ type WorkflowDetailPayload = {
       severity?: number
     }>
   }
+  critic_review?: {
+    verdict?: string
+    notes?: string
+    blind_spots?: Array<string>
+  }
   trajectory?: {
     step_count?: number
+    steps?: Array<{
+      index: number
+      type: string
+      tool_name?: string
+      status: string
+      reversible?: boolean
+      vetting_verdict?: string
+    }>
     board_messages?: Array<{
       seq: number
       author: string
@@ -127,6 +140,13 @@ type WorkflowDetailPayload = {
     }
   }
   can_force_revision?: boolean
+}
+
+type TrajectoryRevertPreview = {
+  target_index: number
+  steps_removed: number
+  irreversible_among_removed: Array<number>
+  safe_to_revert: boolean
 }
 
 type InlinePlanAIDagProps = {
@@ -507,6 +527,14 @@ function buildBlueprintGraph(
       state: 'idle',
     },
     {
+      id: 'CriticWorker',
+      label: 'Adversarial Critic',
+      kind: 'agent',
+      worker_class: 'PlanAICriticLLMWorker',
+      role: 'PlanAI LLMTaskWorker adversarial critic audits integrated bundle before Human Gate.',
+      state: 'idle',
+    },
+    {
       id: 'ChiefEscalationSink',
       label: 'Human Gate',
       kind: 'human_gate',
@@ -540,10 +568,16 @@ function buildBlueprintGraph(
       label: 'merged',
     },
     {
-      id: 'e_verify_sink',
+      id: 'e_gate_critic',
       source: 'VerificationGateWorker',
-      target: 'ChiefEscalationSink',
+      target: 'CriticWorker',
       label: 'verified',
+    },
+    {
+      id: 'e_critic_sink',
+      source: 'CriticWorker',
+      target: 'ChiefEscalationSink',
+      label: 'critiqued',
     },
     {
       id: 'e_sink_done',
@@ -589,6 +623,12 @@ export function InlinePlanAIDag({
   const [gateTab, setGateTab] = useState<'summary' | 'diff' | 'checks'>('diff')
   const [revisionOpen, setRevisionOpen] = useState<boolean>(false)
   const [revisionNote, setRevisionNote] = useState<string>('')
+  const [resetBranchOnRevision, setResetBranchOnRevision] =
+    useState<boolean>(false)
+  const [trajectoryExpanded, setTrajectoryExpanded] = useState<boolean>(false)
+  const [revertPreview, setRevertPreview] =
+    useState<TrajectoryRevertPreview | null>(null)
+  const [revertBusy, setRevertBusy] = useState<boolean>(false)
   const [confirmAbort, setConfirmAbort] = useState<boolean>(false)
   const [gateBusy, setGateBusy] = useState<boolean>(false)
   const [gateError, setGateError] = useState<string>('')
@@ -826,6 +866,51 @@ export function InlinePlanAIDag({
     return activeWorkflow.events.filter((ev) => ev.node_id === selectedNode.id)
   }, [activeWorkflow, selectedNode])
 
+  useEffect(() => {
+    setRevertPreview(null)
+  }, [activeWfId, activeWfRound])
+
+  const handleTrajectoryRevert = async (
+    toIndex: number,
+    previewOnly: boolean,
+  ) => {
+    if (!activeWorkflow) return
+    setRevertBusy(true)
+    setGateError('')
+    try {
+      const res = await fetch(
+        `/api/autoplan/planai/workflows/${activeWorkflow.id}/trajectory/revert`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            to_index: toIndex,
+            preview_only: previewOnly,
+          }),
+        },
+      )
+      const data = (await res.json()) as {
+        success?: boolean
+        error?: string
+        preview?: TrajectoryRevertPreview
+      }
+      if (!res.ok || !data.success) {
+        setGateError(data.error || 'Trajectory revert request failed.')
+        return
+      }
+      if (previewOnly && data.preview) {
+        setRevertPreview(data.preview)
+      } else {
+        setRevertPreview(null)
+        await fetchWorkflowDetail(activeWorkflow.id)
+      }
+    } catch (err) {
+      setGateError(err instanceof Error ? err.message : 'Network error')
+    } finally {
+      setRevertBusy(false)
+    }
+  }
+
   const submitGateEvent = async (
     event: 'APPROVE' | 'FORCE_REVISION' | 'ABORT',
   ) => {
@@ -845,6 +930,8 @@ export function InlinePlanAIDag({
           body: JSON.stringify({
             event,
             note: event === 'FORCE_REVISION' ? revisionNote.trim() : '',
+            reset_branch:
+              event === 'FORCE_REVISION' ? resetBranchOnRevision : false,
           }),
         },
       )
@@ -858,6 +945,7 @@ export function InlinePlanAIDag({
       }
       setRevisionOpen(false)
       setRevisionNote('')
+      setResetBranchOnRevision(false)
       setConfirmAbort(false)
       await refreshWorkflows()
       await fetchWorkflowDetail(activeWorkflow.id)
@@ -1252,14 +1340,106 @@ export function InlinePlanAIDag({
                 ? `Denied · severity ${policyGuardian.severity ?? 0} (${(policyGuardian.risk_signals || []).map((r) => `${r.code}: ${r.label}`).join(', ') || 'policy violation'})`
                 : `Allowed · severity ${policyGuardian?.severity ?? 0} (${policyGuardian?.checks_run ?? 0} checks)`}
             </div>
-            <div data-testid="gate-trajectory-summary">
-              <span className="font-medium text-primary-950">Trajectory: </span>
-              {`${trajectory?.step_count ?? 0} recorded steps${
-                trajectory?.board_messages?.length
-                  ? ` · ${trajectory.board_messages.length} swarm board posts`
-                  : ''
-              }`}
+            {detail?.critic_review?.verdict ? (
+              <div data-testid="gate-critic-review">
+                <span className="font-medium text-primary-950">
+                  Adversarial Critic:{' '}
+                </span>
+                {`${detail.critic_review.verdict}${detail.critic_review.notes ? ` · ${detail.critic_review.notes}` : ''}`}
+              </div>
+            ) : null}
+            <div className="flex items-center justify-between gap-2">
+              <div data-testid="gate-trajectory-summary">
+                <span className="font-medium text-primary-950">Trajectory: </span>
+                {`${trajectory?.step_count ?? 0} recorded steps${
+                  trajectory?.board_messages?.length
+                    ? ` · ${trajectory.board_messages.length} swarm board posts`
+                    : ''
+                }`}
+              </div>
+              {(trajectory?.steps?.length ?? 0) > 0 ? (
+                <button
+                  type="button"
+                  data-testid="gate-trajectory-toggle"
+                  onClick={() => {
+                    setTrajectoryExpanded((prev) => !prev)
+                    setRevertPreview(null)
+                  }}
+                  className="rounded px-1.5 py-0.5 text-[11px] font-medium text-primary-700 hover:bg-primary-200 hover:text-primary-950"
+                >
+                  {trajectoryExpanded ? 'Hide steps' : 'Inspect steps'}
+                </button>
+              ) : null}
             </div>
+            {trajectoryExpanded && (trajectory?.steps?.length ?? 0) > 0 ? (
+              <div
+                data-testid="gate-trajectory-list"
+                className="mt-1 divide-y divide-primary-200 border-y border-primary-200"
+              >
+                {(trajectory?.steps || []).map((step) => (
+                  <div
+                    key={step.index}
+                    data-testid={`trajectory-step-${step.index}`}
+                    className="flex items-center justify-between gap-2 py-1 text-[11px]"
+                  >
+                    <span className="truncate font-mono text-primary-900">
+                      {`#${step.index} ${step.type}${step.tool_name ? ` · ${step.tool_name}` : ''}`}
+                    </span>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <span className="text-primary-600">
+                        {step.reversible === false
+                          ? `${step.status} · locked`
+                          : step.status}
+                      </span>
+                      {isWaitingAtGate &&
+                      step.index < (trajectory?.steps?.length ?? 0) - 1 ? (
+                        <button
+                          type="button"
+                          data-testid={`trajectory-preview-btn-${step.index}`}
+                          disabled={revertBusy}
+                          onClick={() =>
+                            void handleTrajectoryRevert(step.index, true)
+                          }
+                          className="rounded border border-primary-300 px-1.5 py-0.5 text-[10px] font-medium text-primary-800 hover:bg-primary-200 disabled:opacity-40"
+                        >
+                          Preview revert
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+                {revertPreview ? (
+                  <div
+                    data-testid="trajectory-revert-preview"
+                    className="flex items-center justify-between gap-2 py-1.5 text-[11px]"
+                  >
+                    <span className="text-primary-900">
+                      {revertPreview.safe_to_revert
+                        ? `Revert to #${revertPreview.target_index}: drops ${revertPreview.steps_removed} step(s)`
+                        : `Blocked by irreversible step(s): #${revertPreview.irreversible_among_removed.join(', #')}`}
+                    </span>
+                    {revertPreview.safe_to_revert ? (
+                      <button
+                        type="button"
+                        data-testid="trajectory-confirm-revert-btn"
+                        disabled={revertBusy}
+                        onClick={() =>
+                          void handleTrajectoryRevert(
+                            revertPreview.target_index,
+                            false,
+                          )
+                        }
+                        className="rounded bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-40"
+                      >
+                        {revertBusy
+                          ? 'Reverting…'
+                          : `Revert to #${revertPreview.target_index}`}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -1285,6 +1465,16 @@ export function InlinePlanAIDag({
                 placeholder="Describe exact changes for the next revision round on this branch…"
                 className="w-full rounded border border-primary-300 bg-surface px-2 py-1.5 text-xs text-primary-950 placeholder:text-primary-500 focus:border-primary-500 focus:outline-none"
               />
+              <label className="flex items-center gap-1.5 text-[11px] text-primary-700">
+                <input
+                  type="checkbox"
+                  data-testid="gate-revision-reset-branch"
+                  checked={resetBranchOnRevision}
+                  onChange={(e) => setResetBranchOnRevision(e.target.checked)}
+                  className="rounded border-primary-300"
+                />
+                Reset branch to target before next round
+              </label>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
