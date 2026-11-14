@@ -436,7 +436,9 @@ def test_apple_foundation_models_in_process_and_evolution_engine_planai_graph(
         "TraceCollectorWorker": "succeeded",
         "FailureCritiqueWorker": "succeeded",
         "EvolutionCritiqueJoiner": "succeeded",
+        "PolicyGuardianGateWorker": "succeeded",
         "TemplateIntegrityGateWorker": "succeeded",
+        "SkillAndMemoryAccumulatorWorker": "succeeded",
         "EvolutionCommitSink": "succeeded",
     }
 

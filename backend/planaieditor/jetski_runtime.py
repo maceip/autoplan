@@ -2016,7 +2016,7 @@ _GOPCLN_MAGICS: Dict[int, str] = {
 def classify_go_symbol_family(name: str) -> str:
     """Classify a Go symbol path into its subsystem bucket (`07-tools/annotate_disasm.py`)."""
     if name.startswith("google3/third_party/jetski/"):
-        p = name[len("google3/third_party/jetski/") :].split("/")[0]
+        p = re.split(r"[/.]", name[len("google3/third_party/jetski/") :])[0]
         return {
             "language_server": "01-jetski-language_server",
             "cortex": "02-jetski-cortex",

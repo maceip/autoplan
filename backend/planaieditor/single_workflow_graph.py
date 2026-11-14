@@ -27,6 +27,11 @@ from typing import Any, Callable, Dict, List, Optional, Type
 from planai import Graph, Task, TaskWorker
 from pydantic import Field
 
+from planaieditor.jetski_runtime import (
+    Step,
+    Trajectory,
+    evaluate_diff_with_policy_guardian,
+)
 from planaieditor.queue_store import QueueStore
 
 _UNAUTHORIZED_MOCK_RE = re.compile(
@@ -342,6 +347,7 @@ class VerifiedBranchBundleTask(Task):
     test_report: Dict[str, Any] = Field(default_factory=dict)
     reality_scan: Dict[str, Any] = Field(default_factory=dict)
     secret_scan: Dict[str, Any] = Field(default_factory=dict)
+    policy_guardian: Dict[str, Any] = Field(default_factory=dict)
     gate_passed: bool = True
 
 
@@ -469,6 +475,13 @@ def execute_single_agent_planai_graph(
     }
     result_meta["round"] = goal_task.round_num
     result_meta["max_rounds"] = goal_task.max_rounds
+
+    existing_traj_row = store.get_workflow_trajectory(wf_id)
+    traj = Trajectory.from_steps(
+        conversation_id=wf_id,
+        steps_data=(existing_traj_row or {}).get("steps") or [],
+        project_id=goal_task.project_id,
+    )
 
     def emit_wf(
         *,
@@ -680,6 +693,36 @@ def execute_single_agent_planai_graph(
                         f"{task.target_branch}..{task.branch_name}",
                     ).stdout
 
+            with state_lock:
+                traj.append(
+                    Step(
+                        index=0,
+                        type="RUN_COMMAND",
+                        tool_name=task.service,
+                        args={"branch": final_branch, "round": task.round_num},
+                        result={
+                            "passed": res.passed,
+                            "exit_code": res.exit_code,
+                            "duration_s": res.duration_s,
+                        },
+                        status="COMPLETED" if res.passed else "FAILED",
+                        reversible=True,
+                        model_tier=res.model or task.model or "inherit",
+                    )
+                )
+                if committed and commit_sha:
+                    traj.append(
+                        Step(
+                            index=0,
+                            type="GIT_COMMIT",
+                            tool_name="git.commit",
+                            args={"branch": final_branch, "files": changed_files},
+                            result={"commit_sha": commit_sha},
+                            status="COMPLETED",
+                            reversible=True,
+                        )
+                    )
+
             emit_wf(
                 wf_state="running",
                 current_node="WorktreeRunner",
@@ -821,11 +864,36 @@ def execute_single_agent_planai_graph(
                     test_report = run_shell_test_command(task.test_command, workspace_path)
 
                 reality_scan, secret_scan = run_reality_and_secret_scan(task.diff_text)
+                policy_guardian = evaluate_diff_with_policy_guardian(
+                    diff_text=task.diff_text,
+                    changed_files=task.changed_files,
+                    test_command=task.test_command,
+                )
                 gate_passed = (
                     bool(test_report.get("passed", True))
                     and bool(reality_scan["passed"])
                     and bool(secret_scan["passed"])
+                    and bool(policy_guardian.get("allowed", True))
                 )
+                with state_lock:
+                    traj.append(
+                        Step(
+                            index=0,
+                            type="REVIEW",
+                            tool_name="VerificationGate",
+                            args={
+                                "test_command": task.test_command,
+                                "files": len(task.changed_files),
+                            },
+                            result={
+                                "gate_passed": gate_passed,
+                                "policy_severity": policy_guardian.get("severity", 0.0),
+                            },
+                            status="COMPLETED" if gate_passed else "FAILED",
+                            reversible=True,
+                            vetting_verdict=str(policy_guardian.get("summary") or ""),
+                        )
+                    )
 
                 emit_wf(
                     wf_state="running",
@@ -840,6 +908,8 @@ def execute_single_agent_planai_graph(
                                 "test_exit_code": test_report.get("exit_code", 0),
                                 "reality_passed": reality_scan["passed"],
                                 "secret_passed": secret_scan["passed"],
+                                "policy_allowed": policy_guardian.get("allowed", True),
+                                "policy_severity": policy_guardian.get("severity", 0.0),
                                 "visits": visits,
                             },
                         }
@@ -851,7 +921,8 @@ def execute_single_agent_planai_graph(
                         "summary": (
                             f"Verification {'passed' if gate_passed else 'flagged'} "
                             f"(tests={'ok' if test_report.get('passed', True) else 'fail'}, "
-                            f"reality={'ok' if reality_scan['passed'] else 'violation'})"
+                            f"reality={'ok' if reality_scan['passed'] else 'violation'}, "
+                            f"policy={policy_guardian.get('summary', 'ok')})"
                         ),
                     },
                 )
@@ -891,6 +962,7 @@ def execute_single_agent_planai_graph(
                         test_report=test_report,
                         reality_scan=reality_scan,
                         secret_scan=secret_scan,
+                        policy_guardian=policy_guardian,
                         gate_passed=gate_passed,
                     ),
                     input_task=task,
@@ -951,6 +1023,7 @@ def execute_single_agent_planai_graph(
                     "gate_test": task.test_report,
                     "reality_scan": task.reality_scan,
                     "secret_scan": task.secret_scan,
+                    "policy_guardian": task.policy_guardian,
                 }
                 if task.test_report.get("configured"):
                     item_result_payload["test"] = task.test_report
@@ -1072,6 +1145,8 @@ def execute_single_agent_planai_graph(
                         "test_report": task.test_report,
                         "reality_scan": task.reality_scan,
                         "secret_scan": task.secret_scan,
+                        "policy_guardian": task.policy_guardian,
+                        "trajectory_step_count": traj.count(),
                         "repo_path": repo_for_item,
                         "branch": task.final_branch,
                         "target_branch": task.target_branch,
@@ -1113,6 +1188,13 @@ def execute_single_agent_planai_graph(
                     },
                     finished=True,
                 )
+
+            store.save_workflow_trajectory(
+                wf_id,
+                project_id=task.project_id,
+                steps=traj.readonly(),
+                guard_summary=task.policy_guardian,
+            )
 
             if task.session_key:
                 summary_lines = [task.response_text or "(no text output)"]

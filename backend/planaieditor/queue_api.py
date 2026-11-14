@@ -380,6 +380,21 @@ def setup_queue(
         )
         reality_scan = item_res.get("reality_scan") or wf_res.get("reality_scan") or {}
         secret_scan = item_res.get("secret_scan") or wf_res.get("secret_scan") or {}
+        traj_row = store.get_workflow_trajectory(wf_id) or {
+            "workflow_id": wf_id,
+            "project_id": wf.get("project_id") or "",
+            "step_count": 0,
+            "steps": [],
+            "board_messages": [],
+            "spawn_decision": {},
+            "guard_summary": {},
+        }
+        policy_guardian = (
+            item_res.get("policy_guardian")
+            or wf_res.get("policy_guardian")
+            or traj_row.get("guard_summary")
+            or {}
+        )
 
         return jsonify(
             {
@@ -392,8 +407,65 @@ def setup_queue(
                 "test_report": test_report,
                 "reality_scan": reality_scan,
                 "secret_scan": secret_scan,
+                "policy_guardian": policy_guardian,
+                "trajectory": traj_row,
             }
         )
+
+    @app.route("/api/planai/workflows/<wf_id>/trajectory", methods=["GET"])
+    def planai_workflow_trajectory(wf_id: str):
+        wf = store.get_workflow(wf_id)
+        if not wf:
+            return jsonify({"success": False, "error": "Workflow not found"}), 404
+        traj_row = store.get_workflow_trajectory(wf_id) or {
+            "workflow_id": wf_id,
+            "project_id": wf.get("project_id") or "",
+            "step_count": 0,
+            "steps": [],
+            "board_messages": [],
+            "spawn_decision": {},
+            "guard_summary": {},
+        }
+        return jsonify({"success": True, "trajectory": traj_row})
+
+    @app.route("/api/planai/workflows/<wf_id>/trajectory/revert", methods=["POST"])
+    def planai_workflow_trajectory_revert(wf_id: str):
+        from planaieditor.jetski_runtime import Trajectory
+
+        wf = store.get_workflow(wf_id)
+        if not wf:
+            return jsonify({"success": False, "error": "Workflow not found"}), 404
+        traj_row = store.get_workflow_trajectory(wf_id)
+        if not traj_row or not traj_row.get("steps"):
+            return (
+                jsonify(
+                    {"success": False, "error": "No recorded trajectory steps for workflow"}
+                ),
+                409,
+            )
+        data = request.get_json(silent=True) or {}
+        if "to_index" not in data:
+            return jsonify({"success": False, "error": "Missing required field: to_index"}), 400
+        to_index = int(data["to_index"])
+        preview_only = bool(data.get("preview_only", False))
+        traj = Trajectory.from_steps(
+            conversation_id=wf_id,
+            steps_data=traj_row["steps"],
+            project_id=str(traj_row.get("project_id") or ""),
+        )
+        try:
+            if preview_only:
+                preview = traj.revert_preview(to_index)
+                return jsonify({"success": True, "preview": preview, "trajectory": traj_row})
+            revert_info = traj.revert_to_step(to_index)
+            saved = store.save_workflow_trajectory(wf_id, steps=traj.readonly())
+            return jsonify(
+                {"success": True, "revert": revert_info, "trajectory": saved}
+            )
+        except IndexError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except PermissionError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 409
 
     @app.route("/api/planai/workflows/<wf_id>/gate", methods=["POST"])
     def planai_workflow_gate(wf_id: str):
@@ -453,12 +525,18 @@ def setup_queue(
             chief.process_once()
             final_item = store.get_item(item["id"])
             final_wf = store.get_workflow(wf_id)
+            auto_cascade = None
+            if final_wf and final_item:
+                auto_cascade = evolution_engine.observe_revision_resolution(
+                    final_wf, final_item, approve_note=note
+                )
             return jsonify(
                 {
                     "success": True,
                     "event": "APPROVE",
                     "workflow": final_wf,
                     "item": final_item,
+                    "auto_cascade": auto_cascade,
                 }
             )
 
@@ -604,6 +682,71 @@ def setup_queue(
         )
         return jsonify({"success": True, "rule": rule}), 201
 
+    @app.route("/api/evolution/memories", methods=["GET"])
+    def evolution_list_memories():
+        project_id = request.args.get("project_id") or None
+        active_only = str(request.args.get("active_only", "1")).lower() not in {"0", "false"}
+        memories = store.list_cascade_memories(
+            project_id=project_id, active_only=active_only
+        )
+        return jsonify({"success": True, "memories": memories})
+
+    @app.route("/api/evolution/memories", methods=["POST"])
+    def evolution_upsert_memory():
+        data = request.get_json(silent=True) or {}
+        memory_key = str(data.get("memory_key") or "").strip()
+        content = str(data.get("content") or "").strip()
+        if not memory_key or not content:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "Both memory_key and content are required",
+                    }
+                ),
+                400,
+            )
+        guardian = evolution_engine._make_policy_guardian()
+        verdict = guardian.check(
+            {
+                "tool_name": "repo_diff_write",
+                "args": {"path": f".agents/memories/{memory_key}.md", "content": content},
+            }
+        )
+        if not verdict.allowed:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": f"Blocked by PolicyGuardian [{verdict.risk_signal}]: {verdict.reason}",
+                    }
+                ),
+                409,
+            )
+        mem = store.upsert_cascade_memory(
+            memory_key=memory_key,
+            content=content,
+            project_id=str(data.get("project_id") or "*").strip() or "*",
+            trigger_type=str(data.get("trigger_type") or "MANUAL").strip() or "MANUAL",
+            source_ref=str(data.get("source_ref") or "operator_ui").strip(),
+        )
+        on_system_event("evolution_memory_updated", {"memory": mem})
+        return jsonify({"success": True, "memory": mem}), 201
+
+    @app.route("/api/evolution/memories/<mem_id>", methods=["DELETE"])
+    def evolution_delete_memory(mem_id: str):
+        deleted = store.delete_cascade_memory(mem_id)
+        if not deleted:
+            return jsonify({"success": False, "error": "Memory not found"}), 404
+        on_system_event("evolution_memory_updated", {"memory": deleted})
+        return jsonify({"success": True, "memory": deleted})
+
+    @app.route("/api/evolution/skills", methods=["GET"])
+    def evolution_list_skills():
+        project_id = request.args.get("project_id") or None
+        skills = store.list_accumulated_skills(project_id=project_id)
+        return jsonify({"success": True, "skills": skills})
+
     # ---- Chromium Prompt API Bridge & PlanAI LLM Core API ---------------
 
     @app.route("/api/llm/status", methods=["GET"])
@@ -722,7 +865,13 @@ def setup_queue(
             evolution_engine.observe_decision(updated, decision)
             linked_wf_id = str(updated.get("workflow_id") or "").strip()
             if linked_wf_id:
-                if action == "reject":
+                if action == "approve":
+                    linked_wf = store.get_workflow(linked_wf_id)
+                    if linked_wf:
+                        evolution_engine.observe_revision_resolution(
+                            linked_wf, updated, approve_note=note_text
+                        )
+                elif action == "reject":
                     transition_workflow_gate(
                         store,
                         linked_wf_id,

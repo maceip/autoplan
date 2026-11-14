@@ -1,16 +1,25 @@
-"""PlanAI Bootstrap & Continuous Evolution Engine.
+"""PlanAI + Jet Ski Bootstrap & Continuous Evolution Engine (`evolution_engine.py`).
 
 Bootstraps standing rules from real operator transcript breakdown telemetry
 (`~/.autoplan/brain/breakdown_trends.json` when present on host) and live
 `QueueStore` decisions/runs, then continuously evolves `LeadPlanner` and
-`ChiefTriage` prompts + project rules using a real multi-worker `planai.Graph`
-(`TraceCollectorWorker` -> `FailureCritiqueWorker` -> `EvolutionCritiqueJoiner`
-[`JoinedTaskWorker`] -> `PromptMutationWorker` -> `EvolutionCommitSink`).
+`ChiefTriage` prompts, project guardrails, Jet Ski dual-track `cascade_memories`
+(`CONTENT_DIFF`), and `.agents/skills/<slug>/SKILL.md` workflow skills via a real
+7-worker `planai.Graph` (`AutoplanPromptEvolutionGraph`):
+
+  TraceCollectorWorker (deterministic: harvests runs, bounce notes, PolicyGuardian A-M signals & Trajectory steps)
+    ──▶ PlanAIFailureCritiqueLLMWorker (agent / LLMTaskWorker: critiques prompts + proposes rules, memories & skills)
+    ──▶ EvolutionCritiqueJoiner (deterministic / JoinedTaskWorker: joins parallel critiques via ProvenanceChain)
+    ──▶ PolicyGuardianGateWorker (deterministic: vets proposed prompts/rules/memories/skills through Jet Ski Fastpath + PolicyGuardian)
+    ──▶ TemplateIntegrityGateWorker (deterministic: verifies required template placeholders remain intact)
+    ──▶ SkillAndMemoryAccumulatorWorker (deterministic: persists cascade_memories with CONTENT_DIFF + writes .agents/skills/*/SKILL.md)
+    ──▶ EvolutionCommitSink (terminal: commits Generation N+1 prompts, rules & workflow Trajectory)
 """
 
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import uuid
@@ -27,13 +36,21 @@ from planai import (
 )
 from pydantic import Field
 
+from planaieditor.jetski_runtime import (
+    PlanAIModelAdapter,
+    PolicyGuardian,
+    SkillAccumulator,
+    Step,
+    Trajectory,
+    slugify_skill_name,
+)
 from planaieditor.planai_llm_core import PlanAILLMManager
 from planaieditor.queue_store import QueueStore
 
 DEFAULT_LEAD_PLANNER_PROMPT = """You are the Lead Architect & Multi-Agent Planner for project '{project_name}' ({repo_path}).
 Decompose the operator goal into 2 to 3 concrete, non-overlapping sub-agent assignments with isolated scopes so parallel agents never clobber the same files.
 
-Mandatory Engineering & Operator Guardrails:
+Mandatory Engineering, Memory & Skill Guardrails:
 {active_rules_block}
 
 Available Dispatch-Ready Agent Services (ordered by empirical fitness):
@@ -50,7 +67,7 @@ DEFAULT_CHIEF_TRIAGE_PROMPT = """You are the Chief of Staff triaging incoming wo
 Score priority from 0 (low urgency idea) to 100 (critical blocker).
 Provide a concise 1-2 sentence recommendation explaining exact impact and verification status.
 
-Active Operator Brain Rules:
+Active Operator Brain Rules & Memories:
 {active_rules_block}
 """
 
@@ -82,7 +99,7 @@ _CORPUS_CATEGORY_RULES: Dict[str, tuple[str, str]] = {
 }
 
 
-# ---- PlanAI Typed Tasks for the Evolution Graph -------------------------
+# ---- PlanAI Typed Tasks for the 7-Worker Evolution Graph ----------------
 
 
 class EvolutionSeedTask(Task):
@@ -99,6 +116,8 @@ class RoleEvolutionInputTask(Task):
     current_prompt: str
     recent_failures: List[str] = Field(default_factory=list)
     operator_corrections: List[str] = Field(default_factory=list)
+    policy_violations: List[str] = Field(default_factory=list)
+    trajectory_failures: List[str] = Field(default_factory=list)
     active_rules: List[str] = Field(default_factory=list)
     service_fitness_summary: str = ""
 
@@ -113,6 +132,11 @@ class RoleCritiqueOutputTask(Task):
     proposed_rule: str = ""
     improved_prompt: str = ""
     rationale: str = ""
+    proposed_memory_key: str = ""
+    proposed_memory_content: str = ""
+    proposed_skill_name: str = ""
+    proposed_skill_description: str = ""
+    proposed_skill_instructions: str = ""
 
 
 class JoinedEvolutionBundleTask(Task):
@@ -121,11 +145,31 @@ class JoinedEvolutionBundleTask(Task):
     critiques: List[RoleCritiqueOutputTask] = Field(default_factory=list)
 
 
+class PolicyVettedEvolutionBundleTask(Task):
+    workflow_id: str
+    project_id: str
+    critiques: List[RoleCritiqueOutputTask] = Field(default_factory=list)
+    policy_verdicts: List[Dict[str, Any]] = Field(default_factory=list)
+    rejected_mutations: int = 0
+
+
 class ValidatedEvolutionBundleTask(Task):
     workflow_id: str
     project_id: str
     critiques: List[RoleCritiqueOutputTask] = Field(default_factory=list)
     validated_roles: List[str] = Field(default_factory=list)
+    policy_verdicts: List[Dict[str, Any]] = Field(default_factory=list)
+    rejected_mutations: int = 0
+
+
+class AccumulatedEvolutionBundleTask(Task):
+    workflow_id: str
+    project_id: str
+    critiques: List[RoleCritiqueOutputTask] = Field(default_factory=list)
+    validated_roles: List[str] = Field(default_factory=list)
+    policy_verdicts: List[Dict[str, Any]] = Field(default_factory=list)
+    saved_memories: List[Dict[str, Any]] = Field(default_factory=list)
+    saved_skills: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class EvolvedGenerationResultTask(Task):
@@ -133,12 +177,15 @@ class EvolvedGenerationResultTask(Task):
     project_id: str
     updated_prompts: List[Dict[str, Any]] = Field(default_factory=list)
     added_rules: List[Dict[str, Any]] = Field(default_factory=list)
+    saved_memories: List[Dict[str, Any]] = Field(default_factory=list)
+    saved_skills: List[Dict[str, Any]] = Field(default_factory=list)
+    policy_verdicts: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class LLMCritiqueAndMutateTask(Task):
     weaknesses: List[str] = Field(
         default_factory=list,
-        description="Concrete prompt weaknesses observed from recent operator bounce notes or failed runs",
+        description="Concrete prompt weaknesses observed from recent operator bounce notes, PolicyGuardian A-M signals, or failed runs",
     )
     proposed_rule: str = Field(
         default="",
@@ -147,6 +194,18 @@ class LLMCritiqueAndMutateTask(Task):
     improved_directives: List[str] = Field(
         default_factory=list,
         description="1 to 3 concrete bullet directives to append/integrate into the worker prompt template",
+    )
+    memory_note: str = Field(
+        default="",
+        description="Concise durable operational memory note summarizing learned project/routing facts",
+    )
+    skill_name: str = Field(
+        default="",
+        description="Short reusable workflow skill slug (e.g. isolated-worktree-verification)",
+    )
+    skill_instructions: str = Field(
+        default="",
+        description="Concrete step-by-step markdown checklist for the accumulated SKILL.md",
     )
     rationale: str = Field(
         default="",
@@ -170,16 +229,25 @@ _REQUIRED_PLACEHOLDERS_BY_ROLE: Dict[str, List[str]] = {
 
 EVOLUTION_GRAPH_PYTHON_SOURCE = """from planai import Graph, InitialTaskWorker, JoinedTaskWorker, LLMTaskWorker, Task, TaskWorker
 
-# AutoPlan Continuous Prompt & Rule Evolution Graph (PlanAI)
+# AutoPlan + Jet Ski 7-Worker Prompt, Memory (CONTENT_DIFF) & Skill Evolution Graph
 graph = Graph(name="AutoplanPromptEvolutionGraph")
-collector = TraceCollectorWorker()                                # kind="deterministic"
+collector = TraceCollectorWorker()                                # kind="deterministic" (runs + decisions + PolicyGuardian A-M + Trajectory)
 critic = PlanAIFailureCritiqueLLMWorker(llm=llm, prompt=prompt)   # kind="agent" (LLMTaskWorker)
 joiner = EvolutionCritiqueJoiner()                                # kind="deterministic" (JoinedTaskWorker)
-gate = TemplateIntegrityGateWorker()                              # kind="deterministic"
+policy_gate = PolicyGuardianGateWorker()                          # kind="deterministic" (Jet Ski Fastpath + PolicyGuardian)
+integrity_gate = TemplateIntegrityGateWorker()                    # kind="deterministic" (placeholder integrity)
+accumulator = SkillAndMemoryAccumulatorWorker()                   # kind="deterministic" (CONTENT_DIFF memories + .agents/skills/*/SKILL.md)
 committer = EvolutionCommitSink()                                 # kind="terminal"
 
-graph.add_workers(collector, critic, joiner, gate, committer)
-graph.set_dependency(collector, critic).next(joiner).next(gate).next(committer)
+graph.add_workers(collector, critic, joiner, policy_gate, integrity_gate, accumulator, committer)
+(
+    graph.set_dependency(collector, critic)
+    .next(joiner)
+    .next(policy_gate)
+    .next(integrity_gate)
+    .next(accumulator)
+    .next(committer)
+)
 """
 
 
@@ -191,9 +259,9 @@ def _default_evolution_nodes() -> List[Dict[str, Any]]:
             "kind": "deterministic",
             "worker_type": "TaskWorker",
             "svelte_type": "taskworker",
-            "role": "Harvests operator decisions, bounce notes, failed runs & service fitness",
+            "role": "Harvests operator decisions, failed runs, PolicyGuardian A-M signals & Trajectory steps",
             "state": "idle",
-            "position": {"x": 60, "y": 140},
+            "position": {"x": 50, "y": 140},
             "metrics": {},
         },
         {
@@ -202,9 +270,9 @@ def _default_evolution_nodes() -> List[Dict[str, Any]]:
             "kind": "agent",
             "worker_type": "LLMTaskWorker",
             "svelte_type": "llmtaskworker",
-            "role": "Critiques active LeadPlanner & ChiefTriage prompts against empirical traces",
+            "role": "Critiques LeadPlanner & ChiefTriage prompts and proposes memories & SKILL.md specs",
             "state": "idle",
-            "position": {"x": 330, "y": 140},
+            "position": {"x": 300, "y": 140},
             "metrics": {},
         },
         {
@@ -215,7 +283,18 @@ def _default_evolution_nodes() -> List[Dict[str, Any]]:
             "svelte_type": "joinedtaskworker",
             "role": "Joins parallel role critiques via PlanAI ProvenanceChain",
             "state": "idle",
-            "position": {"x": 600, "y": 140},
+            "position": {"x": 550, "y": 140},
+            "metrics": {},
+        },
+        {
+            "id": "PolicyGuardianGateWorker",
+            "label": "PolicyGuardianGateWorker",
+            "kind": "deterministic",
+            "worker_type": "TaskWorker",
+            "svelte_type": "taskworker",
+            "role": "Vets proposed prompts, rules, memories & skills via Jet Ski Fastpath + PolicyGuardian",
+            "state": "idle",
+            "position": {"x": 800, "y": 140},
             "metrics": {},
         },
         {
@@ -226,7 +305,18 @@ def _default_evolution_nodes() -> List[Dict[str, Any]]:
             "svelte_type": "taskworker",
             "role": "Verifies required template placeholders remain intact before activation",
             "state": "idle",
-            "position": {"x": 870, "y": 140},
+            "position": {"x": 1050, "y": 140},
+            "metrics": {},
+        },
+        {
+            "id": "SkillAndMemoryAccumulatorWorker",
+            "label": "SkillAndMemoryAccumulatorWorker",
+            "kind": "deterministic",
+            "worker_type": "TaskWorker",
+            "svelte_type": "taskworker",
+            "role": "Persists CONTENT_DIFF cascade memories and writes .agents/skills/*/SKILL.md",
+            "state": "idle",
+            "position": {"x": 1300, "y": 140},
             "metrics": {},
         },
         {
@@ -235,9 +325,9 @@ def _default_evolution_nodes() -> List[Dict[str, Any]]:
             "kind": "terminal",
             "worker_type": "TaskWorker",
             "svelte_type": "taskworker",
-            "role": "Persists Generation N+1 prompt versions and distilled evolution rules",
+            "role": "Activates Generation N+1 prompt versions, rules & workflow Trajectory",
             "state": "idle",
-            "position": {"x": 1140, "y": 140},
+            "position": {"x": 1550, "y": 140},
             "metrics": {},
         },
     ]
@@ -264,20 +354,38 @@ def _default_evolution_edges() -> List[Dict[str, Any]]:
             "is_back_edge": False,
         },
         {
-            "id": "e_join_validate",
+            "id": "e_join_policy",
             "source": "EvolutionCritiqueJoiner",
-            "target": "TemplateIntegrityGateWorker",
+            "target": "PolicyGuardianGateWorker",
             "label": "joined",
             "task_type": "JoinedEvolutionBundleTask",
             "active": False,
             "is_back_edge": False,
         },
         {
-            "id": "e_validate_commit",
+            "id": "e_policy_validate",
+            "source": "PolicyGuardianGateWorker",
+            "target": "TemplateIntegrityGateWorker",
+            "label": "policy_vetted",
+            "task_type": "PolicyVettedEvolutionBundleTask",
+            "active": False,
+            "is_back_edge": False,
+        },
+        {
+            "id": "e_validate_accumulate",
             "source": "TemplateIntegrityGateWorker",
-            "target": "EvolutionCommitSink",
+            "target": "SkillAndMemoryAccumulatorWorker",
             "label": "validated",
             "task_type": "ValidatedEvolutionBundleTask",
+            "active": False,
+            "is_back_edge": False,
+        },
+        {
+            "id": "e_accumulate_commit",
+            "source": "SkillAndMemoryAccumulatorWorker",
+            "target": "EvolutionCommitSink",
+            "label": "accumulated",
+            "task_type": "AccumulatedEvolutionBundleTask",
             "active": False,
             "is_back_edge": False,
         },
@@ -285,7 +393,7 @@ def _default_evolution_edges() -> List[Dict[str, Any]]:
 
 
 class EvolutionEngine:
-    """Bootstraps and continuously evolves prompts, rules, and routing weights on PlanAI."""
+    """Bootstraps and continuously evolves prompts, guardrails, `CONTENT_DIFF` memories, and `.agents/skills`."""
 
     def __init__(
         self,
@@ -294,6 +402,7 @@ class EvolutionEngine:
         on_event: Optional[Callable[[str, Dict[str, Any]], None]] = None,
         corpus_trends_path: Optional[Path] = None,
         enable_host_corpus: bool = True,
+        skills_root: Optional[Path] = None,
     ) -> None:
         self.store = store
         self.llm_manager = llm_manager
@@ -305,7 +414,17 @@ class EvolutionEngine:
             if corpus_trends_path is not None
             else (default_corpus if enable_host_corpus else None)
         )
+        self.skills_root = (
+            Path(skills_root).resolve()
+            if skills_root is not None
+            else (Path(self.store.db_path).resolve().parent / "jetski_workspace")
+        )
+        self.skill_accumulator = SkillAccumulator(self.skills_root)
         self.bootstrap_summary = self.bootstrap()
+
+    def _make_policy_guardian(self) -> PolicyGuardian:
+        model = PlanAIModelAdapter(self.llm_manager)
+        return PolicyGuardian(model=model)
 
     def bootstrap(self) -> Dict[str, Any]:
         """Seed Generation 1 prompts and ingest real breakdown_trends.json + historical decisions."""
@@ -349,7 +468,6 @@ class EvolutionEngine:
             except Exception:
                 corpus_loaded = False
 
-        # Also ingest any existing operator request_changes / reject notes in QueueStore
         for dec in self.store.list_decisions(limit=100):
             if dec["action"] in ("request_changes", "reject") and str(dec.get("note") or "").strip():
                 item = self.store.get_item(dec["item_id"])
@@ -369,18 +487,34 @@ class EvolutionEngine:
             "corpus_total_prompts": corpus_total_prompts,
             "corpus_total_sessions": corpus_total_sessions,
             "seeded_corpus_rules": seeded_rules,
+            "skills_root": str(self.skills_root),
         }
 
     def format_rules_block(self, project_id: str = "*", limit: int = 8) -> str:
         rules = self.store.list_evolution_rules(project_id=project_id, active_only=True)[:limit]
-        if not rules:
-            return "- Verify all changes with real tests and isolated branches."
-        return "\n".join(
-            f"- [{r['category']} · evidence={r['evidence_count']}] {r['rule_text']}"
-            for r in rules
-        )
+        memories = self.store.list_cascade_memories(project_id=project_id, active_only=True)[:4]
+        skills = self.store.list_accumulated_skills(project_id=project_id)[:4]
 
-    def observe_decision(self, item: Dict[str, Any], decision: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        lines: List[str] = []
+        for r in rules:
+            lines.append(
+                f"- [{r['category']} · evidence={r['evidence_count']}] {r['rule_text']}"
+            )
+        for m in memories:
+            snippet = str(m.get("content") or "").replace("\n", " ")[:180]
+            if snippet:
+                lines.append(f"- [memory:{m['memory_key']} rev={m['revision']}] {snippet}")
+        for s in skills:
+            lines.append(
+                f"- [skill:{s['name']} · evidence={s['evidence_count']}] {s['description']} ({s['skill_path']})"
+            )
+        if not lines:
+            return "- Verify all changes with real tests and isolated branches."
+        return "\n".join(lines)
+
+    def observe_decision(
+        self, item: Dict[str, Any], decision: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         action = str(decision.get("action") or "")
         note = str(decision.get("note") or "").strip()
         project_id = str(item.get("project_id") or "*") or "*"
@@ -399,7 +533,9 @@ class EvolutionEngine:
                     source_ref=str(decision.get("id") or ""),
                     project_id=project_id,
                 )
-                self._on_event("evolution_rule_learned", {"rule": rule, "item_id": item["id"]})
+                self._on_event(
+                    "evolution_rule_learned", {"rule": rule, "item_id": item["id"]}
+                )
                 return rule
         return None
 
@@ -414,15 +550,168 @@ class EvolutionEngine:
             source_ref=workflow_id,
             project_id=project_id or "*",
         )
-        self._on_event("evolution_rule_learned", {"rule": rule, "workflow_id": workflow_id})
+        self._on_event(
+            "evolution_rule_learned", {"rule": rule, "workflow_id": workflow_id}
+        )
         return rule
+
+    def observe_policy_violation(
+        self, project_id: str, workflow_id: str, guard_summary: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Record a PolicyGuardian A-M risk-signal guardrail when a workflow diff/command is flagged."""
+        signals = list(guard_summary.get("risk_signals") or [])
+        if not signals:
+            return None
+        top = signals[0]
+        code = str(top.get("code") or "POLICY")
+        label = str(top.get("label") or "policy violation")
+        reason = str(top.get("reason") or "unsafe step")
+        rule = self.store.upsert_evolution_rule(
+            category=f"policy_guardian_{code.lower()}",
+            rule_text=f"PolicyGuardian [{code}: {label}] block: {reason[:180]}",
+            source_type="policy_guardian",
+            source_ref=workflow_id,
+            project_id=project_id or "*",
+        )
+        self._on_event(
+            "evolution_rule_learned", {"rule": rule, "workflow_id": workflow_id}
+        )
+        return rule
+
+    def observe_revision_resolution(
+        self,
+        workflow: Dict[str, Any],
+        item: Dict[str, Any],
+        approve_note: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """Automatic `AUTO_CASCADE` memory (`CONTENT_DIFF`) + `.agents/skills` accumulation.
+
+        Fires when a workflow that required >= 2 rounds (or had operator `request_changes`
+        feedback) resolves cleanly via `APPROVE` at the Human Gate.
+        """
+        round_num = int(workflow.get("round") or (workflow.get("result") or {}).get("round") or 1)
+        decisions = self.store.list_decisions(item_id=str(item.get("id") or ""))
+        bounce_notes = [
+            str(d.get("note") or "").strip()
+            for d in decisions
+            if d.get("action") == "request_changes" and str(d.get("note") or "").strip()
+        ]
+        if round_num < 2 and not bounce_notes:
+            return None
+
+        wf_id = str(workflow.get("id") or "")
+        proj_id = str(workflow.get("project_id") or item.get("project_id") or "*") or "*"
+        wf_res = dict(workflow.get("result") or {})
+        item_res = dict(item.get("result") or {})
+        changed_files = list(
+            item_res.get("changed_files") or wf_res.get("changed_files") or []
+        )
+        test_cmd = str(item.get("test_command") or wf_res.get("test_command") or "").strip()
+        goal_headline = str(workflow.get("goal") or item.get("title") or "workflow").splitlines()[0][:100]
+
+        guardian = self._make_policy_guardian()
+        memory_lines = [
+            f"# Verified Multi-Round Resolution ({proj_id})",
+            f"- Last workflow: `{wf_id}` resolved in round {round_num}.",
+            f"- Goal: {goal_headline}",
+        ]
+        if bounce_notes:
+            memory_lines.append(f"- Operator revision directive: {bounce_notes[0][:200]}")
+        if changed_files:
+            memory_lines.append(f"- Verified files: {', '.join(changed_files[:8])}")
+        if test_cmd:
+            memory_lines.append(f"- Gate test command: `{test_cmd}`")
+        if approve_note.strip():
+            memory_lines.append(f"- Approval note: {approve_note.strip()[:160]}")
+        memory_body = "\n".join(memory_lines)
+
+        verdict = guardian.check(
+            {
+                "tool_name": "repo_diff_write",
+                "args": {"path": ".agents/memory.md", "content": memory_body},
+            }
+        )
+        if not verdict.allowed:
+            return None
+
+        mem_key = f"revision-playbook-{slugify_skill_name(proj_id if proj_id != '*' else 'global')}"
+        existing_mems = [
+            m
+            for m in self.store.list_cascade_memories(project_id=proj_id, active_only=True)
+            if m["memory_key"] == mem_key
+        ]
+        if existing_mems:
+            prev_lines = [
+                ln
+                for ln in str(existing_mems[0].get("content") or "").splitlines()
+                if ln.startswith("- Operator revision directive:")
+                and (not bounce_notes or bounce_notes[0][:80] not in ln)
+            ]
+            if prev_lines:
+                memory_body = memory_body + "\n" + "\n".join(prev_lines[:3])
+
+        saved_mem = self.store.upsert_cascade_memory(
+            memory_key=mem_key,
+            content=memory_body,
+            project_id=proj_id,
+            trigger_type="AUTO_CASCADE",
+            source_ref=wf_id,
+        )
+
+        skill_slug = slugify_skill_name(
+            f"{proj_id if proj_id != '*' else 'autoplan'}-verified-revision"
+        )
+        existing_skills = [
+            s
+            for s in self.store.list_accumulated_skills(project_id=proj_id)
+            if s["name"] == skill_slug
+        ]
+        next_evidence = (int(existing_skills[0]["evidence_count"]) + 1) if existing_skills else 1
+        skill_desc = (
+            f"Pre-flight revision & verification checklist distilled from {next_evidence} "
+            f"multi-round gate resolution(s) in {proj_id}."
+        )
+        checklist = [
+            "## Pre-Flight Checklist",
+            f"1. Apply standing operator feedback upfront: {bounce_notes[0][:180] if bounce_notes else 'keep scope minimal and verified.'}",
+            f"2. Inspect target files before editing: {', '.join(changed_files[:6]) if changed_files else 'assigned branch scope'}.",
+            f"3. Run deterministic verification command `{test_cmd or 'project test suite'}` before requesting Human Gate review.",
+            "4. Ensure PolicyGuardian fastpath & Law-2 reality checks pass with zero secrets or unauthorized placeholders.",
+        ]
+        disk_skill = self.skill_accumulator.upsert_skill(
+            name=skill_slug,
+            description=skill_desc,
+            instructions_md="\n".join(checklist),
+            source_workflow_id=wf_id,
+            evidence_count=next_evidence,
+        )
+        saved_skill = self.store.upsert_accumulated_skill(
+            name=skill_slug,
+            description=skill_desc,
+            skill_path=disk_skill["skill_path"],
+            instructions_md="\n".join(checklist),
+            project_id=proj_id,
+            source_workflow_id=wf_id,
+            evidence_count=next_evidence,
+        )
+
+        self._on_event(
+            "evolution_memory_updated",
+            {"memory": saved_mem, "skill": saved_skill, "workflow_id": wf_id},
+        )
+        return {"memory": saved_mem, "skill": saved_skill}
 
     def status(self, project_id: Optional[str] = None) -> Dict[str, Any]:
         lead_pv = self.store.get_active_prompt("lead_planner")
         chief_pv = self.store.get_active_prompt("chief_triage")
         rules = self.store.list_evolution_rules(project_id=project_id, active_only=True)
+        memories = self.store.list_cascade_memories(
+            project_id=project_id, active_only=True
+        )
+        skills = self.store.list_accumulated_skills(project_id=project_id)
         fitness = self.store.compute_service_fitness(project_id=project_id)
         evo_workflows = self.store.list_workflows(graph_type="evolution", limit=10)
+        manifest_path = self.skills_root / ".agents" / "skills.json"
         return {
             "bootstrap": self.bootstrap_summary,
             "active_generation": int(lead_pv["generation"]) if lead_pv else 1,
@@ -433,6 +722,11 @@ class EvolutionEngine:
             "prompt_history": self.store.list_prompt_versions(limit=20),
             "rules": rules,
             "rules_count": len(rules),
+            "memories": memories,
+            "memories_count": len(memories),
+            "skills": skills,
+            "skills_count": len(skills),
+            "skills_manifest_path": str(manifest_path) if manifest_path.is_file() else "",
             "service_fitness": fitness,
             "recent_evolution_workflows": evo_workflows,
         }
@@ -440,7 +734,7 @@ class EvolutionEngine:
     def run_evolution_cycle(
         self, project_id: str = "*", reason: str = "manual"
     ) -> Dict[str, Any]:
-        """Execute a real PlanAI Graph (`TraceCollector` -> `LLMTaskWorker` -> `JoinedTaskWorker` -> `IntegrityGate` -> `Commit`)."""
+        """Execute the 7-worker `AutoplanPromptEvolutionGraph` on PlanAI + Jet Ski."""
         wf_id = f"wf_evo_{uuid.uuid4().hex[:8]}"
         lead_pv = self.store.get_active_prompt("lead_planner")
         cur_gen = int(lead_pv["generation"]) if lead_pv else 1
@@ -449,14 +743,18 @@ class EvolutionEngine:
         events: List[Dict[str, Any]] = []
         provenance_log: List[Dict[str, Any]] = []
         visit_counts: Dict[str, int] = {}
+        traj = Trajectory(
+            conversation_id=wf_id,
+            project_id="" if project_id == "*" else project_id,
+        )
 
         wf = self.store.create_workflow(
             {
                 "id": wf_id,
                 "project_id": "" if project_id == "*" else project_id,
                 "graph_type": "evolution",
-                "title": f"Prompt & Rule Evolution Cycle (Gen v{cur_gen} → v{cur_gen + 1})",
-                "goal": f"Evolve LeadPlanner & ChiefTriage prompts from empirical traces (trigger: {reason})",
+                "title": f"Prompt, Memory & Skill Evolution (Gen v{cur_gen} → v{cur_gen + 1})",
+                "goal": f"Evolve prompts, CONTENT_DIFF memories & .agents/skills from traces (trigger: {reason})",
                 "state": "running",
                 "nodes": nodes,
                 "edges": edges,
@@ -499,13 +797,14 @@ class EvolutionEngine:
                         n["metrics"] = merged_m
                 for e in edges:
                     e["active"] = e["id"] == edge_id and new_state == "running"
-                evt = {
-                    "ts": time.time(),
-                    "node_id": node_id,
-                    "state": new_state,
-                    "detail": detail,
-                }
-                events.append(evt)
+                events.append(
+                    {
+                        "ts": time.time(),
+                        "node_id": node_id,
+                        "state": new_state,
+                        "detail": detail,
+                    }
+                )
                 if prov_chain:
                     provenance_log.append(
                         {"ts": time.time(), "node_id": node_id, "chain": prov_chain}
@@ -537,12 +836,18 @@ class EvolutionEngine:
             weaknesses: List[str] = []
             proposed_rule = ""
             directives: List[str] = []
+            memory_note = ""
+            skill_name = ""
+            skill_instructions = ""
             rationale = fallback_note
 
             if parsed is not None:
                 weaknesses = [w.strip() for w in parsed.weaknesses if w.strip()]
                 proposed_rule = parsed.proposed_rule.strip()
                 directives = [d.strip() for d in parsed.improved_directives if d.strip()]
+                memory_note = parsed.memory_note.strip()
+                skill_name = parsed.skill_name.strip()
+                skill_instructions = parsed.skill_instructions.strip()
                 if parsed.rationale.strip():
                     rationale = parsed.rationale.strip()
 
@@ -550,6 +855,10 @@ class EvolutionEngine:
                 if task.operator_corrections:
                     directives.append(
                         f"Enforce recent operator feedback: {task.operator_corrections[0][:160]}"
+                    )
+                if task.policy_violations:
+                    directives.append(
+                        f"Prevent PolicyGuardian risk signal: {task.policy_violations[0][:160]}"
                     )
                 if task.recent_failures:
                     directives.append(
@@ -559,17 +868,53 @@ class EvolutionEngine:
                     directives.append(
                         f"Route subtasks preferentially by measured service fitness ({task.service_fitness_summary}) and require clean worktree verification."
                     )
+
             if not rationale:
                 rationale = (
-                    f"Distilled {len(task.operator_corrections)} operator corrections and "
-                    f"{len(task.recent_failures)} run failure traces into Generation v{task.current_generation + 1}."
+                    f"Distilled {len(task.operator_corrections)} operator corrections, "
+                    f"{len(task.policy_violations)} PolicyGuardian signals, and "
+                    f"{len(task.recent_failures)} failure traces into Generation v{task.current_generation + 1}."
                 )
+
+            next_gen = task.current_generation + 1
+            mem_key = f"{task.worker_role}-operational-memory"
+            if not memory_note:
+                mem_parts = [
+                    f"Generation v{next_gen} synthesis for `{task.worker_role}`:",
+                    f"- Service fitness: {task.service_fitness_summary}",
+                ]
+                if task.operator_corrections:
+                    mem_parts.append(f"- Key correction: {task.operator_corrections[0][:180]}")
+                if task.policy_violations:
+                    mem_parts.append(f"- Policy alert: {task.policy_violations[0][:180]}")
+                if task.recent_failures:
+                    mem_parts.append(f"- Failure guard: {task.recent_failures[0][:180]}")
+                memory_note = "\n".join(mem_parts)
+
+            if task.worker_role == "lead_planner":
+                resolved_skill_name = slugify_skill_name(
+                    skill_name or f"lead-planner-verification-gen-v{next_gen}"
+                )
+                resolved_skill_desc = (
+                    f"Evolved Generation v{next_gen} decomposition & worktree verification skill ({rationale[:140]})"
+                )
+                resolved_skill_instr = skill_instructions or "\n".join(
+                    [
+                        "## Decomposition & Verification Protocol",
+                        *[f"- {d.lstrip('- ').strip()}" for d in directives[:3]],
+                        f"- Empirical routing order: {task.service_fitness_summary}",
+                    ]
+                )
+            else:
+                resolved_skill_name = ""
+                resolved_skill_desc = ""
+                resolved_skill_instr = ""
 
             marker = "\n# Evolved Directives"
             base_prompt = task.current_prompt.split(marker)[0].rstrip()
             bullet_block = "\n".join(f"- {d.lstrip('- ').strip()}" for d in directives[:3])
             improved_prompt = (
-                f"{base_prompt}{marker} (Gen v{task.current_generation + 1}):\n{bullet_block}\n"
+                f"{base_prompt}{marker} (Gen v{next_gen}):\n{bullet_block}\n"
             )
 
             return RoleCritiqueOutputTask(
@@ -582,6 +927,11 @@ class EvolutionEngine:
                 proposed_rule=proposed_rule,
                 improved_prompt=improved_prompt,
                 rationale=rationale,
+                proposed_memory_key=mem_key,
+                proposed_memory_content=memory_note,
+                proposed_skill_name=resolved_skill_name,
+                proposed_skill_description=resolved_skill_desc,
+                proposed_skill_instructions=resolved_skill_instr,
             )
 
         class TraceCollectorWorker(TaskWorker):
@@ -591,7 +941,7 @@ class EvolutionEngine:
                 mark_node(
                     "TraceCollectorWorker",
                     "running",
-                    "Collecting failed runs, operator decisions, and service fitness",
+                    "Collecting failed runs, operator decisions, PolicyGuardian A-M signals & trajectories",
                     count_visit=True,
                 )
                 proj_filter = None if task.project_id in ("", "*") else task.project_id
@@ -617,10 +967,49 @@ class EvolutionEngine:
                     )[:10]
                 ]
                 fitness = engine.store.compute_service_fitness(project_id=proj_filter)
-                fitness_str = ", ".join(
-                    f"{f['service']}: {f['succeeded_runs']}/{f['total_runs']} pass"
-                    for f in fitness
-                ) or "no runs recorded yet"
+                fitness_str = (
+                    ", ".join(
+                        f"{f['service']}: {f['succeeded_runs']}/{f['total_runs']} pass"
+                        for f in fitness
+                    )
+                    or "no runs recorded yet"
+                )
+
+                policy_violations: List[str] = []
+                traj_failures: List[str] = []
+                recent_wfs = engine.store.list_workflows(project_id=proj_filter, limit=15)
+                for rwf in recent_wfs:
+                    if rwf.get("id") == wf_id:
+                        continue
+                    wt = engine.store.get_workflow_trajectory(str(rwf["id"]))
+                    if not wt:
+                        continue
+                    gs = wt.get("guard_summary") or {}
+                    for sig in gs.get("risk_signals") or []:
+                        policy_violations.append(
+                            f"[{sig.get('code')}] {sig.get('label')}: {sig.get('reason')}"
+                        )
+                    for st in wt.get("steps") or []:
+                        if st.get("status") in ("FAILED", "CANCELLED"):
+                            traj_failures.append(
+                                f"{st.get('type')}:{st.get('tool_name')} -> {st.get('vetting_verdict') or st.get('status')}"
+                            )
+
+                with state_lock:
+                    traj.append(
+                        Step(
+                            index=0,
+                            type="GREP_SEARCH",
+                            tool_name="collect_traces",
+                            args={"project_id": task.project_id, "reason": task.reason},
+                            result={
+                                "corrections": len(corrections),
+                                "failed_runs": len(failure_texts),
+                                "policy_signals": len(policy_violations),
+                            },
+                            status="COMPLETED",
+                        )
+                    )
 
                 published = 0
                 for role in ("lead_planner", "chief_triage"):
@@ -637,6 +1026,8 @@ class EvolutionEngine:
                             current_prompt=str(pv["prompt_template"]),
                             recent_failures=failure_texts[:5],
                             operator_corrections=corrections[:5],
+                            policy_violations=policy_violations[:5],
+                            trajectory_failures=traj_failures[:5],
                             active_rules=rules,
                             service_fitness_summary=fitness_str,
                         ),
@@ -645,18 +1036,17 @@ class EvolutionEngine:
                 mark_node(
                     "TraceCollectorWorker",
                     "succeeded",
-                    f"Published {published} role evolution tasks ({len(corrections)} corrections, {len(failure_texts)} failures)",
+                    f"Published {published} role tasks ({len(corrections)} corrections, {len(policy_violations)} policy signals)",
                     edge_id="e_collect_critique",
                     metrics={
                         "roles_fanned_out": published,
                         "corrections_found": len(corrections),
                         "failed_runs_found": len(failure_texts),
+                        "policy_signals_found": len(policy_violations),
                     },
                 )
 
         class PlanAIFailureCritiqueLLMWorker(LLMTaskWorker):
-            """Genuine PlanAI `LLMTaskWorker` critiquing and mutating active role prompts."""
-
             llm_input_type: Type[Task] = RoleEvolutionInputTask
             llm_output_type: Type[Task] = LLMCritiqueAndMutateTask
             output_types: List[Type[Task]] = [RoleCritiqueOutputTask]
@@ -670,11 +1060,13 @@ class EvolutionEngine:
                     f"Analyze worker role '{task.worker_role}' (Generation {task.current_generation}).\n"
                     f"Current prompt template:\n{task.current_prompt}\n\n"
                     f"Recent operator corrections: {task.operator_corrections or ['none']}\n"
+                    f"PolicyGuardian A-M signals: {task.policy_violations or ['none']}\n"
                     f"Recent failed runs: {task.recent_failures or ['none']}\n"
                     f"Empirical service fitness: {task.service_fitness_summary}\n"
                     f"Existing rules: {task.active_rules[:5]}\n\n"
                     "Identify concrete prompt weaknesses, propose 1 concise guardrail rule if warranted, "
-                    "and provide 1-2 crisp bullet directives to strengthen the prompt without removing placeholders."
+                    "1 durable operational memory note, 1 reusable workflow skill checklist, and "
+                    "1-2 crisp bullet directives to strengthen the prompt without removing placeholders."
                 )
 
             def _invoke_llm(self, task: Task):
@@ -706,7 +1098,9 @@ class EvolutionEngine:
 
             def post_process(self, response: Optional[Task], input_task: Task) -> None:
                 assert isinstance(input_task, RoleEvolutionInputTask)
-                parsed = response if isinstance(response, LLMCritiqueAndMutateTask) else None
+                parsed = (
+                    response if isinstance(response, LLMCritiqueAndMutateTask) else None
+                )
                 out_task = _synthesize_role_critique(input_task, parsed)
                 prov_chain = [str(p) for p in getattr(input_task, "_provenance", [])]
                 self.publish_work(task=out_task, input_task=input_task)
@@ -720,8 +1114,6 @@ class EvolutionEngine:
                 )
 
         class DeterministicFailureCritiqueWorker(TaskWorker):
-            """Deterministic empirical trace distiller used only when LLM is disabled."""
-
             output_types: List[Type[Task]] = [RoleCritiqueOutputTask]
 
             def consume_work(self, task: RoleEvolutionInputTask) -> None:
@@ -756,7 +1148,11 @@ class EvolutionEngine:
                     edge_id="e_critique_join",
                     count_visit=True,
                 )
-                prov_chain = [str(p) for p in getattr(tasks[0], "_provenance", [])] if tasks else []
+                prov_chain = (
+                    [str(p) for p in getattr(tasks[0], "_provenance", [])]
+                    if tasks
+                    else []
+                )
                 bundle = JoinedEvolutionBundleTask(
                     workflow_id=tasks[0].workflow_id if tasks else wf_id,
                     project_id=tasks[0].project_id if tasks else project_id,
@@ -767,22 +1163,159 @@ class EvolutionEngine:
                     "EvolutionCritiqueJoiner",
                     "succeeded",
                     f"Synchronized {len(tasks)} evolved role specs",
-                    edge_id="e_join_validate",
+                    edge_id="e_join_policy",
                     metrics={"joined_critiques": len(tasks)},
                     prov_chain=prov_chain,
                 )
 
-        class TemplateIntegrityGateWorker(TaskWorker):
-            """Deterministic gate ensuring prompt evolution preserves required placeholders."""
+        class PolicyGuardianGateWorker(TaskWorker):
+            """Jet Ski `PolicyGuardian` safety gate over evolved prompts, rules, memories & skills."""
 
-            output_types: List[Type[Task]] = [ValidatedEvolutionBundleTask]
+            output_types: List[Type[Task]] = [PolicyVettedEvolutionBundleTask]
 
             def consume_work(self, task: JoinedEvolutionBundleTask) -> None:
+                mark_node(
+                    "PolicyGuardianGateWorker",
+                    "running",
+                    "Vetting proposed prompts, rules, memories & skills via Jet Ski PolicyGuardian",
+                    edge_id="e_join_policy",
+                    count_visit=True,
+                )
+                guardian = engine._make_policy_guardian()
+                vetted_critiques: List[RoleCritiqueOutputTask] = []
+                verdict_summaries: List[Dict[str, Any]] = []
+                rejected = 0
+
+                for crit in task.critiques:
+                    v_prompt = guardian.check(
+                        {
+                            "tool_name": "repo_diff_write",
+                            "args": {
+                                "path": f"prompts/{crit.worker_role}.md",
+                                "content": crit.improved_prompt,
+                            },
+                        }
+                    )
+                    verdict_summaries.append(
+                        {
+                            "target": f"prompt:{crit.worker_role}",
+                            "allowed": v_prompt.allowed,
+                            "severity": v_prompt.severity,
+                            "risk_signal": v_prompt.risk_signal,
+                        }
+                    )
+                    safe_prompt = crit.improved_prompt
+                    if not v_prompt.allowed:
+                        rejected += 1
+                        safe_prompt = crit.current_prompt
+
+                    safe_rule = crit.proposed_rule
+                    if safe_rule:
+                        v_rule = guardian.check(
+                            {
+                                "tool_name": "repo_diff_write",
+                                "args": {"path": "rules/guardrail.md", "content": safe_rule},
+                            }
+                        )
+                        if not v_rule.allowed:
+                            rejected += 1
+                            safe_rule = ""
+
+                    safe_mem = crit.proposed_memory_content
+                    if safe_mem:
+                        v_mem = guardian.check(
+                            {
+                                "tool_name": "repo_diff_write",
+                                "args": {"path": ".agents/memory.md", "content": safe_mem},
+                            }
+                        )
+                        if not v_mem.allowed:
+                            rejected += 1
+                            safe_mem = ""
+
+                    safe_skill_instr = crit.proposed_skill_instructions
+                    safe_skill_name = crit.proposed_skill_name
+                    if safe_skill_instr:
+                        v_skill = guardian.check(
+                            {
+                                "tool_name": "repo_diff_write",
+                                "args": {
+                                    "path": f".agents/skills/{safe_skill_name or 'skill'}/SKILL.md",
+                                    "content": safe_skill_instr,
+                                },
+                            }
+                        )
+                        if not v_skill.allowed:
+                            rejected += 1
+                            safe_skill_name = ""
+                            safe_skill_instr = ""
+
+                    vetted_critiques.append(
+                        RoleCritiqueOutputTask(
+                            workflow_id=crit.workflow_id,
+                            project_id=crit.project_id,
+                            worker_role=crit.worker_role,
+                            current_generation=crit.current_generation,
+                            current_prompt=crit.current_prompt,
+                            weaknesses=crit.weaknesses,
+                            proposed_rule=safe_rule,
+                            improved_prompt=safe_prompt,
+                            rationale=crit.rationale,
+                            proposed_memory_key=crit.proposed_memory_key,
+                            proposed_memory_content=safe_mem,
+                            proposed_skill_name=safe_skill_name,
+                            proposed_skill_description=crit.proposed_skill_description,
+                            proposed_skill_instructions=safe_skill_instr,
+                        )
+                    )
+
+                max_sev = max((v["severity"] for v in verdict_summaries), default=0.0)
+                with state_lock:
+                    traj.append(
+                        Step(
+                            index=0,
+                            type="REVIEW",
+                            tool_name="PolicyGuardian.check",
+                            args={"candidates": len(task.critiques)},
+                            result={"rejected_mutations": rejected, "max_severity": max_sev},
+                            status="COMPLETED",
+                            vetting_verdict=f"ALLOW sev={max_sev} rejected={rejected}",
+                        )
+                    )
+
+                prov_chain = [str(p) for p in getattr(task, "_provenance", [])]
+                self.publish_work(
+                    PolicyVettedEvolutionBundleTask(
+                        workflow_id=task.workflow_id,
+                        project_id=task.project_id,
+                        critiques=vetted_critiques,
+                        policy_verdicts=verdict_summaries,
+                        rejected_mutations=rejected,
+                    ),
+                    input_task=task,
+                )
+                mark_node(
+                    "PolicyGuardianGateWorker",
+                    "succeeded",
+                    f"PolicyGuardian vetted {len(vetted_critiques)} role mutations (rejected={rejected}, max_sev={max_sev})",
+                    edge_id="e_policy_validate",
+                    metrics={
+                        "vetted_roles": len(vetted_critiques),
+                        "rejected_mutations": rejected,
+                        "max_severity": max_sev,
+                    },
+                    prov_chain=prov_chain,
+                )
+
+        class TemplateIntegrityGateWorker(TaskWorker):
+            output_types: List[Type[Task]] = [ValidatedEvolutionBundleTask]
+
+            def consume_work(self, task: PolicyVettedEvolutionBundleTask) -> None:
                 mark_node(
                     "TemplateIntegrityGateWorker",
                     "running",
                     "Validating template placeholders across evolved prompts",
-                    edge_id="e_join_validate",
+                    edge_id="e_policy_validate",
                     count_visit=True,
                 )
                 validated_critiques: List[RoleCritiqueOutputTask] = []
@@ -804,6 +1337,8 @@ class EvolutionEngine:
                         project_id=task.project_id,
                         critiques=validated_critiques,
                         validated_roles=validated_roles,
+                        policy_verdicts=task.policy_verdicts,
+                        rejected_mutations=task.rejected_mutations,
                     ),
                     input_task=task,
                 )
@@ -811,20 +1346,110 @@ class EvolutionEngine:
                     "TemplateIntegrityGateWorker",
                     "succeeded",
                     f"Verified placeholder integrity for {', '.join(validated_roles)}",
-                    edge_id="e_validate_commit",
+                    edge_id="e_validate_accumulate",
                     metrics={"validated_roles": validated_roles},
+                    prov_chain=prov_chain,
+                )
+
+        class SkillAndMemoryAccumulatorWorker(TaskWorker):
+            """Persists Jet Ski Dual-Track `cascade_memories` (`CONTENT_DIFF`) + `.agents/skills/*/SKILL.md`."""
+
+            output_types: List[Type[Task]] = [AccumulatedEvolutionBundleTask]
+
+            def consume_work(self, task: ValidatedEvolutionBundleTask) -> None:
+                mark_node(
+                    "SkillAndMemoryAccumulatorWorker",
+                    "running",
+                    "Writing CONTENT_DIFF cascade memories and .agents/skills/*/SKILL.md",
+                    edge_id="e_validate_accumulate",
+                    count_visit=True,
+                )
+                saved_memories: List[Dict[str, Any]] = []
+                saved_skills: List[Dict[str, Any]] = []
+                target_proj = task.project_id or "*"
+
+                for crit in task.critiques:
+                    if crit.proposed_memory_key and crit.proposed_memory_content:
+                        mem = engine.store.upsert_cascade_memory(
+                            memory_key=crit.proposed_memory_key,
+                            content=crit.proposed_memory_content,
+                            project_id=target_proj,
+                            trigger_type="MODEL_DECISION",
+                            source_ref=wf_id,
+                        )
+                        saved_memories.append(mem)
+
+                    if crit.proposed_skill_name and crit.proposed_skill_instructions:
+                        disk_skill = engine.skill_accumulator.upsert_skill(
+                            name=crit.proposed_skill_name,
+                            description=crit.proposed_skill_description
+                            or crit.rationale[:180],
+                            instructions_md=crit.proposed_skill_instructions,
+                            source_workflow_id=wf_id,
+                            evidence_count=1,
+                        )
+                        db_skill = engine.store.upsert_accumulated_skill(
+                            name=disk_skill["name"],
+                            description=disk_skill["description"],
+                            skill_path=disk_skill["skill_path"],
+                            instructions_md=crit.proposed_skill_instructions,
+                            project_id=target_proj,
+                            source_workflow_id=wf_id,
+                        )
+                        saved_skills.append(db_skill)
+
+                with state_lock:
+                    traj.append(
+                        Step(
+                            index=0,
+                            type="FILE_EDIT",
+                            tool_name="SkillAccumulator.upsert_skill",
+                            args={
+                                "memories": len(saved_memories),
+                                "skills": len(saved_skills),
+                            },
+                            result={
+                                "memory_keys": [m["memory_key"] for m in saved_memories],
+                                "skill_names": [s["name"] for s in saved_skills],
+                            },
+                            status="COMPLETED",
+                        )
+                    )
+
+                prov_chain = [str(p) for p in getattr(task, "_provenance", [])]
+                self.publish_work(
+                    AccumulatedEvolutionBundleTask(
+                        workflow_id=task.workflow_id,
+                        project_id=task.project_id,
+                        critiques=task.critiques,
+                        validated_roles=task.validated_roles,
+                        policy_verdicts=task.policy_verdicts,
+                        saved_memories=saved_memories,
+                        saved_skills=saved_skills,
+                    ),
+                    input_task=task,
+                )
+                mark_node(
+                    "SkillAndMemoryAccumulatorWorker",
+                    "succeeded",
+                    f"Accumulated {len(saved_memories)} CONTENT_DIFF memories & {len(saved_skills)} SKILL.md files",
+                    edge_id="e_accumulate_commit",
+                    metrics={
+                        "memories_saved": len(saved_memories),
+                        "skills_saved": len(saved_skills),
+                    },
                     prov_chain=prov_chain,
                 )
 
         class EvolutionCommitSink(TaskWorker):
             output_types: List[Type[Task]] = []
 
-            def consume_work(self, task: ValidatedEvolutionBundleTask) -> None:
+            def consume_work(self, task: AccumulatedEvolutionBundleTask) -> None:
                 mark_node(
                     "EvolutionCommitSink",
                     "running",
-                    "Committing evolved prompt versions and learned rules to SQLite store",
-                    edge_id="e_validate_commit",
+                    "Committing evolved prompt versions, guardrails & workflow trajectory",
+                    edge_id="e_accumulate_commit",
                     count_visit=True,
                 )
                 saved_prompts: List[Dict[str, Any]] = []
@@ -848,26 +1473,60 @@ class EvolutionEngine:
                         )
                         saved_rules.append(rule)
 
-                res_task = EvolvedGenerationResultTask(
-                    workflow_id=wf_id,
-                    project_id=task.project_id,
-                    updated_prompts=saved_prompts,
-                    added_rules=saved_rules,
-                )
-                committed_results.append(res_task)
                 new_gen = (
                     max(int(p["generation"]) for p in saved_prompts)
                     if saved_prompts
                     else cur_gen + 1
                 )
+                with state_lock:
+                    traj.append(
+                        Step(
+                            index=0,
+                            type="SYSTEM",
+                            tool_name="EvolutionCommitSink",
+                            result={
+                                "new_generation": new_gen,
+                                "prompts": len(saved_prompts),
+                                "rules": len(saved_rules),
+                            },
+                            status="COMPLETED",
+                        )
+                    )
+                engine.store.save_workflow_trajectory(
+                    wf_id,
+                    project_id="" if task.project_id == "*" else task.project_id,
+                    steps=traj.readonly(),
+                    guard_summary={
+                        "allowed": True,
+                        "severity": max(
+                            (float(v.get("severity") or 0.0) for v in task.policy_verdicts),
+                            default=0.0,
+                        ),
+                        "checks_run": len(task.policy_verdicts),
+                        "risk_signals": [],
+                    },
+                )
+
+                res_task = EvolvedGenerationResultTask(
+                    workflow_id=wf_id,
+                    project_id=task.project_id,
+                    updated_prompts=saved_prompts,
+                    added_rules=saved_rules,
+                    saved_memories=task.saved_memories,
+                    saved_skills=task.saved_skills,
+                    policy_verdicts=task.policy_verdicts,
+                )
+                committed_results.append(res_task)
                 mark_node(
                     "EvolutionCommitSink",
                     "succeeded",
-                    f"Activated Generation v{new_gen} ({len(saved_prompts)} prompts, {len(saved_rules)} new rules)",
+                    f"Activated Gen v{new_gen} ({len(saved_prompts)} prompts, {len(task.saved_memories)} memories, {len(task.saved_skills)} skills)",
                     metrics={
                         "new_generation": new_gen,
                         "prompts_updated": len(saved_prompts),
                         "rules_added": len(saved_rules),
+                        "memories_saved": len(task.saved_memories),
+                        "skills_saved": len(task.saved_skills),
                     },
                 )
 
@@ -878,17 +1537,33 @@ class EvolutionEngine:
             if active_llm is not None:
                 critic: TaskWorker = PlanAIFailureCritiqueLLMWorker(
                     llm=active_llm,
-                    prompt="Critique and evolve prompt template from empirical traces.",
-                    system_prompt="You are PlanAI's evolutionary prompt optimizer. Be concise, empirical, and specific.",
+                    prompt="Critique and evolve prompt template, operational memory, and workflow skill from empirical traces.",
+                    system_prompt="You are PlanAI's evolutionary prompt, memory, and skill optimizer. Be concise, empirical, and specific.",
                 )
             else:
                 critic = DeterministicFailureCritiqueWorker()
             joiner = EvolutionCritiqueJoiner()
+            policy_gate = PolicyGuardianGateWorker()
             integrity_gate = TemplateIntegrityGateWorker()
+            accumulator = SkillAndMemoryAccumulatorWorker()
             committer = EvolutionCommitSink()
-            graph.add_workers(collector, critic, joiner, integrity_gate, committer)
-            graph.set_dependency(collector, critic).next(joiner).next(integrity_gate).next(
-                committer
+
+            graph.add_workers(
+                collector,
+                critic,
+                joiner,
+                policy_gate,
+                integrity_gate,
+                accumulator,
+                committer,
+            )
+            (
+                graph.set_dependency(collector, critic)
+                .next(joiner)
+                .next(policy_gate)
+                .next(integrity_gate)
+                .next(accumulator)
+                .next(committer)
             )
 
             seed = EvolutionSeedTask(
@@ -896,8 +1571,11 @@ class EvolutionEngine:
             )
             graph.run(initial_tasks=[(collector, seed)], display_terminal=False)
 
-            final_prompts = committed_results[0].updated_prompts if committed_results else []
-            final_rules = committed_results[0].added_rules if committed_results else []
+            committed = committed_results[0] if committed_results else None
+            final_prompts = committed.updated_prompts if committed else []
+            final_rules = committed.added_rules if committed else []
+            final_memories = committed.saved_memories if committed else []
+            final_skills = committed.saved_skills if committed else []
             final_gen = (
                 max(int(p["generation"]) for p in final_prompts)
                 if final_prompts
@@ -927,6 +1605,23 @@ class EvolutionEngine:
                         for p in final_prompts
                     ],
                     "added_rules": final_rules,
+                    "saved_memories": [
+                        {
+                            "id": m["id"],
+                            "memory_key": m["memory_key"],
+                            "action_type": m["action_type"],
+                            "revision": m["revision"],
+                        }
+                        for m in final_memories
+                    ],
+                    "saved_skills": [
+                        {
+                            "id": s["id"],
+                            "name": s["name"],
+                            "skill_path": s["skill_path"],
+                        }
+                        for s in final_skills
+                    ],
                     "llm_provider_used": self.llm_manager.last_provider_used,
                 },
                 finished_at=time.time(),

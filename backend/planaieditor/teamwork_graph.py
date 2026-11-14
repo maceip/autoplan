@@ -39,6 +39,18 @@ from pydantic import BaseModel, Field
 
 from planaieditor.agent_adapters import AgentRunManager, redact_secrets
 from planaieditor.evolution_engine import EvolutionEngine
+from planaieditor.jetski_runtime import (
+    Board,
+    Member,
+    PlanExecutor,
+    Step,
+    SubagentHub,
+    SubagentSpec,
+    Trajectory,
+    decide_spawn,
+    evaluate_diff_with_policy_guardian,
+    normalize_role_title,
+)
 from planaieditor.planai_llm_core import PlanAILLMManager
 from planaieditor.queue_store import QueueStore
 from planaieditor.single_workflow_graph import run_reality_and_secret_scan
@@ -208,6 +220,7 @@ class VerifiedTeamBundleTask(Task):
     test_report: Dict[str, Any] = Field(default_factory=dict)
     reality_scan: Dict[str, Any] = Field(default_factory=dict)
     secret_scan: Dict[str, Any] = Field(default_factory=dict)
+    policy_guardian: Dict[str, Any] = Field(default_factory=dict)
     gate_passed: bool = True
     subagent_results: List[SubAgentResultTask] = Field(default_factory=list)
     session_key: str = ""
@@ -757,6 +770,19 @@ class TeamworkOrchestrator:
         orchestrator = self
         final_outcomes: List[Dict[str, Any]] = []
 
+        existing_traj = self.store.get_workflow_trajectory(wf_id)
+        traj = Trajectory.from_steps(
+            conversation_id=wf_id,
+            steps_data=(existing_traj or {}).get("steps") or [],
+            project_id=str(proj.get("id") or ""),
+        )
+        board = Board(swarm_id=wf_id)
+        board.set_coordinator("coordinator")
+        board.add_member(Member(name="coordinator", role="coordinator"))
+        subagent_hub = SubagentHub(board)
+        plan_exec = PlanExecutor()
+        spawn_decision_state: Dict[str, Any] = {}
+
         def update_graph_state(
             node_id: str,
             new_state: str,
@@ -819,9 +845,12 @@ class TeamworkOrchestrator:
                         if st.service in task.dispatch_services
                         else task.dispatch_services[idx % len(task.dispatch_services)]
                     )
+                    norm_role = normalize_role_title(
+                        st.role.strip() or f"Task Specialist {idx + 1}"
+                    )
                     subtasks.append(
                         SubtaskSpec(
-                            role=st.role.strip() or f"Specialist-{idx + 1}",
+                            role=norm_role,
                             service=svc,
                             objective=st.objective.strip() or task.goal,
                             owned_paths=st.owned_paths,
@@ -845,7 +874,7 @@ class TeamworkOrchestrator:
                         owned_paths=["implementation"],
                     ),
                     SubtaskSpec(
-                        role="Verification & Edge-Case Auditor",
+                        role="Verification Edge Case Auditor",
                         service=svc_secondary,
                         objective=(
                             f"Independently audit requirements, edge cases, and verification criteria for goal: {task.goal}. "
@@ -854,6 +883,29 @@ class TeamworkOrchestrator:
                         owned_paths=["verification"],
                     ),
                 ]
+            # Validate every subtask against Jet Ski's SubagentSpec 2-5 word job-title contract
+            for st in subtasks:
+                st.role = normalize_role_title(st.role)
+                SubagentSpec(
+                    role=st.role,
+                    system_prompt=st.objective,
+                    workspace="branch",
+                )
+            with state_lock:
+                plan_exec.enter_plan_mode(
+                    {"goal": task.goal, "subtasks": [s.role for s in subtasks]}
+                )
+                plan_exec.exit_plan_mode()
+                traj.append(
+                    Step(
+                        index=0,
+                        type="PLAN_EXIT",
+                        tool_name="LeadPlannerWorker",
+                        args={"subtasks": len(subtasks), "generation": gen},
+                        result={"roles": [s.role for s in subtasks]},
+                        status="COMPLETED",
+                    )
+                )
             return TeamPlanTask(
                 workflow_id=task.workflow_id,
                 project_id=task.project_id,
@@ -920,6 +972,30 @@ class TeamworkOrchestrator:
                 rules_block = orchestrator.evolution_engine.format_rules_block(
                     project_id=task.project_id
                 )
+                spawn_dec = decide_spawn(
+                    task.goal,
+                    parallel_ok=True,
+                    needs_review=True,
+                    needs_adversarial=True,
+                    capability_gap=len(ready_services) > 1,
+                )
+                with state_lock:
+                    spawn_decision_state.update(spawn_dec.to_dict())
+                    board.post(
+                        "coordinator",
+                        "decision",
+                        f"Spawn policy routine={spawn_dec.routine} triggers={len(spawn_dec.triggers)} services={','.join(ready_services)}",
+                    )
+                    traj.append(
+                        Step(
+                            index=0,
+                            type="PLAN_ENTER",
+                            tool_name="decide_spawn",
+                            args={"goal": task.goal[:120]},
+                            result=spawn_dec.to_dict(),
+                            status="COMPLETED",
+                        )
+                    )
 
                 ctx_task = ProjectContextTask(
                     workflow_id=task.workflow_id,
@@ -1117,6 +1193,34 @@ class TeamworkOrchestrator:
                     count_visit=True,
                 )
                 for idx, spec in enumerate(task.subtasks):
+                    lane_id = f"subagent_{idx + 1}"
+                    with state_lock:
+                        js_spec = SubagentSpec(
+                            role=normalize_role_title(spec.role),
+                            system_prompt=spec.objective,
+                            workspace="branch",
+                        )
+                        subagent_hub.spawn(js_spec, parent_id="coordinator")
+                        if lane_id not in board.members:
+                            board.add_member(
+                                Member(
+                                    name=lane_id,
+                                    role=js_spec.role,
+                                    home_channel=lane_id,
+                                    channels=(lane_id, "main"),
+                                )
+                            )
+                        plan_exec.handoff(
+                            to=lane_id,
+                            reason=js_spec.role,
+                            context=spec.objective[:160],
+                        )
+                        board.post(
+                            "coordinator",
+                            "decision",
+                            f"Dispatched {js_spec.role} on {spec.service}",
+                            channel=lane_id,
+                        )
                     directive = SubAgentDirectiveTask(
                         workflow_id=task.workflow_id,
                         project_id=task.project_id,
@@ -1271,6 +1375,38 @@ class TeamworkOrchestrator:
                         orchestrator._git(wt_dir, "clean", "-fd")
 
                 orchestrator._cleanup_worktree(repo_path, wt_dir)
+
+                with state_lock:
+                    plan_exec.handback(
+                        frm=lane_id,
+                        reason=task.role,
+                        result=commit_sha[:10] if commit_sha else ("ok" if res.passed else "failed"),
+                    )
+                    if lane_id in board.members:
+                        board.post(
+                            lane_id,
+                            "fyi" if res.passed else "failure",
+                            (
+                                f"{task.role} ({task.service}) committed {commit_sha[:10]} ({len(changed_files)} files)"
+                                if commit_sha
+                                else f"{task.role} ({task.service}) finished ({'ok' if res.passed else 'failed'})"
+                            ),
+                        )
+                    traj.append(
+                        Step(
+                            index=0,
+                            type="INVOKE_SUBAGENT",
+                            tool_name=task.service,
+                            args={"lane": lane_id, "role": task.role, "branch": branch_name},
+                            result={
+                                "passed": res.passed,
+                                "commit_sha": commit_sha,
+                                "changed_files": changed_files,
+                            },
+                            status="COMPLETED" if res.passed else "FAILED",
+                            reversible=True,
+                        )
+                    )
 
                 updated_run = orchestrator.store.update_run(
                     run_id,
@@ -1513,6 +1649,11 @@ class TeamworkOrchestrator:
                     ).stdout
 
                 reality_scan, secret_scan = run_reality_and_secret_scan(diff_text)
+                policy_guardian = evaluate_diff_with_policy_guardian(
+                    diff_text=diff_text,
+                    changed_files=task.changed_files,
+                    test_command=task.test_command,
+                )
                 if wt_path and wt_path.exists():
                     orchestrator._cleanup_worktree(repo_path, wt_path)
 
@@ -1523,7 +1664,39 @@ class TeamworkOrchestrator:
                     and bool(test_report.get("passed", True))
                     and bool(reality_scan["passed"])
                     and bool(secret_scan["passed"])
+                    and bool(policy_guardian.get("allowed", True))
                 )
+                with state_lock:
+                    plan_exec.review(
+                        reviewer="VerificationGateWorker",
+                        verdict="APPROVED" if gate_passed else "REJECTED",
+                        notes=str(policy_guardian.get("summary") or ""),
+                    )
+                    board.post(
+                        "coordinator",
+                        "review",
+                        f"VerificationGate {'APPROVED' if gate_passed else 'REJECTED'} ({policy_guardian.get('summary')})",
+                    )
+                    traj.append(
+                        Step(
+                            index=0,
+                            type="REVIEW",
+                            tool_name="VerificationGateWorker",
+                            args={"files": len(task.changed_files)},
+                            result={
+                                "gate_passed": gate_passed,
+                                "policy_severity": policy_guardian.get("severity", 0.0),
+                            },
+                            status="COMPLETED" if gate_passed else "FAILED",
+                            vetting_verdict=str(policy_guardian.get("summary") or ""),
+                        )
+                    )
+                if not policy_guardian.get("allowed", True):
+                    orchestrator.evolution_engine.observe_policy_violation(
+                        project_id=task.project_id,
+                        workflow_id=task.workflow_id,
+                        guard_summary=policy_guardian,
+                    )
 
                 verified = VerifiedTeamBundleTask(
                     workflow_id=task.workflow_id,
@@ -1541,6 +1714,7 @@ class TeamworkOrchestrator:
                     test_report=test_report,
                     reality_scan=reality_scan,
                     secret_scan=secret_scan,
+                    policy_guardian=policy_guardian,
                     gate_passed=gate_passed,
                     subagent_results=task.subagent_results,
                     session_key=task.session_key,
@@ -1552,13 +1726,15 @@ class TeamworkOrchestrator:
                 update_graph_state(
                     "VerificationGateWorker",
                     "succeeded" if gate_passed else "failed",
-                    f"Gate {'PASSED' if gate_passed else 'FLAGGED'} (reality={reality_scan['passed']}, secrets={secret_scan['passed']})",
+                    f"Gate {'PASSED' if gate_passed else 'FLAGGED'} (reality={reality_scan['passed']}, policy={policy_guardian.get('summary')})",
                     edge_id="e_gate_sink",
                     metrics={
                         "gate_passed": gate_passed,
                         "test_passed": test_report.get("passed", True),
                         "reality_passed": reality_scan["passed"],
                         "secret_passed": secret_scan["passed"],
+                        "policy_allowed": policy_guardian.get("allowed", True),
+                        "policy_severity": policy_guardian.get("severity", 0.0),
                     },
                 )
 
@@ -1603,6 +1779,7 @@ class TeamworkOrchestrator:
                     "subagent_runs": [r.run_id for r in task.subagent_results],
                     "reality_scan": task.reality_scan,
                     "secret_scan": task.secret_scan,
+                    "policy_guardian": task.policy_guardian,
                     "gate_test": task.test_report,
                     "changed_files": task.changed_files,
                 }
@@ -1670,6 +1847,15 @@ class TeamworkOrchestrator:
                         failure_summary=", ".join(reasons) or "team verification gate failed",
                     )
 
+                orchestrator.store.save_workflow_trajectory(
+                    task.workflow_id,
+                    project_id=task.project_id,
+                    steps=traj.readonly(),
+                    board_messages=board.serialize(),
+                    spawn_decision=dict(spawn_decision_state),
+                    guard_summary=task.policy_guardian,
+                )
+
                 final_outcomes.append(
                     {
                         "queue_item_id": refreshed_item["id"],
@@ -1677,6 +1863,10 @@ class TeamworkOrchestrator:
                         "test_report": task.test_report,
                         "reality_scan": task.reality_scan,
                         "secret_scan": task.secret_scan,
+                        "policy_guardian": task.policy_guardian,
+                        "trajectory_step_count": traj.count(),
+                        "board_messages_count": len(board.messages),
+                        "spawn_decision": dict(spawn_decision_state),
                         "services_used": services_used,
                         "subagent_runs": [
                             {

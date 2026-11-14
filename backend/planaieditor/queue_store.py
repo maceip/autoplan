@@ -266,6 +266,42 @@ class QueueStore:
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS cascade_memories (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL DEFAULT '*',
+                    memory_key TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    prev_content TEXT DEFAULT '',
+                    content_diff TEXT DEFAULT '',
+                    action_type TEXT NOT NULL DEFAULT 'CREATE',
+                    trigger_type TEXT NOT NULL DEFAULT 'AUTO_CASCADE',
+                    source_ref TEXT DEFAULT '',
+                    revision INTEGER NOT NULL DEFAULT 1,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS accumulated_skills (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL DEFAULT '*',
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    skill_path TEXT NOT NULL,
+                    instructions_md TEXT NOT NULL DEFAULT '',
+                    source_workflow_id TEXT DEFAULT '',
+                    evidence_count INTEGER NOT NULL DEFAULT 1,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS workflow_trajectories (
+                    workflow_id TEXT PRIMARY KEY,
+                    project_id TEXT DEFAULT '',
+                    steps_json TEXT NOT NULL DEFAULT '[]',
+                    board_messages_json TEXT NOT NULL DEFAULT '[]',
+                    spawn_decision_json TEXT NOT NULL DEFAULT '{}',
+                    guard_summary_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at REAL NOT NULL
+                );
                 """
             )
             self._run_migrations()
@@ -1143,6 +1179,311 @@ class QueueStore:
                 params,
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # ---- Jet Ski Dual-Track Memories (`CONTENT_DIFF`), Skills & Trajectories ----
+
+    def upsert_cascade_memory(
+        self,
+        *,
+        memory_key: str,
+        content: str,
+        project_id: str = "*",
+        trigger_type: str = "AUTO_CASCADE",
+        source_ref: str = "",
+    ) -> Dict[str, Any]:
+        from planaieditor.jetski_runtime import compute_content_diff
+
+        clean_key = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", memory_key.strip()).strip("-")[:80] or "memory"
+        clean_content = content.strip()
+        proj = (project_id or "*").strip() or "*"
+        now = _now()
+
+        with self._lock:
+            existing = self._conn.execute(
+                """SELECT * FROM cascade_memories
+                   WHERE project_id = ? AND memory_key = ?
+                   LIMIT 1""",
+                (proj, clean_key),
+            ).fetchone()
+            if existing:
+                prev_content = str(existing["content"] or "")
+                was_active = bool(existing["active"])
+                if was_active and prev_content == clean_content:
+                    return dict(existing)
+                diff_str = compute_content_diff(
+                    prev_content if was_active else "",
+                    clean_content,
+                    clean_key,
+                )
+                action_type = "UPDATE" if was_active else "CREATE"
+                next_rev = int(existing["revision"] or 1) + 1
+                self._conn.execute(
+                    """UPDATE cascade_memories
+                       SET content = ?, prev_content = ?, content_diff = ?,
+                           action_type = ?, trigger_type = ?, source_ref = ?,
+                           revision = ?, active = 1, updated_at = ?
+                       WHERE id = ?""",
+                    (
+                        clean_content,
+                        prev_content if was_active else "",
+                        diff_str,
+                        action_type,
+                        trigger_type,
+                        source_ref,
+                        next_rev,
+                        now,
+                        existing["id"],
+                    ),
+                )
+                self._conn.commit()
+                row = self._conn.execute(
+                    "SELECT * FROM cascade_memories WHERE id = ?", (existing["id"],)
+                ).fetchone()
+                return dict(row)
+
+            mem_id = f"mem_{uuid.uuid4().hex[:10]}"
+            diff_str = compute_content_diff("", clean_content, clean_key)
+            self._conn.execute(
+                """INSERT INTO cascade_memories (
+                    id, project_id, memory_key, content, prev_content, content_diff,
+                    action_type, trigger_type, source_ref, revision, active, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, '', ?, 'CREATE', ?, ?, 1, 1, ?, ?)""",
+                (mem_id, proj, clean_key, clean_content, diff_str, trigger_type, source_ref, now, now),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM cascade_memories WHERE id = ?", (mem_id,)
+            ).fetchone()
+        return dict(row)
+
+    def list_cascade_memories(
+        self, project_id: Optional[str] = None, active_only: bool = True
+    ) -> List[Dict[str, Any]]:
+        clauses: List[str] = []
+        params: List[Any] = []
+        if active_only:
+            clauses.append("active = 1")
+        if project_id and project_id != "*":
+            clauses.append("(project_id = '*' OR project_id = ?)")
+            params.append(project_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM cascade_memories {where} ORDER BY updated_at DESC",
+                params,
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_cascade_memory(self, mem_id: str) -> Optional[Dict[str, Any]]:
+        from planaieditor.jetski_runtime import compute_content_diff
+
+        now = _now()
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT * FROM cascade_memories WHERE id = ? LIMIT 1", (mem_id,)
+            ).fetchone()
+            if not existing:
+                return None
+            prev = str(existing["content"] or "")
+            diff_str = compute_content_diff(prev, "", str(existing["memory_key"]))
+            self._conn.execute(
+                """UPDATE cascade_memories
+                   SET content = '', prev_content = ?, content_diff = ?,
+                       action_type = 'DELETE', revision = revision + 1,
+                       active = 0, updated_at = ?
+                   WHERE id = ?""",
+                (prev, diff_str, now, mem_id),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM cascade_memories WHERE id = ?", (mem_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def upsert_accumulated_skill(
+        self,
+        *,
+        name: str,
+        description: str,
+        skill_path: str,
+        instructions_md: str,
+        project_id: str = "*",
+        source_workflow_id: str = "",
+        evidence_count: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        proj = (project_id or "*").strip() or "*"
+        now = _now()
+        with self._lock:
+            existing = self._conn.execute(
+                """SELECT * FROM accumulated_skills
+                   WHERE project_id = ? AND name = ?
+                   LIMIT 1""",
+                (proj, name),
+            ).fetchone()
+            if existing:
+                next_cnt = (
+                    int(evidence_count)
+                    if evidence_count is not None
+                    else int(existing["evidence_count"] or 1) + 1
+                )
+                self._conn.execute(
+                    """UPDATE accumulated_skills
+                       SET description = ?, skill_path = ?, instructions_md = ?,
+                           source_workflow_id = ?, evidence_count = ?, updated_at = ?
+                       WHERE id = ?""",
+                    (
+                        description.strip(),
+                        skill_path,
+                        instructions_md.strip(),
+                        source_workflow_id or existing["source_workflow_id"],
+                        next_cnt,
+                        now,
+                        existing["id"],
+                    ),
+                )
+                self._conn.commit()
+                row = self._conn.execute(
+                    "SELECT * FROM accumulated_skills WHERE id = ?", (existing["id"],)
+                ).fetchone()
+                return dict(row)
+
+            skill_id = f"skill_{uuid.uuid4().hex[:10]}"
+            cnt = int(evidence_count) if evidence_count is not None else 1
+            self._conn.execute(
+                """INSERT INTO accumulated_skills (
+                    id, project_id, name, description, skill_path, instructions_md,
+                    source_workflow_id, evidence_count, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    skill_id,
+                    proj,
+                    name,
+                    description.strip(),
+                    skill_path,
+                    instructions_md.strip(),
+                    source_workflow_id,
+                    cnt,
+                    now,
+                    now,
+                ),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM accumulated_skills WHERE id = ?", (skill_id,)
+            ).fetchone()
+        return dict(row)
+
+    def list_accumulated_skills(
+        self, project_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        params: List[Any] = []
+        where = ""
+        if project_id and project_id != "*":
+            where = "WHERE (project_id = '*' OR project_id = ?)"
+            params.append(project_id)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM accumulated_skills {where} ORDER BY evidence_count DESC, updated_at DESC",
+                params,
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def save_workflow_trajectory(
+        self,
+        workflow_id: str,
+        *,
+        project_id: str = "",
+        steps: Optional[List[Dict[str, Any]]] = None,
+        board_messages: Optional[List[Dict[str, Any]]] = None,
+        spawn_decision: Optional[Dict[str, Any]] = None,
+        guard_summary: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        now = _now()
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT * FROM workflow_trajectories WHERE workflow_id = ? LIMIT 1",
+                (workflow_id,),
+            ).fetchone()
+            cur_steps = (
+                steps
+                if steps is not None
+                else (json.loads(existing["steps_json"] or "[]") if existing else [])
+            )
+            cur_board = (
+                board_messages
+                if board_messages is not None
+                else (
+                    json.loads(existing["board_messages_json"] or "[]")
+                    if existing
+                    else []
+                )
+            )
+            cur_spawn = (
+                spawn_decision
+                if spawn_decision is not None
+                else (
+                    json.loads(existing["spawn_decision_json"] or "{}")
+                    if existing
+                    else {}
+                )
+            )
+            cur_guard = (
+                guard_summary
+                if guard_summary is not None
+                else (
+                    json.loads(existing["guard_summary_json"] or "{}")
+                    if existing
+                    else {}
+                )
+            )
+            proj = project_id or (str(existing["project_id"]) if existing else "")
+            self._conn.execute(
+                """INSERT INTO workflow_trajectories (
+                    workflow_id, project_id, steps_json, board_messages_json,
+                    spawn_decision_json, guard_summary_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(workflow_id) DO UPDATE SET
+                    project_id = excluded.project_id,
+                    steps_json = excluded.steps_json,
+                    board_messages_json = excluded.board_messages_json,
+                    spawn_decision_json = excluded.spawn_decision_json,
+                    guard_summary_json = excluded.guard_summary_json,
+                    updated_at = excluded.updated_at""",
+                (
+                    workflow_id,
+                    proj,
+                    json.dumps(cur_steps),
+                    json.dumps(cur_board),
+                    json.dumps(cur_spawn),
+                    json.dumps(cur_guard),
+                    now,
+                ),
+            )
+            self._conn.commit()
+        return self.get_workflow_trajectory(workflow_id)  # type: ignore[return-value]
+
+    def get_workflow_trajectory(
+        self, workflow_id: str
+    ) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM workflow_trajectories WHERE workflow_id = ? LIMIT 1",
+                (workflow_id,),
+            ).fetchone()
+        if not row:
+            return None
+        raw = dict(row)
+        steps = json.loads(raw["steps_json"] or "[]")
+        return {
+            "workflow_id": raw["workflow_id"],
+            "project_id": raw["project_id"],
+            "step_count": len(steps),
+            "steps": steps,
+            "board_messages": json.loads(raw["board_messages_json"] or "[]"),
+            "spawn_decision": json.loads(raw["spawn_decision_json"] or "{}"),
+            "guard_summary": json.loads(raw["guard_summary_json"] or "{}"),
+            "updated_at": raw["updated_at"],
+        }
 
     def compute_service_fitness(
         self, project_id: Optional[str] = None
