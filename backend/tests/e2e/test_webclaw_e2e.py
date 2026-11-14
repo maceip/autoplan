@@ -84,13 +84,31 @@ def open_webclaw(page: Page) -> None:
     )
 
 
+def open_new_session_in_autoplan(page: Page) -> str:
+    """Click '+' on the primary autoplan project to open a clean empty session."""
+    with page.expect_response(
+        lambda r: "/api/sessions" in r.url and r.request.method == "POST",
+        timeout=15000,
+    ) as resp_info:
+        page.locator('[data-testid="project-new-session-autoplan"]').click()
+    data = resp_info.value.json()
+    friendly_id = str(data.get("friendlyId") or "")
+    page.wait_for_url(f"**/chat/{friendly_id}", timeout=15000)
+    single_btn = page.locator('[data-testid="mode-single-btn"]')
+    if single_btn.is_visible():
+        single_btn.click()
+    return friendly_id
+
+
 def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
     open_webclaw(page)
 
-    # 1. Verify autobot brand, transparent icon bg, and ZERO sidebar-routing-strip
+    # 1. Verify autobot brand, zero sidebar-routing-strip, and zero Chat|Plan header switch
     assert page.title() == "autobot"
     expect(page.locator('[data-testid="sidebar-routing-strip"]')).to_have_count(0)
     expect(page.locator('[data-testid="header-run-simple-task"]')).to_have_count(0)
+    expect(page.locator('[data-testid="workspace-view-switcher"]')).to_have_count(0)
+    expect(page.locator('[data-testid="webclaw-queue-filter"]')).to_have_count(0)
 
     brand_link = page.locator('[data-testid="desktop-brand-link"]').first
     expect(brand_link).to_be_visible()
@@ -102,14 +120,13 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
     expect(page.locator('[data-testid="header-active-project"]')).to_be_visible()
     expect(page.locator('[data-testid="agent-service-selector"]')).to_be_visible()
 
-    # Verify 'Start Demo' is in secondary sidebar footer (not 'Simple Task')
-    start_demo_btn = page.locator('[data-testid="start-demo-button"]')
-    expect(start_demo_btn).to_be_visible()
-    expect(start_demo_btn).to_have_text("Start Demo")
+    # Verify PlanAI 2D DAG is immediately visible inline with zero clicks
+    expect(page.locator('[data-testid="planai-graph-view"]')).to_be_visible()
+    expect(page.locator('[data-testid="planai-dag-canvas"]')).to_be_visible()
 
     _maybe_screenshot(page, "web_desktop_3col_workbench.png")
 
-    # 2. Multi-Project registration, session creation inside project, and cleanup
+    # 2. Multi-Project registration, empty-session onboarding DAG, Single->Team 2D morphing, and cleanup
     with tempfile.TemporaryDirectory(prefix="autoplan_e2e_proj_") as tmp_repo:
         subprocess.run(["git", "init", "-b", "main"], cwd=tmp_repo, check=True)
         subprocess.run(
@@ -130,6 +147,7 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
 
         proj_name = f"e2e-proj-{os.getpid()}"
         created_proj_id = ""
+        created_session_fid = ""
         try:
             page.locator('[data-testid="add-project-button"]').click()
             expect(page.locator('[data-testid="add-project-panel"]')).to_be_visible()
@@ -149,51 +167,73 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
                 page.locator(f'[data-testid="project-group-{created_proj_id}"]')
             ).to_be_visible(timeout=15000)
 
-            # Create a new session directly inside this new project
+            # Create a new empty session directly inside this new project
             with page.expect_response(
                 lambda r: "/api/sessions" in r.url and r.request.method == "POST",
                 timeout=15000,
-            ):
+            ) as sess_resp:
                 page.locator(
                     f'[data-testid="project-new-session-{created_proj_id}"]'
                 ).click()
+            created_session_fid = str(sess_resp.value.json().get("friendlyId") or "")
 
             expect(page.locator('[data-testid="header-active-project"]')).to_have_text(
                 proj_name, timeout=15000
             )
+            expect(page.locator('[data-testid="desktop-session-title"]')).to_have_text(
+                "New session", timeout=10000
+            )
+
+            # Empty session shows centered Single-mode 3-stage DAG + unique 'Start Demo' button
+            start_demo_btn = page.locator('[data-testid="start-demo-button"]')
+            expect(start_demo_btn).to_have_count(1)
+            expect(start_demo_btn).to_be_visible()
+            expect(start_demo_btn).to_have_text("Start Demo")
+            expect(
+                page.locator('[data-testid="planai-node-WorktreeRunner"]')
+            ).to_be_visible()
+            expect(
+                page.locator('[data-testid="planai-node-VerificationGate"]')
+            ).to_be_visible()
+            expect(
+                page.locator('[data-testid="planai-node-ChiefReviewSink"]')
+            ).to_be_visible()
+            _maybe_screenshot(page, "ui_inline_dag_single.png")
+
+            # Toggle Single -> Team inside composer: 2D branching topology morphs inline
+            page.locator('[data-testid="mode-team-btn"]').click()
+            expect(
+                page.locator('[data-testid="planai-node-LeadPlannerWorker"]')
+            ).to_be_visible()
+            expect(
+                page.locator('[data-testid="planai-node-subagent_1"]')
+            ).to_be_visible()
+            expect(
+                page.locator('[data-testid="planai-node-subagent_2"]')
+            ).to_be_visible()
+            expect(
+                page.locator('[data-testid="planai-node-TeamSynthesisJoiner"]')
+            ).to_be_visible()
+            page.locator('[data-testid="planai-node-TeamSynthesisJoiner"]').click()
+            expect(
+                page.locator('[data-testid="planai-node-inspector"]')
+            ).to_contain_text("TeamSynthesisJoiner")
+            _maybe_screenshot(page, "ui_inline_dag_team.png")
+
+            page.locator('[data-testid="mode-single-btn"]').click()
         finally:
+            if created_session_fid:
+                try:
+                    _api_delete(f"/api/webclaw/sessions?friendlyId={created_session_fid}")
+                except Exception:
+                    pass
             if created_proj_id:
                 try:
                     _api_delete(f"/api/projects/{created_proj_id}")
                 except Exception:
                     pass
 
-    # 3. Switch Workspace View -> PlanAI Graph & Split View & SvelteFlow Editor
-    page.locator('[data-testid="view-mode-graph"]').click()
-    expect(page.locator('[data-testid="planai-graph-view"]')).to_be_visible(
-        timeout=15000
-    )
-    expect(page.locator('[data-testid="planai-dag-canvas"]')).to_be_visible()
-    expect(
-        page.locator('[data-testid="planai-node-TeamSynthesisJoiner"]')
-    ).to_be_visible()
-    page.locator('[data-testid="planai-node-TeamSynthesisJoiner"]').click()
-    expect(page.locator('[data-testid="planai-node-inspector"]')).to_contain_text(
-        "TeamSynthesisJoiner"
-    )
-    _maybe_screenshot(page, "web_planai_graph_view.png")
-
-    page.locator('[data-testid="planai-subtab-provenance"]').click()
-    expect(page.locator('[data-testid="planai-provenance-panel"]')).to_be_visible()
-    page.locator('[data-testid="planai-subtab-python"]').click()
-    expect(page.locator('[data-testid="planai-python-panel"]')).to_contain_text(
-        "JoinedTaskWorker"
-    )
-    page.locator('[data-testid="planai-subtab-dag"]').click()
-
-    page.locator('[data-testid="view-mode-workbench"]').click()
-
-    # 4. Inspector Brain (Evolution) tab: add rule & evolve prompt generation
+    # 3. Inspector Rules (Evolution) tab: add rule & evolve prompt generation
     page.locator('[data-testid="inspector-tab-evolution"]').click()
     expect(page.locator('[data-testid="webclaw-evolution-panel"]')).to_be_visible(
         timeout=10000
@@ -226,7 +266,7 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
     assert int(after_evo["active_generation"]) >= before_gen + 1
     _maybe_screenshot(page, "web_brain_evolution_tab.png")
 
-    # 5. Verify SvelteFlow /planai-editor loads cleanly
+    # 4. Verify SvelteFlow /planai-editor loads cleanly
     page.goto(f"{WEBCLAW_URL}/planai-editor")
     expect(page.locator('[data-testid="toolshelf-container"]')).to_be_visible(
         timeout=20000
@@ -235,108 +275,132 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
 
 def test_webclaw_agents_registry_and_observe_only_minimax(page: Page):
     open_webclaw(page)
+    temp_fid = open_new_session_in_autoplan(page)
+    try:
+        page.locator('[data-testid="inspector-tab-agents"]').click()
+        for svc in ("antigravity", "minimax", "xiaomi-mimo"):
+            expect(page.locator(f'[data-testid="agent-card-{svc}"]')).to_be_visible(
+                timeout=10000
+            )
 
-    page.locator('[data-testid="inspector-tab-agents"]').click()
-    for svc in ("antigravity", "minimax", "xiaomi-mimo"):
-        expect(page.locator(f'[data-testid="agent-card-{svc}"]')).to_be_visible(
-            timeout=10000
+        expect(page.locator('[data-testid="agent-mode-antigravity"]')).to_have_text(
+            "dispatch"
         )
+        expect(page.locator('[data-testid="agent-mode-xiaomi-mimo"]')).to_have_text(
+            "dispatch"
+        )
+        expect(page.locator('[data-testid="agent-mode-minimax"]')).to_have_text(
+            "observe_only"
+        )
+        expect(page.locator('[data-testid="agent-demo-btn-antigravity"]')).to_have_text(
+            "Start Demo"
+        )
+        expect(page.locator('[data-testid="agent-demo-btn-minimax"]')).to_be_disabled()
 
-    expect(page.locator('[data-testid="agent-mode-antigravity"]')).to_have_text(
-        "dispatch"
-    )
-    expect(page.locator('[data-testid="agent-mode-xiaomi-mimo"]')).to_have_text(
-        "dispatch"
-    )
-    expect(page.locator('[data-testid="agent-mode-minimax"]')).to_have_text(
-        "observe_only"
-    )
-    expect(page.locator('[data-testid="agent-demo-btn-antigravity"]')).to_have_text(
-        "Start Demo"
-    )
-    expect(page.locator('[data-testid="agent-demo-btn-minimax"]')).to_be_disabled()
+        # Select MiniMax inside composer -> persisted on backend & onboarding Start Demo disabled
+        selector = page.locator('[data-testid="agent-service-selector"]')
+        with page.expect_response(
+            lambda r: "/api/sessions" in r.url and r.request.method == "PATCH",
+            timeout=10000,
+        ) as patch_resp:
+            selector.select_option("minimax")
+        assert patch_resp.value.ok
 
-    # Select MiniMax inside composer -> persisted on backend & Start Demo disabled
-    selector = page.locator('[data-testid="agent-service-selector"]')
-    with page.expect_response(
-        lambda r: "/api/sessions" in r.url and r.request.method == "PATCH",
-        timeout=10000,
-    ) as patch_resp:
-        selector.select_option("minimax")
-    assert patch_resp.value.ok
+        page.reload()
+        expect(selector).to_have_value("minimax", timeout=15000)
+        expect(page.locator('[data-testid="start-demo-button"]')).to_be_disabled()
 
-    page.reload()
-    expect(selector).to_have_value("minimax", timeout=15000)
-    expect(page.locator('[data-testid="start-demo-button"]')).to_be_disabled()
-
-    composer = page.locator("textarea").first
-    composer.fill("Attempt headless dispatch on observe-only MiniMax")
-    composer.press("Enter")
-    error_banner = page.locator('[data-testid="dispatch-error-banner"]')
-    expect(error_banner).to_be_visible(timeout=15000)
-    expect(error_banner).to_contain_text("MINIMAX_API_KEY")
-
-    with page.expect_response(
-        lambda r: "/api/sessions" in r.url and r.request.method == "PATCH",
-        timeout=10000,
-    ):
-        selector.select_option("xiaomi-mimo")
-    expect(page.locator('[data-testid="start-demo-button"]')).to_be_enabled()
+        composer = page.locator("textarea").first
+        composer.fill("Attempt headless dispatch on observe-only MiniMax")
+        composer.press("Enter")
+        error_banner = page.locator('[data-testid="dispatch-error-banner"]')
+        expect(error_banner).to_be_visible(timeout=15000)
+        expect(error_banner).to_contain_text("MINIMAX_API_KEY")
+    finally:
+        if temp_fid:
+            try:
+                _api_delete(f"/api/webclaw/sessions?friendlyId={temp_fid}")
+            except Exception:
+                pass
 
 
 def test_webclaw_live_start_demo_through_chief_approval(page: Page):
     open_webclaw(page)
+    temp_fid = open_new_session_in_autoplan(page)
+    try:
+        selector = page.locator('[data-testid="agent-service-selector"]')
+        if selector.input_value() != "xiaomi-mimo":
+            with page.expect_response(
+                lambda r: "/api/sessions" in r.url and r.request.method == "PATCH",
+                timeout=10000,
+            ):
+                selector.select_option("xiaomi-mimo")
 
-    selector = page.locator('[data-testid="agent-service-selector"]')
-    if selector.input_value() != "xiaomi-mimo":
         with page.expect_response(
-            lambda r: "/api/sessions" in r.url and r.request.method == "PATCH",
-            timeout=10000,
-        ):
-            selector.select_option("xiaomi-mimo")
+            lambda r: "/api/autoplan/agents/demo-task" in r.url
+            and r.request.method == "POST",
+            timeout=15000,
+        ) as demo_resp_info:
+            page.locator('[data-testid="start-demo-button"]').click()
 
-    with page.expect_response(
-        lambda r: "/api/autoplan/agents/demo-task" in r.url
-        and r.request.method == "POST",
-        timeout=15000,
-    ) as demo_resp_info:
-        page.locator('[data-testid="start-demo-button"]').click()
+        demo_resp = demo_resp_info.value
+        assert demo_resp.status == 201, demo_resp.text()
+        run_payload = demo_resp.json()["run"]
+        run_id = run_payload["id"]
+        workspace_dir = Path(run_payload["cwd"])
 
-    demo_resp = demo_resp_info.value
-    assert demo_resp.status == 201, demo_resp.text()
-    run_payload = demo_resp.json()["run"]
-    run_id = run_payload["id"]
-    workspace_dir = Path(run_payload["cwd"])
+        # Compact live PlanAI DAG strip remains pinned above the message stream
+        expect(page.locator('[data-testid="planai-dag-canvas"]')).to_be_visible()
 
-    page.locator('[data-testid="inspector-tab-agents"]').click()
-    page.locator('[data-testid="inspector-tab-runs"]').click()
-    run_state = page.locator(f'[data-testid="webclaw-run-state-{run_id}"]')
-    expect(run_state).to_have_text("succeeded", timeout=90000)
+        page.locator('[data-testid="inspector-tab-agents"]').click()
+        page.locator('[data-testid="inspector-tab-runs"]').click()
+        run_state = page.locator(f'[data-testid="webclaw-run-state-{run_id}"]')
+        expect(run_state).to_have_text("succeeded", timeout=90000)
 
-    run_after = _api_get(f"/api/agents/runs/{run_id}")["run"]
-    queue_item_id = run_after["queue_item_id"]
-    assert queue_item_id, f"Expected queue_item_id on completed run: {run_after}"
+        run_after = _api_get(f"/api/agents/runs/{run_id}")["run"]
+        queue_item_id = run_after["queue_item_id"]
+        assert queue_item_id, f"Expected queue_item_id on completed run: {run_after}"
 
-    page.locator('[data-testid="inspector-tab-queue"]').click()
-    queue_item_row = page.locator(f'[data-testid="webclaw-queue-item-{queue_item_id}"]')
-    expect(queue_item_row).to_be_visible(timeout=20000)
-    queue_item_row.click()
+        # Verify Master -> Detail drill-in on Review tab
+        page.locator('[data-testid="inspector-tab-queue"]').click()
+        expect(page.locator('[data-testid="webclaw-queue-list"]')).to_be_visible()
+        expect(page.locator('[data-testid="webclaw-queue-detail"]')).to_have_count(0)
 
-    detail_status = page.locator('[data-testid="webclaw-detail-status"]')
-    expect(detail_status).to_have_text("needs_review", timeout=45000)
-    expect(page.locator('[data-testid="webclaw-detail-test"]')).to_contain_text(
-        "Test exit 0 (passed)", timeout=15000
-    )
+        queue_item_row = page.locator(
+            f'[data-testid="webclaw-queue-item-{queue_item_id}"]'
+        )
+        expect(queue_item_row).to_be_visible(timeout=20000)
+        queue_item_row.click()
 
-    approve_btn = page.locator('[data-testid="webclaw-approve-button"]')
-    expect(approve_btn).to_be_enabled(timeout=10000)
-    approve_btn.click()
+        expect(page.locator('[data-testid="webclaw-queue-detail"]')).to_be_visible()
+        expect(page.locator('[data-testid="webclaw-detail-back"]')).to_be_visible()
 
-    expect(detail_status).to_have_text("landed", timeout=45000)
-    expect(approve_btn).to_be_disabled()
-    landed_file = workspace_dir / "task_result.txt"
-    assert landed_file.is_file()
-    assert "AUTOPLAN_DEMO_OK" in landed_file.read_text()
+        detail_status = page.locator('[data-testid="webclaw-detail-status"]')
+        expect(detail_status).to_have_text("needs_review", timeout=45000)
+        expect(page.locator('[data-testid="webclaw-detail-test"]')).to_contain_text(
+            "Test exit 0 (passed)", timeout=15000
+        )
+        _maybe_screenshot(page, "ui_master_detail_review.png")
+
+        approve_btn = page.locator('[data-testid="webclaw-approve-button"]')
+        expect(approve_btn).to_be_enabled(timeout=10000)
+        approve_btn.click()
+
+        expect(detail_status).to_have_text("landed", timeout=45000)
+        expect(approve_btn).to_be_disabled()
+        landed_file = workspace_dir / "task_result.txt"
+        assert landed_file.is_file()
+        assert "AUTOPLAN_DEMO_OK" in landed_file.read_text()
+
+        # Click <- Back to return cleanly to master review list
+        page.locator('[data-testid="webclaw-detail-back"]').click()
+        expect(page.locator('[data-testid="webclaw-queue-list"]')).to_be_visible()
+    finally:
+        if temp_fid:
+            try:
+                _api_delete(f"/api/webclaw/sessions?friendlyId={temp_fid}")
+            except Exception:
+                pass
 
 
 def test_webclaw_mobile_antigravity_projects_and_planai_sheet(page: Page):

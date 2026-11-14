@@ -122,7 +122,7 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                     window.locator('[data-testid="nucleus-titlebar"]')
                 ).to_contain_text("Nucleus")
 
-                # Verify 3-Column Workbench frame loads cleanly without duplicate outer sidebar
+                # Verify 3-Column Workbench frame loads with inline zero-click PlanAI 2D DAG
                 wb_frame = window.frame_locator(
                     '[data-testid="nucleus-workbench-frame"]'
                 )
@@ -132,14 +132,13 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                 expect(
                     wb_frame.locator('[data-testid="sidebar-projects-list"]')
                 ).to_be_visible(timeout=20000)
-                _save_shot(window, "nucleus_macos_workbench_3col.png")
-
-                # Switch Nucleus to Plan mode and verify pipeline canvas renders inside frame
-                window.locator('[data-testid="nucleus-mode-graph"]').click()
                 expect(
                     wb_frame.locator('[data-testid="planai-dag-canvas"]')
                 ).to_be_visible(timeout=25000)
-                _save_shot(window, "nucleus_macos_planai_graph.png")
+                expect(
+                    window.locator('[data-testid="nucleus-mode-graph"]')
+                ).to_have_count(0)
+                _save_shot(window, "nucleus_macos_workbench_3col.png")
 
                 # Switch Nucleus to Visual Editor mode and verify SvelteFlow loads
                 window.locator('[data-testid="nucleus-mode-editor"]').click()
@@ -195,9 +194,11 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                 expect(rt_out).not_to_have_text("Ready.", timeout=45000)
                 expect(rt_out).not_to_contain_text("Dispatching round-trip", timeout=45000)
                 rt_text = rt_out.inner_text().strip()
-                assert len(rt_text) > 8 and not rt_text.startswith("Error:"), (
-                    f"Unexpected Python->Chromium bridge reply: {rt_text}"
-                )
+                assert (
+                    len(rt_text) > 12
+                    and "undefined" not in rt_text.lower()
+                    and not rt_text.startswith("Error:")
+                ), f"Unexpected Python->Chromium bridge reply: {rt_text}"
                 expect(window.locator("#roundtrip-meta")).to_contain_text(
                     "chromium-prompt-api", timeout=10000
                 )
