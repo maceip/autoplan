@@ -138,21 +138,32 @@ class ChromiumPromptBridge:
         self.last_error: str = ""
 
     def register_client(self, info: Dict[str, Any]) -> Dict[str, Any]:
-        client_id = str(info.get("client_id") or f"nucleus_{uuid.uuid4().hex[:8]}")
+        requested_id = str(info.get("client_id") or "").strip()
+        client_id = requested_id or f"nucleus_{uuid.uuid4().hex[:8]}"
         now = time.time()
-        record = {
-            "client_id": client_id,
-            "app_name": str(info.get("app_name") or "Nucleus"),
-            "electron_version": str(info.get("electron_version") or ""),
-            "chrome_version": str(info.get("chrome_version") or ""),
-            "language_model_availability": str(
-                info.get("language_model_availability") or "unavailable"
-            ),
-            "local_backend_model": str(info.get("local_backend_model") or ""),
-            "registered_at": now,
-            "last_seen_at": now,
-        }
         with self._lock:
+            existing = self._clients.get(client_id)
+            in_flight = int(existing.get("in_flight", 0)) if existing else 0
+            registered_at = float(existing.get("registered_at", now)) if existing else now
+            record = {
+                "client_id": client_id,
+                "app_name": str(info.get("app_name") or (existing or {}).get("app_name") or "Nucleus"),
+                "electron_version": str(
+                    info.get("electron_version") or (existing or {}).get("electron_version") or ""
+                ),
+                "chrome_version": str(
+                    info.get("chrome_version") or (existing or {}).get("chrome_version") or ""
+                ),
+                "language_model_availability": str(
+                    info.get("language_model_availability") or "unavailable"
+                ),
+                "local_backend_model": str(
+                    info.get("local_backend_model") or (existing or {}).get("local_backend_model") or ""
+                ),
+                "registered_at": registered_at,
+                "last_seen_at": now,
+                "in_flight": in_flight,
+            }
             self._clients[client_id] = record
             if client_id not in self._pending_queues:
                 self._pending_queues[client_id] = queue.Queue(maxsize=64)
@@ -169,34 +180,50 @@ class ChromiumPromptBridge:
             return True
 
     def active_client(self) -> Optional[Dict[str, Any]]:
-        cutoff = time.time() - 20.0
+        now = time.time()
+        cutoff = now - 20.0
         with self._lock:
             alive = [
                 c
                 for c in self._clients.values()
-                if float(c["last_seen_at"]) >= cutoff
+                if (float(c["last_seen_at"]) >= cutoff or int(c.get("in_flight", 0)) > 0)
                 and c.get("language_model_availability") == "available"
             ]
             if not alive:
                 return None
-            return sorted(alive, key=lambda x: float(x["last_seen_at"]), reverse=True)[0]
+            # Prefer idle available clients first, then most recently seen
+            return sorted(
+                alive,
+                key=lambda x: (int(x.get("in_flight", 0)), -float(x["last_seen_at"])),
+            )[0]
 
-    def poll_request(self, client_id: str, timeout_s: float = 8.0) -> Optional[Dict[str, Any]]:
-        self.heartbeat(client_id)
+    def poll_request(
+        self,
+        client_id: str,
+        timeout_s: float = 8.0,
+        availability: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self.heartbeat(client_id, availability=availability)
         with self._lock:
             q = self._pending_queues.get(client_id)
         if q is None:
             return None
         try:
             req = q.get(timeout=timeout_s)
-            self.heartbeat(client_id)
+            self.heartbeat(client_id, availability=availability)
             with self._lock:
+                rec = self._clients.get(client_id)
                 slot = self._waiters.get(str(req.get("request_id") or ""))
-                if slot is not None and "picked_up" in slot:
-                    slot["picked_up"].set()
+                if slot is not None:
+                    slot["picked_up_by"] = client_id
+                    if rec is not None and not slot.get("in_flight_counted"):
+                        rec["in_flight"] = int(rec.get("in_flight", 0)) + 1
+                        slot["in_flight_counted"] = True
+                    if "picked_up" in slot:
+                        slot["picked_up"].set()
             return req
         except queue.Empty:
-            self.heartbeat(client_id)
+            self.heartbeat(client_id, availability=availability)
             return None
 
     def unregister_client(self, client_id: str) -> None:
@@ -215,6 +242,13 @@ class ChromiumPromptBridge:
             slot = self._waiters.get(request_id)
             if not slot:
                 return False
+            client_id = str(slot.get("picked_up_by") or slot.get("target_client_id") or "")
+            rec = self._clients.get(client_id) if client_id else None
+            if rec is not None:
+                rec["last_seen_at"] = time.time()
+                if slot.get("in_flight_counted"):
+                    rec["in_flight"] = max(0, int(rec.get("in_flight", 0)) - 1)
+                    slot["in_flight_counted"] = False
             slot["content"] = content
             slot["error"] = error
             slot["metrics"] = metrics or {}
@@ -239,6 +273,9 @@ class ChromiumPromptBridge:
         slot: Dict[str, Any] = {
             "picked_up": picked_up_event,
             "event": done_event,
+            "target_client_id": client_id,
+            "picked_up_by": "",
+            "in_flight_counted": False,
             "content": "",
             "error": "",
             "metrics": {},
@@ -260,11 +297,24 @@ class ChromiumPromptBridge:
 
         try:
             if not picked_up_event.wait(timeout=pickup_timeout_s):
-                self.unregister_client(client_id)
-                self.last_error = (
-                    f"Chromium LanguageModel client {client_id} did not pick up request within {pickup_timeout_s}s"
-                )
-                raise TimeoutError(self.last_error)
+                with self._lock:
+                    rec = self._clients.get(client_id)
+                    busy_in_flight = int(rec.get("in_flight", 0)) if rec else 0
+                if busy_in_flight > 0:
+                    # Client is actively executing an earlier prompt — wait up to timeout_s
+                    # without evicting the live desktop client!
+                    remaining_pickup = max(0.5, min(timeout_s - pickup_timeout_s, 20.0))
+                    if not picked_up_event.wait(timeout=remaining_pickup):
+                        self.last_error = (
+                            f"Chromium LanguageModel client {client_id} busy ({busy_in_flight} in-flight); spilling over"
+                        )
+                        raise TimeoutError(self.last_error)
+                else:
+                    self.unregister_client(client_id)
+                    self.last_error = (
+                        f"Chromium LanguageModel client {client_id} did not pick up request within {pickup_timeout_s}s"
+                    )
+                    raise TimeoutError(self.last_error)
             if not done_event.wait(timeout=timeout_s):
                 self.last_error = f"Timed out after {timeout_s}s waiting for Chromium LanguageModel"
                 raise TimeoutError(self.last_error)
@@ -284,7 +334,30 @@ class ChromiumPromptBridge:
             }
         finally:
             with self._lock:
-                self._waiters.pop(req_id, None)
+                slot_clean = self._waiters.pop(req_id, None)
+                if slot_clean and slot_clean.get("in_flight_counted"):
+                    cid = str(slot_clean.get("picked_up_by") or client_id)
+                    rec = self._clients.get(cid)
+                    if rec is not None:
+                        rec["in_flight"] = max(0, int(rec.get("in_flight", 0)) - 1)
+                    slot_clean["in_flight_counted"] = False
+                # Drain stale unpicked request from client queue if it timed out before pickup
+                if slot_clean and not picked_up_event.is_set():
+                    q_ref = self._pending_queues.get(client_id)
+                    if q_ref is not None:
+                        kept: List[Dict[str, Any]] = []
+                        while True:
+                            try:
+                                item = q_ref.get_nowait()
+                                if item.get("request_id") != req_id:
+                                    kept.append(item)
+                            except queue.Empty:
+                                break
+                        for item in kept:
+                            try:
+                                q_ref.put_nowait(item)
+                            except queue.Full:
+                                break
 
     def status(self) -> Dict[str, Any]:
         active = self.active_client()

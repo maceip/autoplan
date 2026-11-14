@@ -416,8 +416,11 @@ def setup_queue(
         client_id = str(request.args.get("client_id") or "").strip()
         if not client_id:
             return jsonify({"success": False, "error": "client_id required"}), 400
+        availability = str(request.args.get("availability") or "").strip() or None
         timeout_s = min(15.0, max(0.1, float(request.args.get("timeout") or 6.0)))
-        req_item = llm_manager.bridge.poll_request(client_id, timeout_s=timeout_s)
+        req_item = llm_manager.bridge.poll_request(
+            client_id, timeout_s=timeout_s, availability=availability
+        )
         return jsonify({"success": True, "request": req_item})
 
     @app.route("/api/llm/chromium-bridge/respond", methods=["POST"])

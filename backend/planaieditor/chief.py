@@ -377,8 +377,62 @@ class ChiefOfStaff:
         result["target_branch"] = target
         self.store.update_item(item["id"], status="landed", result=result)
         self.store.add_event(item["id"], "landed", f"Merged {item['branch']} into {target} at {head}")
+        self._sync_single_workflow(
+            item,
+            verify_state="succeeded",
+            review_state="succeeded",
+            wf_state="succeeded",
+            summary=f"Merged {item['branch']} into {target} ({head[:10]})",
+            node_id="ChiefReviewSink",
+        )
 
     # ---- main loop ---------------------------------------------------------
+
+    def _sync_single_workflow(
+        self,
+        item: Dict[str, Any],
+        *,
+        verify_state: Optional[str] = None,
+        review_state: Optional[str] = None,
+        wf_state: Optional[str] = None,
+        summary: str = "",
+        node_id: str = "VerificationGate",
+    ) -> None:
+        wf_id = str(item.get("workflow_id") or "").strip()
+        if not wf_id:
+            return
+        wf = self.store.get_workflow(wf_id)
+        if not wf or wf.get("graph_type") != "single":
+            return
+        nodes = list(wf.get("nodes") or [])
+        edges = list(wf.get("edges") or [])
+        events = list(wf.get("events") or [])
+        for n in nodes:
+            if n.get("id") == "VerificationGate" and verify_state:
+                n["state"] = verify_state
+            elif n.get("id") == "ChiefReviewSink" and review_state:
+                n["state"] = review_state
+        for e in edges:
+            e["active"] = (
+                e.get("id") == "e_verify_review" and review_state == "running"
+            )
+        if summary:
+            events.append(
+                {
+                    "ts": time.time(),
+                    "node_id": node_id,
+                    "state": review_state or verify_state or "succeeded",
+                    "summary": summary,
+                }
+            )
+        self.store.update_workflow(
+            wf_id,
+            state=wf_state or wf.get("state") or "running",
+            nodes=nodes,
+            edges=edges,
+            events=events,
+            finished_at=time.time() if wf_state in ("succeeded", "failed") else None,
+        )
 
     def _transition(self, item: Dict[str, Any], **fields: Any) -> Dict[str, Any]:
         updated = self.store.update_item(item["id"], **fields)
@@ -431,6 +485,17 @@ class ChiefOfStaff:
                 fields["evidence"] = evidence
             self._transition(item, **fields)
             self.store.add_event(item["id"], "needs_review", "Review bundle ready for operator.")
+            test_ok = bool((result.get("test") or {}).get("passed", True))
+            self._sync_single_workflow(
+                item,
+                verify_state="succeeded" if test_ok else "failed",
+                review_state="running",
+                wf_state="running",
+                summary=(
+                    f"Tests {'passed' if test_ok else 'failed'}; waiting for review"
+                ),
+                node_id="VerificationGate",
+            )
 
         for item in self.store.list_items(status="changes_requested"):
             decisions = self.store.list_decisions(item["id"])

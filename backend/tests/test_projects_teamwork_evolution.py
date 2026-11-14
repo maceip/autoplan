@@ -266,13 +266,15 @@ def test_planai_multi_agent_teamwork_graph_and_svelteflow_projection(
     assert wf["state"] == "succeeded", f"Workflow failed: {wf}"
     assert wf["queue_item_id"]
 
-    # Every worker in the 7-stage PlanAI Teamwork Graph ran and succeeded!
+    # Every worker + dynamic parallel sub-agent branch lane ran and succeeded!
     states_by_id = {n["id"]: n["state"] for n in wf["nodes"]}
     assert states_by_id == {
         "ContextHarvesterWorker": "succeeded",
         "LeadPlannerWorker": "succeeded",
         "SubtaskFanOutWorker": "succeeded",
         "MultiAgentDispatchWorker": "succeeded",
+        "subagent_1": "succeeded",
+        "subagent_2": "succeeded",
         "TeamSynthesisJoiner": "succeeded",
         "VerificationGateWorker": "succeeded",
         "ChiefEscalationSink": "succeeded",
@@ -284,8 +286,8 @@ def test_planai_multi_agent_teamwork_graph_and_svelteflow_projection(
     # SvelteFlow projection endpoint returns live nodes + typed Task edges + Python source
     sf = client.get(f"/api/planai/workflows/{wf_id}/svelteflow").get_json()
     assert sf["success"] is True
-    assert len(sf["nodes"]) == 7
-    assert len(sf["edges"]) == 6
+    assert len(sf["nodes"]) == 9
+    assert len(sf["edges"]) == 10
     assert "JoinedTaskWorker" in sf["pythonCode"]
 
     # Chief reviews and lands the integrated branch combining BOTH sub-agents' commits!
@@ -470,3 +472,68 @@ def test_chromium_prompt_bridge_and_evolution_engine_planai_graph(
     finally:
         stop_poller.set()
         poller_thread.join(timeout=2.0)
+
+
+def test_chromium_bridge_cold_start_availability_and_concurrent_non_eviction():
+    from planaieditor.planai_llm_core import ChromiumPromptBridge
+
+    bridge = ChromiumPromptBridge()
+
+    # 1. Cold start: desktop registers while MLX model is still warming up ('unavailable')
+    reg = bridge.register_client(
+        {
+            "app_name": "Nucleus",
+            "language_model_availability": "unavailable",
+        }
+    )
+    cid = reg["client_id"]
+    assert bridge.active_client() is None
+
+    # Poll passes updated availability='available' once MLX finishes loading
+    assert bridge.poll_request(cid, timeout_s=0.05, availability="available") is None
+    active = bridge.active_client()
+    assert active is not None and active["client_id"] == cid
+
+    # 2. Concurrent prompts: prompt #1 is picked up and takes 0.45s (> pickup_timeout_s=0.15s).
+    # Prompt #2 arrives concurrently while #1 is in-flight — client MUST NOT be evicted!
+    results: dict[str, str] = {}
+    errors: list[Exception] = []
+
+    def _desktop_sequential_worker():
+        for idx in range(2):
+            job = bridge.poll_request(cid, timeout_s=2.0, availability="available")
+            assert job is not None
+            time.sleep(0.35)
+            bridge.submit_response(
+                request_id=job["request_id"],
+                content=f"reply_{idx + 1}",
+            )
+
+    worker_t = threading.Thread(target=_desktop_sequential_worker, daemon=True)
+    worker_t.start()
+
+    def _caller(key: str):
+        try:
+            out = bridge.execute_prompt(
+                [{"role": "user", "content": key}],
+                timeout_s=5.0,
+                pickup_timeout_s=0.12,
+            )
+            results[key] = out["content"]
+        except Exception as exc:
+            errors.append(exc)
+
+    t1 = threading.Thread(target=_caller, args=("p1",))
+    t2 = threading.Thread(target=_caller, args=("p2",))
+    t1.start()
+    time.sleep(0.03)
+    t2.start()
+    t1.join(timeout=5.0)
+    t2.join(timeout=5.0)
+    worker_t.join(timeout=2.0)
+
+    assert errors == [], f"Unexpected concurrent bridge errors: {errors}"
+    assert set(results.values()) == {"reply_1", "reply_2"}
+    assert bridge.active_client() is not None
+    assert bridge.active_client()["client_id"] == cid
+

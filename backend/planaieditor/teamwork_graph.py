@@ -787,13 +787,48 @@ class TeamworkOrchestrator:
             output_types: List[Type[Task]] = [SubAgentDirectiveTask]
 
             def consume_work(self, task: TeamPlanTask) -> None:
+                total = len(task.subtasks)
+                with state_lock:
+                    existing_ids = {n["id"] for n in nodes}
+                    for idx, spec in enumerate(task.subtasks):
+                        lane_id = f"subagent_{idx + 1}"
+                        if lane_id not in existing_ids:
+                            nodes.append(
+                                {
+                                    "id": lane_id,
+                                    "label": spec.service,
+                                    "worker_class": "MultiAgentDispatchWorker",
+                                    "role": spec.role,
+                                    "state": "idle",
+                                    "lane_index": idx,
+                                    "total_lanes": total,
+                                    "metrics": {"service": spec.service, "role": spec.role},
+                                }
+                            )
+                            edges.append(
+                                {
+                                    "id": f"e_fanout_{lane_id}",
+                                    "source": "SubtaskFanOutWorker",
+                                    "target": lane_id,
+                                    "task_type": "SubAgentDirectiveTask",
+                                    "active": True,
+                                }
+                            )
+                            edges.append(
+                                {
+                                    "id": f"e_{lane_id}_join",
+                                    "source": lane_id,
+                                    "target": "TeamSynthesisJoiner",
+                                    "task_type": "SubAgentResultTask",
+                                    "active": False,
+                                }
+                            )
                 update_graph_state(
                     "SubtaskFanOutWorker",
                     "running",
-                    f"Fanning out {len(task.subtasks)} parallel SubAgentDirectiveTasks",
+                    f"Fanning out {total} parallel SubAgentDirectiveTasks",
                     edge_id="e_plan_fanout",
                 )
-                total = len(task.subtasks)
                 for idx, spec in enumerate(task.subtasks):
                     directive = SubAgentDirectiveTask(
                         workflow_id=task.workflow_id,
@@ -824,6 +859,7 @@ class TeamworkOrchestrator:
             output_types: List[Type[Task]] = [SubAgentResultTask]
 
             def consume_work(self, task: SubAgentDirectiveTask) -> None:
+                lane_id = f"subagent_{task.subtask_index}"
                 update_graph_state(
                     "MultiAgentDispatchWorker",
                     "running",
@@ -837,6 +873,17 @@ class TeamworkOrchestrator:
                     task.workflow_id,
                     task.subtask_index,
                     task.service,
+                )
+                update_graph_state(
+                    lane_id,
+                    "running",
+                    f"{task.service} · {task.role} ({branch_name})",
+                    edge_id=f"e_fanout_{lane_id}",
+                    metrics={
+                        "service": task.service,
+                        "role": task.role,
+                        "branch": branch_name,
+                    },
                 )
                 run_id = f"run_{uuid.uuid4().hex[:10]}"
                 adapter = orchestrator.agent_manager.get_adapter(task.service)
@@ -945,6 +992,24 @@ class TeamworkOrchestrator:
                     finished_at=time.time(),
                 )
                 orchestrator._on_event("run_updated", {"run": updated_run})
+                update_graph_state(
+                    lane_id,
+                    "succeeded" if res.passed else "failed",
+                    (
+                        f"Committed {commit_sha[:10]} ({len(changed_files)} files)"
+                        if commit_sha
+                        else f"Finished ({'ok' if res.passed else 'failed'})"
+                    ),
+                    edge_id=f"e_{lane_id}_join",
+                    metrics={
+                        "service": task.service,
+                        "role": task.role,
+                        "branch": branch_name,
+                        "commit_sha": commit_sha[:10] if commit_sha else "",
+                        "changed_files": changed_files,
+                        "duration_s": res.duration_s,
+                    },
+                )
 
                 prov = [str(p) for p in getattr(task, "_provenance", [])]
                 out_task = SubAgentResultTask(

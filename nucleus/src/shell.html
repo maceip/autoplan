@@ -256,18 +256,10 @@
           <button
             type="button"
             class="nav-btn"
-            data-mode="graph"
-            data-testid="nucleus-mode-graph"
-          >
-            Plan
-          </button>
-          <button
-            type="button"
-            class="nav-btn"
             data-mode="editor"
             data-testid="nucleus-mode-editor"
           >
-            Visual Editor
+            Graph Studio
           </button>
           <button
             type="button"
@@ -554,7 +546,7 @@
                 throw new Error(data.error || `HTTP ${res.status}`);
               }
               const elapsed = Math.round(performance.now() - t0);
-              outEl.textContent = data.response;
+              outEl.textContent = data.reply ?? data.response ?? '';
               metaEl.textContent = `Provider: ${data.provider_used} · ${elapsed}ms`;
             } catch (err) {
               outEl.textContent = `Error: ${err.message || err}`;
@@ -600,50 +592,13 @@
           }
         }
 
-        async function startBridgeWorkerLoop() {
-          while (true) {
-            try {
-              const avail = await refreshLanguageModelAvailability();
-              if (!bridgeClientId) {
-                const regRes = await fetch(
-                  `${backendUrl}/api/llm/chromium-bridge/register`,
-                  {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({
-                      app_name: 'Nucleus',
-                      electron_version: runtime.electronVersion,
-                      chrome_version: runtime.chromeVersion,
-                      language_model_availability: avail,
-                      local_backend_model: runtime.mlxModel,
-                    }),
-                  }
-                );
-                if (regRes.ok) {
-                  const regData = await regRes.json();
-                  bridgeClientId = regData.client?.client_id || '';
-                  document.getElementById('diag-bridge-client').textContent =
-                    bridgeClientId;
-                } else {
-                  await new Promise((r) => setTimeout(r, 2500));
-                  continue;
-                }
-              }
+        let lastRegisteredAvailability = '';
+        let executionChain = Promise.resolve();
 
-              const pollRes = await fetch(
-                `${backendUrl}/api/llm/chromium-bridge/poll?client_id=${encodeURIComponent(bridgeClientId)}&timeout=6`
-              );
-              if (!pollRes.ok) {
-                bridgeClientId = '';
-                await new Promise((r) => setTimeout(r, 2000));
-                continue;
-              }
-              const pollData = await pollRes.json();
-              const job = pollData.request;
-              if (!job || !job.request_id) {
-                continue;
-              }
-
+        function dispatchJobAsync(job) {
+          executionChain = executionChain
+            .catch(() => {})
+            .then(async () => {
               try {
                 const result = await executeBridgedPrompt(job);
                 bridgedCalls += 1;
@@ -672,8 +627,79 @@
                   }),
                 });
               }
+            });
+        }
+
+        window.setInterval(async () => {
+          if (!bridgeClientId) return;
+          try {
+            const avail = await refreshLanguageModelAvailability();
+            await fetch(`${backendUrl}/api/llm/chromium-bridge/heartbeat`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                client_id: bridgeClientId,
+                language_model_availability: avail,
+              }),
+            });
+          } catch {
+            // ignore transient heartbeat failure
+          }
+        }, 5000);
+
+        async function startBridgeWorkerLoop() {
+          while (true) {
+            try {
+              const avail = await refreshLanguageModelAvailability();
+              if (!bridgeClientId || avail !== lastRegisteredAvailability) {
+                const regRes = await fetch(
+                  `${backendUrl}/api/llm/chromium-bridge/register`,
+                  {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({
+                      client_id: bridgeClientId || undefined,
+                      app_name: 'Nucleus',
+                      electron_version: runtime.electronVersion,
+                      chrome_version: runtime.chromeVersion,
+                      language_model_availability: avail,
+                      local_backend_model: runtime.mlxModel,
+                    }),
+                  }
+                );
+                if (regRes.ok) {
+                  const regData = await regRes.json();
+                  bridgeClientId = regData.client?.client_id || '';
+                  lastRegisteredAvailability = avail;
+                  document.getElementById('diag-bridge-client').textContent =
+                    bridgeClientId;
+                } else {
+                  await new Promise((r) => setTimeout(r, 2500));
+                  continue;
+                }
+              }
+
+              const pollRes = await fetch(
+                `${backendUrl}/api/llm/chromium-bridge/poll?client_id=${encodeURIComponent(bridgeClientId)}&availability=${encodeURIComponent(avail)}&timeout=6`
+              );
+              if (!pollRes.ok) {
+                bridgeClientId = '';
+                lastRegisteredAvailability = '';
+                await new Promise((r) => setTimeout(r, 2000));
+                continue;
+              }
+              const pollData = await pollRes.json();
+              const job = pollData.request;
+              if (!job || !job.request_id) {
+                continue;
+              }
+
+              // Acknowledge pickup immediately and return to polling so concurrent
+              // PlanAI worker prompts are picked up in <20ms without evicting this client!
+              dispatchJobAsync(job);
             } catch {
               bridgeClientId = '';
+              lastRegisteredAvailability = '';
               await new Promise((r) => setTimeout(r, 2500));
             }
           }
