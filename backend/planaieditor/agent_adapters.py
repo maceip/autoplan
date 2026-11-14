@@ -1151,56 +1151,21 @@ class AgentRunManager:
         effective_prompt = prompt.replace("{WORKSPACE_DIR}", str(workspace_dir))
         selected_model = model or str(probe.get("default_model") or "")
         wf_id = f"wf_single_{run_id[-8:]}"
-        wf_nodes: List[Dict[str, Any]] = [
-            {
-                "id": "WorktreeRunner",
-                "label": f"Run {service}",
-                "worker_class": "TaskWorker",
-                "role": f"Isolated branch {branch_name}",
-                "state": "running",
-                "metrics": {"service": service, "branch": branch_name},
-            },
-            {
-                "id": "VerificationGate",
-                "label": "Run project tests",
-                "worker_class": "TaskWorker",
-                "role": project_test_command or "Verify branch changes",
-                "state": "idle",
-                "metrics": {},
-            },
-            {
-                "id": "ChiefReviewSink",
-                "label": "Ready for review",
-                "worker_class": "TaskWorker",
-                "role": "Operator approval & branch merge",
-                "state": "idle",
-                "metrics": {},
-            },
-        ]
-        wf_edges: List[Dict[str, Any]] = [
-            {
-                "id": "e_run_verify",
-                "source": "WorktreeRunner",
-                "target": "VerificationGate",
-                "task_type": "BranchCommitTask",
-                "active": True,
-            },
-            {
-                "id": "e_verify_review",
-                "source": "VerificationGate",
-                "target": "ChiefReviewSink",
-                "task_type": "VerifiedBundleTask",
-                "active": False,
-            },
-        ]
-        wf_events: List[Dict[str, Any]] = [
-            {
-                "ts": time.time(),
-                "node_id": "WorktreeRunner",
-                "state": "running",
-                "summary": f"Running {service} on branch {branch_name}",
-            }
-        ]
+
+        from planaieditor.single_workflow_graph import (
+            SINGLE_WORKFLOW_PYTHON_SOURCE,
+            SingleGoalTask,
+            build_single_workflow_edges,
+            build_single_workflow_nodes,
+            execute_single_agent_planai_graph,
+        )
+
+        wf_nodes = build_single_workflow_nodes(
+            service=service,
+            branch_name=branch_name,
+            test_command=project_test_command,
+        )
+        wf_edges = build_single_workflow_edges()
         wf_row = self.store.create_workflow(
             {
                 "id": wf_id,
@@ -1212,9 +1177,23 @@ class AgentRunManager:
                 "state": "running",
                 "nodes": wf_nodes,
                 "edges": wf_edges,
-                "events": wf_events,
-                "provenance": [["WorktreeRunner"]],
-                "python_code": "",
+                "events": [],
+                "provenance": [],
+                "result": {
+                    "round": 1,
+                    "max_rounds": 3,
+                    "visit_counts": {},
+                    "current_state": "WorktreeRunner",
+                    "service": service,
+                    "model": selected_model,
+                    "is_demo_repo": is_demo_repo,
+                    "is_project_worktree": project_worktree_repo is not None,
+                    "repo_path": str(project_worktree_repo or workspace_dir),
+                    "branch": branch_name,
+                    "target_branch": project_target_branch,
+                    "test_command": project_test_command,
+                },
+                "python_code": SINGLE_WORKFLOW_PYTHON_SOURCE,
                 "evolution_gen": 1,
             }
         )
@@ -1232,7 +1211,7 @@ class AgentRunManager:
                 "project_id": resolved_project_id,
                 "workflow_id": wf_id,
                 "state": "running",
-                "metadata": {"is_demo_repo": is_demo_repo},
+                "metadata": {"is_demo_repo": is_demo_repo, "round": 1},
             }
         )
         self._on_event("run_started", {"run": run})
@@ -1257,286 +1236,233 @@ class AgentRunManager:
                 },
             )
 
+        goal_task = SingleGoalTask(
+            workflow_id=wf_id,
+            run_id=run_id,
+            project_id=resolved_project_id,
+            service=service,
+            model=selected_model,
+            prompt=effective_prompt,
+            workspace_dir=str(workspace_dir),
+            repo_dir=str(project_worktree_repo or workspace_dir),
+            is_project_worktree=project_worktree_repo is not None,
+            is_demo_repo=is_demo_repo,
+            branch_name=branch_name,
+            target_branch=project_target_branch,
+            test_command=project_test_command,
+            demo_token=SIMPLE_DEMO_TASK_TOKEN if is_demo_repo else "",
+            demo_title=SIMPLE_DEMO_TASK_TITLE if is_demo_repo else "",
+            submit_to_queue=submit_to_queue,
+            queue_title=queue_title,
+            round_num=1,
+            max_rounds=3,
+            session_key=webclaw_session_key,
+            timeout=timeout,
+        )
+
         def _worker() -> None:
             def _register_proc(proc: subprocess.Popen) -> None:
                 with self._proc_lock:
                     self._active_procs[run_id] = proc
 
-            try:
-                result = adapter.dispatch(
-                    prompt=effective_prompt,
-                    cwd=workspace_dir,
-                    model=selected_model,
-                    timeout=timeout,
-                    on_proc=_register_proc,
-                )
-            except Exception as exc:
-                result = AdapterRunResult(
-                    passed=False,
-                    exit_code=1,
-                    model=selected_model,
-                    response_text=f"Dispatch error: {exc}",
-                    stderr_tail=str(exc),
-                )
-            finally:
+            def _unregister_proc() -> None:
                 with self._proc_lock:
                     self._active_procs.pop(run_id, None)
-                self.store.release_ownership(run_id)
 
-            current = self.store.get_run(run_id)
-            if current and current["state"] == "stopped":
-                return
-
-            committed = False
-            commit_sha = ""
-            queue_item_id = ""
-            final_branch = branch_name
-            if is_demo_repo and result.passed:
-                committed, commit_sha, final_branch = self._finalize_demo_repo_commit(
-                    workspace_dir, branch_name, run_id, service
-                )
-                if committed and submit_to_queue:
-                    q_item = self.store.create_item(
-                        {
-                            "source_agent": service,
-                            "kind": "code_change",
-                            "title": queue_title or f"[{service}] {SIMPLE_DEMO_TASK_TITLE}",
-                            "body": (
-                                f"Agent `{service}` (`{result.model}`) completed run `{run_id}` "
-                                f"in `{workspace_dir}` on branch `{final_branch}` (commit `{commit_sha[:10]}`).\n\n"
-                                f"Agent response:\n{result.response_text}"
-                            ),
-                            "repo_path": str(workspace_dir),
-                            "branch": final_branch,
-                            "target_branch": "main",
-                            "test_command": f"git grep -q {SIMPLE_DEMO_TASK_TOKEN} {final_branch} -- task_result.txt",
-                            "priority": 25,
-                            "project_id": resolved_project_id,
-                            "workflow_id": wf_id,
-                        }
-                    )
-                    queue_item_id = q_item["id"]
-                    self._on_event("queue_item_created", {"item": q_item})
-            elif project_worktree_repo is not None:
-                try:
-                    if result.passed and workspace_dir.exists():
-                        self._git(workspace_dir, "config", "user.email", "autoplan@local.invalid")
-                        self._git(workspace_dir, "config", "user.name", "AutoPlan Agent")
-                        self._git(workspace_dir, "add", "-A")
-                        diff_cached = self._git(workspace_dir, "diff", "--cached", "--name-only")
-                        changed_files = [
-                            f.strip()
-                            for f in diff_cached.stdout.splitlines()
-                            if f.strip() and not f.strip().startswith(".mimocode")
-                        ]
-                        if changed_files:
-                            self._git(
-                                workspace_dir,
-                                "commit",
-                                "-m",
-                                f"feat({service}): {prompt[:56].splitlines()[0]}",
-                            )
-                        ahead_raw = self._git(
-                            project_worktree_repo,
-                            "rev-list",
-                            "--count",
-                            f"{project_target_branch}..{branch_name}",
-                        ).stdout.strip()
-                        ahead_n = int(ahead_raw or "0") if ahead_raw.isdigit() else 0
-                        if ahead_n > 0:
-                            committed = True
-                            commit_sha = self._git(
-                                project_worktree_repo, "rev-parse", branch_name
-                            ).stdout.strip()
-                finally:
-                    self._git(
-                        project_worktree_repo,
-                        "worktree",
-                        "remove",
-                        "--force",
-                        str(workspace_dir),
-                    )
-                    if not committed:
-                        self._git(project_worktree_repo, "branch", "-D", branch_name)
-
-                if committed and submit_to_queue and result.passed:
-                    q_item = self.store.create_item(
-                        {
-                            "source_agent": service,
-                            "kind": "code_change",
-                            "title": queue_title or f"[{service}] {prompt[:64]}",
-                            "body": (
-                                f"Agent `{service}` (`{result.model}`) completed run `{run_id}` "
-                                f"in project `{resolved_project_id}` (`{project_worktree_repo}`) "
-                                f"on branch `{final_branch}` (commit `{commit_sha[:10]}`).\n\n"
-                                f"{result.response_text}"
-                            ),
-                            "repo_path": str(project_worktree_repo),
-                            "branch": final_branch,
-                            "target_branch": project_target_branch,
-                            "test_command": project_test_command,
-                            "priority": 30,
-                            "project_id": resolved_project_id,
-                            "workflow_id": wf_id,
-                        }
-                    )
-                    queue_item_id = q_item["id"]
-                    self._on_event("queue_item_created", {"item": q_item})
-                elif submit_to_queue and result.passed:
-                    q_item = self.store.create_item(
-                        {
-                            "source_agent": service,
-                            "kind": "task",
-                            "title": queue_title or f"[{service}] {prompt[:64]}",
-                            "body": (
-                                f"Run `{run_id}` (`{service}` / `{result.model}`)\n\n"
-                                f"{result.response_text}"
-                            ),
-                            "priority": 15,
-                            "project_id": resolved_project_id,
-                            "workflow_id": wf_id,
-                        }
-                    )
-                    queue_item_id = q_item["id"]
-                    self._on_event("queue_item_created", {"item": q_item})
-            elif submit_to_queue and result.passed:
-                q_item = self.store.create_item(
-                    {
-                        "source_agent": service,
-                        "kind": "task",
-                        "title": queue_title or f"[{service}] {prompt[:64]}",
-                        "body": (
-                            f"Run `{run_id}` (`{service}` / `{result.model}`)\n\n"
-                            f"{result.response_text}"
-                        ),
-                        "priority": 15,
-                        "project_id": resolved_project_id,
-                        "workflow_id": wf_id,
-                    }
-                )
-                queue_item_id = q_item["id"]
-                self._on_event("queue_item_created", {"item": q_item})
-
-            meta = dict(result.metadata or {})
-            meta["is_demo_repo"] = is_demo_repo
-            meta["duration_s"] = result.duration_s
-            if commit_sha:
-                meta["branch_commit"] = commit_sha
-
-            final_state = "succeeded" if result.passed else "failed"
-            updated_run = self.store.update_run(
-                run_id,
-                session_id=result.session_id,
-                queue_item_id=queue_item_id,
-                state=final_state,
-                exit_code=result.exit_code,
-                response_text=result.response_text,
-                stdout_tail=result.stdout_tail,
-                stderr_tail=result.stderr_tail,
-                metadata=meta,
-                finished_at=time.time(),
+            execute_single_agent_planai_graph(
+                manager=self,
+                goal_task=goal_task,
+                redact_fn=redact_secrets,
+                register_proc=_register_proc,
+                unregister_proc=_unregister_proc,
             )
-            self._on_event("run_updated", {"run": updated_run})
-
-            # Update linked 3-stage single-agent PlanAI workflow
-            wf_nodes[0]["state"] = "succeeded" if result.passed else "failed"
-            wf_nodes[0]["metrics"] = {
-                "service": service,
-                "branch": final_branch,
-                "commit_sha": commit_sha[:10] if commit_sha else "",
-                "duration_s": result.duration_s,
-            }
-            wf_edges[0]["active"] = False
-            if not result.passed:
-                wf_overall = "failed"
-                wf_events.append(
-                    {
-                        "ts": time.time(),
-                        "node_id": "WorktreeRunner",
-                        "state": "failed",
-                        "summary": f"{service} exited with code {result.exit_code}",
-                    }
-                )
-            elif queue_item_id:
-                wf_overall = "running"
-                wf_nodes[1]["state"] = "running"
-                wf_edges[1]["active"] = True
-                wf_events.append(
-                    {
-                        "ts": time.time(),
-                        "node_id": "WorktreeRunner",
-                        "state": "succeeded",
-                        "summary": (
-                            f"Committed {commit_sha[:10]} on {final_branch}"
-                            if commit_sha
-                            else f"Completed run {run_id}"
-                        ),
-                    }
-                )
-            else:
-                wf_overall = "succeeded"
-                wf_nodes[1]["state"] = "succeeded"
-                wf_nodes[2]["state"] = "succeeded"
-                wf_events.append(
-                    {
-                        "ts": time.time(),
-                        "node_id": "WorktreeRunner",
-                        "state": "succeeded",
-                        "summary": f"Completed in {result.duration_s}s",
-                    }
-                )
-            wf_updated = self.store.update_workflow(
-                wf_id,
-                state=wf_overall,
-                nodes=wf_nodes,
-                edges=wf_edges,
-                events=wf_events,
-                provenance=[["WorktreeRunner", "VerificationGate", "ChiefReviewSink"]],
-                result={"run_id": run_id, "queue_item_id": queue_item_id, "commit_sha": commit_sha},
-                finished_at=time.time() if wf_overall in ("succeeded", "failed") else None,
-            )
-            if wf_updated:
-                self._on_event("planai_workflow_updated", {"workflow": wf_updated})
-
-            if webclaw_session_key:
-                summary_lines = [result.response_text or "(no text output)"]
-                if commit_sha:
-                    summary_lines.append(
-                        f"\n\nCommitted `{commit_sha[:10]}` on `{branch_name}` in `{workspace_dir}`."
-                    )
-                if queue_item_id:
-                    summary_lines.append(
-                        f"Queued for Chief of Staff review as item `{queue_item_id}`."
-                    )
-                if not result.passed and result.stderr_tail:
-                    summary_lines.append(f"\n\nStderr:\n```\n{result.stderr_tail[-800:]}\n```")
-
-                saved_msg = self.store.add_chat_message(
-                    session_key=webclaw_session_key,
-                    role="assistant",
-                    text="\n".join(summary_lines).strip(),
-                    details={
-                        "runId": run_id,
-                        "service": service,
-                        "model": result.model,
-                        "sessionId": result.session_id,
-                        "queueItemId": queue_item_id,
-                        "exitCode": result.exit_code,
-                        "durationS": result.duration_s,
-                    },
-                    is_error=not result.passed,
-                )
-                self._on_event(
-                    "webclaw_chat",
-                    {
-                        "runId": run_id,
-                        "sessionKey": webclaw_session_key,
-                        "state": "final" if result.passed else "error",
-                        "message": saved_msg,
-                    },
-                )
 
         thread = threading.Thread(target=_worker, daemon=True, name=f"agent-run-{run_id}")
+        thread.start()
+        return run
+
+    def resume_revision_async(
+        self,
+        *,
+        wf_id: str,
+        item: Dict[str, Any],
+        revision_note: str,
+        timeout: int = 180,
+    ) -> Dict[str, Any]:
+        """Execute a real PlanAI cyclic `FORCE_REVISION` round on the existing branch."""
+        from planaieditor.single_workflow_graph import (
+            SingleGoalTask,
+            execute_single_agent_planai_graph,
+        )
+
+        clean_note = revision_note.strip()
+        if not clean_note:
+            raise ValueError("Revision feedback note is required for FORCE_REVISION.")
+
+        wf = self.store.get_workflow(wf_id)
+        if not wf or wf.get("graph_type") != "single":
+            raise ValueError(f"Single-agent workflow '{wf_id}' not found.")
+
+        cur_round = int(wf.get("round") or 1)
+        max_rounds = int(wf.get("max_rounds") or 3)
+        if cur_round >= max_rounds:
+            raise ValueError(
+                f"Maximum revision rounds ({max_rounds}) reached for workflow '{wf_id}'."
+            )
+        next_round = cur_round + 1
+        wf_res = dict(wf.get("result") or {})
+
+        service = str(
+            wf_res.get("service")
+            or item.get("source_agent")
+            or self.default_dispatch_service()
+        ).strip()
+        adapter = self.get_adapter(service)
+        probe = adapter.probe()
+        if not probe.get("dispatch_ready"):
+            raise PermissionError(probe.get("auth_status") or f"{service} is observe-only")
+
+        selected_model = str(wf_res.get("model") or probe.get("default_model") or "")
+        run_id = f"run_{uuid.uuid4().hex[:10]}"
+        is_demo_repo = bool(wf_res.get("is_demo_repo"))
+        repo_raw = str(item.get("repo_path") or wf_res.get("repo_path") or "").strip()
+        branch_name = str(item.get("branch") or wf_res.get("branch") or "workspace").strip()
+        target_branch = str(
+            item.get("target_branch") or wf_res.get("target_branch") or "main"
+        ).strip()
+        test_command = str(
+            item.get("test_command") or wf_res.get("test_command") or ""
+        ).strip()
+        project_id = str(item.get("project_id") or wf.get("project_id") or "").strip()
+        session_key = str(wf.get("session_key") or "").strip()
+
+        is_project_worktree = False
+        if is_demo_repo and repo_raw:
+            workspace_dir = Path(repo_raw).resolve()
+            repo_dir = workspace_dir
+            self._git(workspace_dir, "checkout", branch_name)
+        elif repo_raw and (Path(repo_raw) / ".git").exists() and branch_name:
+            repo_dir = Path(repo_raw).resolve()
+            workspace_dir = (self.demo_workspaces_root / run_id).resolve()
+            workspace_dir.parent.mkdir(parents=True, exist_ok=True)
+            self._git(repo_dir, "worktree", "prune")
+            wt_res = self._git(repo_dir, "worktree", "add", str(workspace_dir), branch_name)
+            if wt_res.returncode != 0:
+                raise ValueError(
+                    f"Could not mount revision worktree for branch '{branch_name}': {wt_res.stderr.strip()}"
+                )
+            is_project_worktree = True
+        else:
+            workspace_dir = (self.demo_workspaces_root / run_id).resolve()
+            workspace_dir.mkdir(parents=True, exist_ok=True)
+            repo_dir = workspace_dir
+
+        self.store.claim_ownership(
+            repo=str(repo_dir),
+            worktree=str(workspace_dir),
+            branch=branch_name,
+            service=service,
+            run_id=run_id,
+            project_id=project_id,
+        )
+
+        revision_prompt = (
+            f"[Revision Round {next_round}/{max_rounds} — Operator Gate Feedback]\n"
+            f"Original Goal: {wf.get('goal') or item.get('title')}\n"
+            f"Workspace Directory: {workspace_dir}\n"
+            f"Branch: {branch_name}\n\n"
+            f"Operator Requested Changes:\n{clean_note}\n\n"
+            f"Update the existing files inside '{workspace_dir}' on branch '{branch_name}' "
+            f"to address every requested change above."
+        )
+
+        self.store.update_item(item["id"], status="in_progress")
+        rev_nodes = list(wf.get("nodes") or [])
+        rev_edges = list(wf.get("edges") or [])
+        for n in rev_nodes:
+            if n.get("id") not in ("DoneTerminal", "AbortedTerminal"):
+                n["state"] = "running" if n.get("id") == "WorktreeRunner" else "idle"
+        for e in rev_edges:
+            e["active"] = e.get("id") == "e_review_revision"
+        wf_res["round"] = next_round
+        wf_res["max_rounds"] = max_rounds
+        wf_res["current_state"] = "WorktreeRunner"
+        updated_wf = self.store.update_workflow(
+            wf_id,
+            state="running",
+            nodes=rev_nodes,
+            edges=rev_edges,
+            result=wf_res,
+            finished_at=None,
+        )
+        if updated_wf:
+            self._on_event("planai_workflow_updated", {"workflow": updated_wf})
+
+        run = self.store.create_run(
+            {
+                "id": run_id,
+                "service": service,
+                "model": selected_model,
+                "prompt": redact_secrets(revision_prompt),
+                "cwd": str(workspace_dir),
+                "branch": branch_name,
+                "queue_item_id": item["id"],
+                "webclaw_session_key": session_key,
+                "project_id": project_id,
+                "workflow_id": wf_id,
+                "role": f"Revision Round {next_round}",
+                "state": "running",
+                "metadata": {"is_demo_repo": is_demo_repo, "round": next_round},
+            }
+        )
+        self._on_event("run_started", {"run": run})
+
+        goal_task = SingleGoalTask(
+            workflow_id=wf_id,
+            run_id=run_id,
+            project_id=project_id,
+            service=service,
+            model=selected_model,
+            prompt=revision_prompt,
+            workspace_dir=str(workspace_dir),
+            repo_dir=str(repo_dir),
+            is_project_worktree=is_project_worktree,
+            is_demo_repo=is_demo_repo,
+            branch_name=branch_name,
+            target_branch=target_branch,
+            test_command=test_command,
+            demo_token=SIMPLE_DEMO_TASK_TOKEN if is_demo_repo else "",
+            demo_title=SIMPLE_DEMO_TASK_TITLE if is_demo_repo else "",
+            submit_to_queue=True,
+            queue_title=str(item.get("title") or ""),
+            existing_queue_item_id=str(item["id"]),
+            round_num=next_round,
+            max_rounds=max_rounds,
+            revision_note=clean_note,
+            session_key=session_key,
+            timeout=timeout,
+        )
+
+        def _rev_worker() -> None:
+            def _register_proc(proc: subprocess.Popen) -> None:
+                with self._proc_lock:
+                    self._active_procs[run_id] = proc
+
+            def _unregister_proc() -> None:
+                with self._proc_lock:
+                    self._active_procs.pop(run_id, None)
+
+            execute_single_agent_planai_graph(
+                manager=self,
+                goal_task=goal_task,
+                redact_fn=redact_secrets,
+                register_proc=_register_proc,
+                unregister_proc=_unregister_proc,
+            )
+
+        thread = threading.Thread(
+            target=_rev_worker, daemon=True, name=f"agent-rev-{run_id}"
+        )
         thread.start()
         return run
 

@@ -17,8 +17,15 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Type
 
-from planai import Graph, InitialTaskWorker, JoinedTaskWorker, Task, TaskWorker
-from pydantic import BaseModel, Field
+from planai import (
+    Graph,
+    InitialTaskWorker,
+    JoinedTaskWorker,
+    LLMTaskWorker,
+    Task,
+    TaskWorker,
+)
+from pydantic import Field
 
 from planaieditor.planai_llm_core import PlanAILLMManager
 from planaieditor.queue_store import QueueStore
@@ -114,6 +121,13 @@ class JoinedEvolutionBundleTask(Task):
     critiques: List[RoleCritiqueOutputTask] = Field(default_factory=list)
 
 
+class ValidatedEvolutionBundleTask(Task):
+    workflow_id: str
+    project_id: str
+    critiques: List[RoleCritiqueOutputTask] = Field(default_factory=list)
+    validated_roles: List[str] = Field(default_factory=list)
+
+
 class EvolvedGenerationResultTask(Task):
     workflow_id: str
     project_id: str
@@ -121,7 +135,7 @@ class EvolvedGenerationResultTask(Task):
     added_rules: List[Dict[str, Any]] = Field(default_factory=list)
 
 
-class LLMCritiqueAndMutateSchema(BaseModel):
+class LLMCritiqueAndMutateTask(Task):
     weaknesses: List[str] = Field(
         default_factory=list,
         description="Concrete prompt weaknesses observed from recent operator bounce notes or failed runs",
@@ -140,17 +154,32 @@ class LLMCritiqueAndMutateSchema(BaseModel):
     )
 
 
-EVOLUTION_GRAPH_PYTHON_SOURCE = """from planai import Graph, InitialTaskWorker, JoinedTaskWorker, Task, TaskWorker
+_REQUIRED_PLACEHOLDERS_BY_ROLE: Dict[str, List[str]] = {
+    "lead_planner": [
+        "{project_name}",
+        "{repo_path}",
+        "{active_rules_block}",
+        "{services_fitness_block}",
+        "{goal}",
+        "{git_context}",
+    ],
+    "chief_triage": [
+        "{active_rules_block}",
+    ],
+}
+
+EVOLUTION_GRAPH_PYTHON_SOURCE = """from planai import Graph, InitialTaskWorker, JoinedTaskWorker, LLMTaskWorker, Task, TaskWorker
 
 # AutoPlan Continuous Prompt & Rule Evolution Graph (PlanAI)
 graph = Graph(name="AutoplanPromptEvolutionGraph")
-collector = TraceCollectorWorker()
-critic = FailureCritiqueWorker()
-joiner = EvolutionCritiqueJoiner()
-committer = EvolutionCommitSink()
+collector = TraceCollectorWorker()                                # kind="deterministic"
+critic = PlanAIFailureCritiqueLLMWorker(llm=llm, prompt=prompt)   # kind="agent" (LLMTaskWorker)
+joiner = EvolutionCritiqueJoiner()                                # kind="deterministic" (JoinedTaskWorker)
+gate = TemplateIntegrityGateWorker()                              # kind="deterministic"
+committer = EvolutionCommitSink()                                 # kind="terminal"
 
-graph.add_workers(collector, critic, joiner, committer)
-graph.set_dependency(collector, critic).next(joiner).next(committer)
+graph.add_workers(collector, critic, joiner, gate, committer)
+graph.set_dependency(collector, critic).next(joiner).next(gate).next(committer)
 """
 
 
@@ -159,6 +188,7 @@ def _default_evolution_nodes() -> List[Dict[str, Any]]:
         {
             "id": "TraceCollectorWorker",
             "label": "TraceCollectorWorker",
+            "kind": "deterministic",
             "worker_type": "TaskWorker",
             "svelte_type": "taskworker",
             "role": "Harvests operator decisions, bounce notes, failed runs & service fitness",
@@ -169,31 +199,45 @@ def _default_evolution_nodes() -> List[Dict[str, Any]]:
         {
             "id": "FailureCritiqueWorker",
             "label": "FailureCritiqueWorker",
+            "kind": "agent",
             "worker_type": "LLMTaskWorker",
             "svelte_type": "llmtaskworker",
             "role": "Critiques active LeadPlanner & ChiefTriage prompts against empirical traces",
             "state": "idle",
-            "position": {"x": 360, "y": 140},
+            "position": {"x": 330, "y": 140},
             "metrics": {},
         },
         {
             "id": "EvolutionCritiqueJoiner",
             "label": "EvolutionCritiqueJoiner",
+            "kind": "deterministic",
             "worker_type": "JoinedTaskWorker",
             "svelte_type": "joinedtaskworker",
             "role": "Joins parallel role critiques via PlanAI ProvenanceChain",
             "state": "idle",
-            "position": {"x": 670, "y": 140},
+            "position": {"x": 600, "y": 140},
+            "metrics": {},
+        },
+        {
+            "id": "TemplateIntegrityGateWorker",
+            "label": "TemplateIntegrityGateWorker",
+            "kind": "deterministic",
+            "worker_type": "TaskWorker",
+            "svelte_type": "taskworker",
+            "role": "Verifies required template placeholders remain intact before activation",
+            "state": "idle",
+            "position": {"x": 870, "y": 140},
             "metrics": {},
         },
         {
             "id": "EvolutionCommitSink",
             "label": "EvolutionCommitSink",
+            "kind": "terminal",
             "worker_type": "TaskWorker",
             "svelte_type": "taskworker",
             "role": "Persists Generation N+1 prompt versions and distilled evolution rules",
             "state": "idle",
-            "position": {"x": 970, "y": 140},
+            "position": {"x": 1140, "y": 140},
             "metrics": {},
         },
     ]
@@ -205,22 +249,37 @@ def _default_evolution_edges() -> List[Dict[str, Any]]:
             "id": "e_collect_critique",
             "source": "TraceCollectorWorker",
             "target": "FailureCritiqueWorker",
+            "label": "traces",
             "task_type": "RoleEvolutionInputTask",
             "active": False,
+            "is_back_edge": False,
         },
         {
             "id": "e_critique_join",
             "source": "FailureCritiqueWorker",
             "target": "EvolutionCritiqueJoiner",
+            "label": "critiques",
             "task_type": "RoleCritiqueOutputTask",
             "active": False,
+            "is_back_edge": False,
         },
         {
-            "id": "e_join_commit",
+            "id": "e_join_validate",
             "source": "EvolutionCritiqueJoiner",
-            "target": "EvolutionCommitSink",
+            "target": "TemplateIntegrityGateWorker",
+            "label": "joined",
             "task_type": "JoinedEvolutionBundleTask",
             "active": False,
+            "is_back_edge": False,
+        },
+        {
+            "id": "e_validate_commit",
+            "source": "TemplateIntegrityGateWorker",
+            "target": "EvolutionCommitSink",
+            "label": "validated",
+            "task_type": "ValidatedEvolutionBundleTask",
+            "active": False,
+            "is_back_edge": False,
         },
     ]
 
@@ -381,7 +440,7 @@ class EvolutionEngine:
     def run_evolution_cycle(
         self, project_id: str = "*", reason: str = "manual"
     ) -> Dict[str, Any]:
-        """Execute a real PlanAI Graph (`TraceCollector` -> `FailureCritique` -> `JoinedTaskWorker` -> `Commit`)."""
+        """Execute a real PlanAI Graph (`TraceCollector` -> `LLMTaskWorker` -> `JoinedTaskWorker` -> `IntegrityGate` -> `Commit`)."""
         wf_id = f"wf_evo_{uuid.uuid4().hex[:8]}"
         lead_pv = self.store.get_active_prompt("lead_planner")
         cur_gen = int(lead_pv["generation"]) if lead_pv else 1
@@ -389,6 +448,7 @@ class EvolutionEngine:
         edges = _default_evolution_edges()
         events: List[Dict[str, Any]] = []
         provenance_log: List[Dict[str, Any]] = []
+        visit_counts: Dict[str, int] = {}
 
         wf = self.store.create_workflow(
             {
@@ -402,6 +462,12 @@ class EvolutionEngine:
                 "edges": edges,
                 "events": events,
                 "provenance": provenance_log,
+                "result": {
+                    "round": 1,
+                    "max_rounds": 1,
+                    "visit_counts": {},
+                    "current_state": "TraceCollectorWorker",
+                },
                 "python_code": EVOLUTION_GRAPH_PYTHON_SOURCE,
                 "evolution_gen": cur_gen,
             }
@@ -417,13 +483,20 @@ class EvolutionEngine:
             edge_id: str = "",
             metrics: Optional[Dict[str, Any]] = None,
             prov_chain: Optional[List[str]] = None,
+            count_visit: bool = False,
         ) -> None:
             with state_lock:
+                if count_visit:
+                    visit_counts[node_id] = int(visit_counts.get(node_id) or 0) + 1
                 for n in nodes:
                     if n["id"] == node_id:
                         n["state"] = new_state
+                        merged_m = {**dict(n.get("metrics") or {})}
                         if metrics:
-                            n["metrics"] = {**n.get("metrics", {}), **metrics}
+                            merged_m.update(metrics)
+                        if node_id in visit_counts:
+                            merged_m["visits"] = visit_counts[node_id]
+                        n["metrics"] = merged_m
                 for e in edges:
                     e["active"] = e["id"] == edge_id and new_state == "running"
                 evt = {
@@ -443,12 +516,73 @@ class EvolutionEngine:
                     edges=edges,
                     events=events,
                     provenance=provenance_log,
+                    result={
+                        "round": 1,
+                        "max_rounds": 1,
+                        "visit_counts": dict(visit_counts),
+                        "current_state": node_id,
+                    },
                 )
             if updated:
                 self._on_event("planai_workflow_updated", {"workflow": updated})
 
         engine = self
         committed_results: List[EvolvedGenerationResultTask] = []
+
+        def _synthesize_role_critique(
+            task: RoleEvolutionInputTask,
+            parsed: Optional[LLMCritiqueAndMutateTask],
+            fallback_note: str = "",
+        ) -> RoleCritiqueOutputTask:
+            weaknesses: List[str] = []
+            proposed_rule = ""
+            directives: List[str] = []
+            rationale = fallback_note
+
+            if parsed is not None:
+                weaknesses = [w.strip() for w in parsed.weaknesses if w.strip()]
+                proposed_rule = parsed.proposed_rule.strip()
+                directives = [d.strip() for d in parsed.improved_directives if d.strip()]
+                if parsed.rationale.strip():
+                    rationale = parsed.rationale.strip()
+
+            if not directives:
+                if task.operator_corrections:
+                    directives.append(
+                        f"Enforce recent operator feedback: {task.operator_corrections[0][:160]}"
+                    )
+                if task.recent_failures:
+                    directives.append(
+                        f"Pre-check against observed run failure: {task.recent_failures[0][:160]}"
+                    )
+                if not directives:
+                    directives.append(
+                        f"Route subtasks preferentially by measured service fitness ({task.service_fitness_summary}) and require clean worktree verification."
+                    )
+            if not rationale:
+                rationale = (
+                    f"Distilled {len(task.operator_corrections)} operator corrections and "
+                    f"{len(task.recent_failures)} run failure traces into Generation v{task.current_generation + 1}."
+                )
+
+            marker = "\n# Evolved Directives"
+            base_prompt = task.current_prompt.split(marker)[0].rstrip()
+            bullet_block = "\n".join(f"- {d.lstrip('- ').strip()}" for d in directives[:3])
+            improved_prompt = (
+                f"{base_prompt}{marker} (Gen v{task.current_generation + 1}):\n{bullet_block}\n"
+            )
+
+            return RoleCritiqueOutputTask(
+                workflow_id=task.workflow_id,
+                project_id=task.project_id,
+                worker_role=task.worker_role,
+                current_generation=task.current_generation,
+                current_prompt=task.current_prompt,
+                weaknesses=weaknesses,
+                proposed_rule=proposed_rule,
+                improved_prompt=improved_prompt,
+                rationale=rationale,
+            )
 
         class TraceCollectorWorker(TaskWorker):
             output_types: List[Type[Task]] = [RoleEvolutionInputTask]
@@ -458,6 +592,7 @@ class EvolutionEngine:
                     "TraceCollectorWorker",
                     "running",
                     "Collecting failed runs, operator decisions, and service fitness",
+                    count_visit=True,
                 )
                 proj_filter = None if task.project_id in ("", "*") else task.project_id
                 failed_runs = engine.store.list_runs(
@@ -472,7 +607,8 @@ class EvolutionEngine:
                 corrections = [
                     f"{d['action']}: {d['note']}"
                     for d in decisions
-                    if d["action"] in ("request_changes", "reject") and str(d.get("note") or "").strip()
+                    if d["action"] in ("request_changes", "reject")
+                    and str(d.get("note") or "").strip()
                 ]
                 rules = [
                     r["rule_text"]
@@ -518,91 +654,93 @@ class EvolutionEngine:
                     },
                 )
 
-        class FailureCritiqueWorker(TaskWorker):
+        class PlanAIFailureCritiqueLLMWorker(LLMTaskWorker):
+            """Genuine PlanAI `LLMTaskWorker` critiquing and mutating active role prompts."""
+
+            llm_input_type: Type[Task] = RoleEvolutionInputTask
+            llm_output_type: Type[Task] = LLMCritiqueAndMutateTask
+            output_types: List[Type[Task]] = [RoleCritiqueOutputTask]
+
+            def pre_process(self, task: Task) -> Optional[Task]:
+                return None
+
+            def format_prompt(self, task: Task) -> str:
+                assert isinstance(task, RoleEvolutionInputTask)
+                return (
+                    f"Analyze worker role '{task.worker_role}' (Generation {task.current_generation}).\n"
+                    f"Current prompt template:\n{task.current_prompt}\n\n"
+                    f"Recent operator corrections: {task.operator_corrections or ['none']}\n"
+                    f"Recent failed runs: {task.recent_failures or ['none']}\n"
+                    f"Empirical service fitness: {task.service_fitness_summary}\n"
+                    f"Existing rules: {task.active_rules[:5]}\n\n"
+                    "Identify concrete prompt weaknesses, propose 1 concise guardrail rule if warranted, "
+                    "and provide 1-2 crisp bullet directives to strengthen the prompt without removing placeholders."
+                )
+
+            def _invoke_llm(self, task: Task):
+                assert isinstance(task, RoleEvolutionInputTask)
+                mark_node(
+                    "FailureCritiqueWorker",
+                    "running",
+                    f"Critiquing & evolving '{task.worker_role}' via PlanAI LLMTaskWorker",
+                    edge_id="e_collect_critique",
+                    count_visit=(task.worker_role == "lead_planner"),
+                )
+                try:
+                    return super()._invoke_llm(task)
+                except Exception as llm_exc:
+                    out_task = _synthesize_role_critique(
+                        task,
+                        None,
+                        fallback_note=f"Empirical trace synthesis (LLM critique skipped: {llm_exc})",
+                    )
+                    prov_chain = [str(p) for p in getattr(task, "_provenance", [])]
+                    self.publish_work(out_task, input_task=task)
+                    mark_node(
+                        "FailureCritiqueWorker",
+                        "succeeded",
+                        f"Prepared Gen v{task.current_generation + 1} candidate for '{task.worker_role}'",
+                        edge_id="e_critique_join",
+                        prov_chain=prov_chain,
+                    )
+
+            def post_process(self, response: Optional[Task], input_task: Task) -> None:
+                assert isinstance(input_task, RoleEvolutionInputTask)
+                parsed = response if isinstance(response, LLMCritiqueAndMutateTask) else None
+                out_task = _synthesize_role_critique(input_task, parsed)
+                prov_chain = [str(p) for p in getattr(input_task, "_provenance", [])]
+                self.publish_work(task=out_task, input_task=input_task)
+                mark_node(
+                    "FailureCritiqueWorker",
+                    "succeeded",
+                    f"Prepared Gen v{input_task.current_generation + 1} candidate for '{input_task.worker_role}'",
+                    edge_id="e_critique_join",
+                    metrics={"llm_worker": "PlanAIFailureCritiqueLLMWorker"},
+                    prov_chain=prov_chain,
+                )
+
+        class DeterministicFailureCritiqueWorker(TaskWorker):
+            """Deterministic empirical trace distiller used only when LLM is disabled."""
+
             output_types: List[Type[Task]] = [RoleCritiqueOutputTask]
 
             def consume_work(self, task: RoleEvolutionInputTask) -> None:
                 mark_node(
                     "FailureCritiqueWorker",
                     "running",
-                    f"Critiquing & evolving '{task.worker_role}' (Gen v{task.current_generation})",
+                    f"Distilling empirical traces for '{task.worker_role}' (Gen v{task.current_generation})",
                     edge_id="e_collect_critique",
+                    count_visit=(task.worker_role == "lead_planner"),
                 )
-                llm = engine.llm_manager.get_llm()
-                weaknesses: List[str] = []
-                proposed_rule = ""
-                directives: List[str] = []
-                rationale = ""
-
-                if llm is not None:
-                    try:
-                        critique_prompt = (
-                            f"Analyze worker role '{task.worker_role}' (Generation {task.current_generation}).\n"
-                            f"Current prompt template:\n{task.current_prompt}\n\n"
-                            f"Recent operator corrections: {task.operator_corrections or ['none']}\n"
-                            f"Recent failed runs: {task.recent_failures or ['none']}\n"
-                            f"Empirical service fitness: {task.service_fitness_summary}\n"
-                            f"Existing rules: {task.active_rules[:5]}\n\n"
-                            "Identify concrete prompt weaknesses, propose 1 concise guardrail rule if warranted, "
-                            "and provide 1-2 crisp bullet directives to strengthen the prompt without removing placeholders."
-                        )
-                        parsed = llm.generate_pydantic(
-                            prompt_template="{query}",
-                            output_schema=LLMCritiqueAndMutateSchema,
-                            system="You are PlanAI's evolutionary prompt optimizer. Be concise, empirical, and specific.",
-                            query=critique_prompt,
-                        )
-                        weaknesses = [w.strip() for w in parsed.weaknesses if w.strip()]
-                        proposed_rule = parsed.proposed_rule.strip()
-                        directives = [d.strip() for d in parsed.improved_directives if d.strip()]
-                        rationale = parsed.rationale.strip()
-                    except Exception as llm_exc:
-                        rationale = f"Empirical trace synthesis (LLM critique skipped: {llm_exc})"
-
-                if not directives:
-                    if task.operator_corrections:
-                        directives.append(
-                            f"Enforce recent operator feedback: {task.operator_corrections[0][:160]}"
-                        )
-                    if task.recent_failures:
-                        directives.append(
-                            f"Pre-check against observed run failure: {task.recent_failures[0][:160]}"
-                        )
-                    if not directives:
-                        directives.append(
-                            f"Route subtasks preferentially by measured service fitness ({task.service_fitness_summary}) and require clean worktree verification."
-                        )
-                if not rationale:
-                    rationale = (
-                        f"Distilled {len(task.operator_corrections)} operator corrections and "
-                        f"{len(task.recent_failures)} run failure traces into Generation v{task.current_generation + 1}."
-                    )
-
-                marker = "\n# Evolved Directives"
-                base_prompt = task.current_prompt.split(marker)[0].rstrip()
-                bullet_block = "\n".join(f"- {d.lstrip('- ').strip()}" for d in directives[:3])
-                improved_prompt = (
-                    f"{base_prompt}{marker} (Gen v{task.current_generation + 1}):\n{bullet_block}\n"
-                )
-
+                out_task = _synthesize_role_critique(task, None)
                 prov_chain = [str(p) for p in getattr(task, "_provenance", [])]
-                out_task = RoleCritiqueOutputTask(
-                    workflow_id=task.workflow_id,
-                    project_id=task.project_id,
-                    worker_role=task.worker_role,
-                    current_generation=task.current_generation,
-                    current_prompt=task.current_prompt,
-                    weaknesses=weaknesses,
-                    proposed_rule=proposed_rule,
-                    improved_prompt=improved_prompt,
-                    rationale=rationale,
-                )
                 self.publish_work(out_task, input_task=task)
                 mark_node(
                     "FailureCritiqueWorker",
                     "succeeded",
                     f"Prepared Gen v{task.current_generation + 1} candidate for '{task.worker_role}'",
                     edge_id="e_critique_join",
+                    metrics={"llm_worker": "DeterministicFailureCritiqueWorker"},
                     prov_chain=prov_chain,
                 )
 
@@ -616,6 +754,7 @@ class EvolutionEngine:
                     "running",
                     f"Joined {len(tasks)} role critiques via PlanAI ProvenanceChain",
                     edge_id="e_critique_join",
+                    count_visit=True,
                 )
                 prov_chain = [str(p) for p in getattr(tasks[0], "_provenance", [])] if tasks else []
                 bundle = JoinedEvolutionBundleTask(
@@ -628,20 +767,65 @@ class EvolutionEngine:
                     "EvolutionCritiqueJoiner",
                     "succeeded",
                     f"Synchronized {len(tasks)} evolved role specs",
-                    edge_id="e_join_commit",
+                    edge_id="e_join_validate",
                     metrics={"joined_critiques": len(tasks)},
+                    prov_chain=prov_chain,
+                )
+
+        class TemplateIntegrityGateWorker(TaskWorker):
+            """Deterministic gate ensuring prompt evolution preserves required placeholders."""
+
+            output_types: List[Type[Task]] = [ValidatedEvolutionBundleTask]
+
+            def consume_work(self, task: JoinedEvolutionBundleTask) -> None:
+                mark_node(
+                    "TemplateIntegrityGateWorker",
+                    "running",
+                    "Validating template placeholders across evolved prompts",
+                    edge_id="e_join_validate",
+                    count_visit=True,
+                )
+                validated_critiques: List[RoleCritiqueOutputTask] = []
+                validated_roles: List[str] = []
+                for crit in task.critiques:
+                    required = _REQUIRED_PLACEHOLDERS_BY_ROLE.get(crit.worker_role, [])
+                    missing = [ph for ph in required if ph not in crit.improved_prompt]
+                    if missing:
+                        raise ValueError(
+                            f"Evolved prompt for '{crit.worker_role}' missing placeholders: {missing}"
+                        )
+                    validated_critiques.append(crit)
+                    validated_roles.append(crit.worker_role)
+
+                prov_chain = [str(p) for p in getattr(task, "_provenance", [])]
+                self.publish_work(
+                    ValidatedEvolutionBundleTask(
+                        workflow_id=task.workflow_id,
+                        project_id=task.project_id,
+                        critiques=validated_critiques,
+                        validated_roles=validated_roles,
+                    ),
+                    input_task=task,
+                )
+                mark_node(
+                    "TemplateIntegrityGateWorker",
+                    "succeeded",
+                    f"Verified placeholder integrity for {', '.join(validated_roles)}",
+                    edge_id="e_validate_commit",
+                    metrics={"validated_roles": validated_roles},
                     prov_chain=prov_chain,
                 )
 
         class EvolutionCommitSink(TaskWorker):
             output_types: List[Type[Task]] = []
 
-            def consume_work(self, task: JoinedEvolutionBundleTask) -> None:
+            def consume_work(self, task: ValidatedEvolutionBundleTask) -> None:
                 mark_node(
                     "EvolutionCommitSink",
                     "running",
                     "Committing evolved prompt versions and learned rules to SQLite store",
-                    edge_id="e_join_commit",
+                    edge_id="e_validate_commit",
+                    count_visit=True,
                 )
                 saved_prompts: List[Dict[str, Any]] = []
                 saved_rules: List[Dict[str, Any]] = []
@@ -690,11 +874,22 @@ class EvolutionEngine:
         try:
             graph = Graph(name="AutoplanPromptEvolutionGraph")
             collector = TraceCollectorWorker()
-            critic = FailureCritiqueWorker()
+            active_llm = self.llm_manager.get_llm()
+            if active_llm is not None:
+                critic: TaskWorker = PlanAIFailureCritiqueLLMWorker(
+                    llm=active_llm,
+                    prompt="Critique and evolve prompt template from empirical traces.",
+                    system_prompt="You are PlanAI's evolutionary prompt optimizer. Be concise, empirical, and specific.",
+                )
+            else:
+                critic = DeterministicFailureCritiqueWorker()
             joiner = EvolutionCritiqueJoiner()
+            integrity_gate = TemplateIntegrityGateWorker()
             committer = EvolutionCommitSink()
-            graph.add_workers(collector, critic, joiner, committer)
-            graph.set_dependency(collector, critic).next(joiner).next(committer)
+            graph.add_workers(collector, critic, joiner, integrity_gate, committer)
+            graph.set_dependency(collector, critic).next(joiner).next(integrity_gate).next(
+                committer
+            )
 
             seed = EvolutionSeedTask(
                 workflow_id=wf_id, project_id=project_id or "*", reason=reason
@@ -717,6 +912,10 @@ class EvolutionEngine:
                 edges=edges,
                 evolution_gen=final_gen,
                 result={
+                    "round": 1,
+                    "max_rounds": 1,
+                    "visit_counts": dict(visit_counts),
+                    "current_state": "EvolutionCommitSink",
                     "new_generation": final_gen,
                     "updated_prompts": [
                         {
@@ -744,7 +943,11 @@ class EvolutionEngine:
             failed_wf = self.store.update_workflow(
                 wf_id,
                 state="failed",
-                result={"error": str(exc)},
+                result={
+                    "error": str(exc),
+                    "visit_counts": dict(visit_counts),
+                    "current_state": "TemplateIntegrityGateWorker",
+                },
                 finished_at=time.time(),
             )
             if failed_wf:

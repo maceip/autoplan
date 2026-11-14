@@ -36,7 +36,15 @@ KINDS = ["code_change", "task", "decision", "idea", "comms"]
 
 RUN_STATES = ["queued", "running", "succeeded", "failed", "stopped"]
 
-WORKFLOW_STATES = ["queued", "running", "succeeded", "failed", "stopped"]
+WORKFLOW_STATES = [
+    "queued",
+    "running",
+    "waiting_gate",
+    "succeeded",
+    "failed",
+    "aborted",
+    "stopped",
+]
 
 _ITEM_FIELDS = [
     "source_agent",
@@ -868,6 +876,10 @@ class QueueStore:
         wf["provenance"] = json.loads(wf.pop("provenance_json") or "[]")
         wf["result"] = json.loads(wf.pop("result_json") or "{}")
         wf["queue_item_id"] = str(wf["result"].get("queue_item_id") or "")
+        wf["visit_counts"] = dict(wf["result"].get("visit_counts") or {})
+        wf["round"] = int(wf["result"].get("round") or 1)
+        wf["max_rounds"] = int(wf["result"].get("max_rounds") or 3)
+        wf["current_state"] = str(wf["result"].get("current_state") or "")
         return wf
 
     def create_workflow(self, data: Dict[str, Any]) -> Dict[str, Any]:

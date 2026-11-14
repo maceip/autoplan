@@ -26,13 +26,22 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Type
 
-from planai import Graph, InitialTaskWorker, JoinedTaskWorker, SubGraphWorker, Task, TaskWorker
+from planai import (
+    Graph,
+    InitialTaskWorker,
+    JoinedTaskWorker,
+    LLMTaskWorker,
+    SubGraphWorker,
+    Task,
+    TaskWorker,
+)
 from pydantic import BaseModel, Field
 
 from planaieditor.agent_adapters import AgentRunManager, redact_secrets
 from planaieditor.evolution_engine import EvolutionEngine
 from planaieditor.planai_llm_core import PlanAILLMManager
 from planaieditor.queue_store import QueueStore
+from planaieditor.single_workflow_graph import run_reality_and_secret_scan
 
 _UNAUTHORIZED_MOCK_RE = re.compile(
     r"\b(MOCK_DATA|FAKE_RESPONSE|PLACEHOLDER_VALUE|hdr_observed|fp_observed)\b"
@@ -52,10 +61,14 @@ class TeamGoalTask(Task):
     project_name: str
     repo_path: str
     default_branch: str
+    base_branch: str = ""
     test_command: str = ""
     goal: str
     preferred_services: List[str] = Field(default_factory=list)
     session_key: str = ""
+    round_num: int = 1
+    max_rounds: int = 3
+    existing_queue_item_id: str = ""
 
 
 class ProjectContextTask(Task):
@@ -64,6 +77,7 @@ class ProjectContextTask(Task):
     project_name: str
     repo_path: str
     default_branch: str
+    base_branch: str = ""
     test_command: str
     goal: str
     git_summary: str
@@ -71,6 +85,9 @@ class ProjectContextTask(Task):
     dispatch_services: List[str] = Field(default_factory=list)
     fitness_summary: str = ""
     session_key: str = ""
+    round_num: int = 1
+    max_rounds: int = 3
+    existing_queue_item_id: str = ""
 
 
 class SubtaskSpec(BaseModel):
@@ -83,7 +100,7 @@ class SubtaskSpec(BaseModel):
     )
 
 
-class LLMTeamPlanSchema(BaseModel):
+class LLMTeamPlanTask(Task):
     plan_summary: str = Field(description="Concise architectural summary of the team plan")
     subtasks: List[SubtaskSpec] = Field(
         description="2 to 3 non-overlapping sub-agent tasks"
@@ -96,12 +113,16 @@ class TeamPlanTask(Task):
     project_name: str
     repo_path: str
     default_branch: str
+    base_branch: str = ""
     test_command: str
     goal: str
     plan_summary: str
     subtasks: List[SubtaskSpec] = Field(default_factory=list)
     planner_generation: int = 1
     session_key: str = ""
+    round_num: int = 1
+    max_rounds: int = 3
+    existing_queue_item_id: str = ""
 
 
 class SubAgentDirectiveTask(Task):
@@ -109,6 +130,7 @@ class SubAgentDirectiveTask(Task):
     project_id: str
     repo_path: str
     default_branch: str
+    base_branch: str = ""
     test_command: str
     goal: str
     plan_summary: str
@@ -119,6 +141,9 @@ class SubAgentDirectiveTask(Task):
     objective: str
     owned_paths: List[str] = Field(default_factory=list)
     session_key: str = ""
+    round_num: int = 1
+    max_rounds: int = 3
+    existing_queue_item_id: str = ""
 
 
 class SubAgentResultTask(Task):
@@ -126,6 +151,7 @@ class SubAgentResultTask(Task):
     project_id: str
     repo_path: str
     default_branch: str
+    base_branch: str = ""
     test_command: str
     goal: str
     plan_summary: str
@@ -140,6 +166,9 @@ class SubAgentResultTask(Task):
     response_text: str = ""
     duration_s: float = 0.0
     session_key: str = ""
+    round_num: int = 1
+    max_rounds: int = 3
+    existing_queue_item_id: str = ""
 
 
 class JoinedTeamSynthesisTask(Task):
@@ -147,6 +176,7 @@ class JoinedTeamSynthesisTask(Task):
     project_id: str
     repo_path: str
     default_branch: str
+    base_branch: str = ""
     test_command: str
     goal: str
     plan_summary: str
@@ -157,6 +187,9 @@ class JoinedTeamSynthesisTask(Task):
     changed_files: List[str] = Field(default_factory=list)
     subagent_results: List[SubAgentResultTask] = Field(default_factory=list)
     session_key: str = ""
+    round_num: int = 1
+    max_rounds: int = 3
+    existing_queue_item_id: str = ""
 
 
 class VerifiedTeamBundleTask(Task):
@@ -164,6 +197,7 @@ class VerifiedTeamBundleTask(Task):
     project_id: str
     repo_path: str
     default_branch: str
+    base_branch: str = ""
     test_command: str
     goal: str
     plan_summary: str
@@ -177,14 +211,17 @@ class VerifiedTeamBundleTask(Task):
     gate_passed: bool = True
     subagent_results: List[SubAgentResultTask] = Field(default_factory=list)
     session_key: str = ""
+    round_num: int = 1
+    max_rounds: int = 3
+    existing_queue_item_id: str = ""
 
 
-TEAMWORK_GRAPH_PYTHON_SOURCE = """from planai import Graph, InitialTaskWorker, JoinedTaskWorker, SubGraphWorker, Task, TaskWorker
+TEAMWORK_GRAPH_PYTHON_SOURCE = """from planai import Graph, InitialTaskWorker, JoinedTaskWorker, LLMTaskWorker, SubGraphWorker, Task, TaskWorker
 
-# Inner Planning SubGraph
+# Inner Planning SubGraph (ContextHarvester -> LLMTaskWorker LeadPlanner)
 plan_graph = Graph(name="LeadPlanningSubGraph")
 harvester = ContextHarvesterWorker()
-planner = LeadPlannerWorker()
+planner = PlanAILeadPlannerLLMWorker(llm=llm, prompt=evolved_prompt)
 plan_graph.add_workers(harvester, planner)
 plan_graph.set_dependency(harvester, planner)
 plan_graph.set_entry(harvester)
@@ -201,7 +238,7 @@ planning_subgraph = SubGraphWorker(
 team_graph = Graph(name="MultiAgentTeamworkGraph")
 fanout = SubtaskFanOutWorker()
 executor = MultiAgentDispatchWorker(num_consumers=3)
-joiner = TeamSynthesisJoiner()  # JoinedTaskWorker(join_type=SubtaskFanOutWorker)
+joiner = TeamSynthesisJoiner()
 gate = VerificationGateWorker()
 sink = ChiefEscalationSink()
 
@@ -215,6 +252,7 @@ def _default_teamwork_nodes() -> List[Dict[str, Any]]:
         {
             "id": "ContextHarvesterWorker",
             "label": "ContextHarvesterWorker",
+            "kind": "deterministic",
             "worker_type": "TaskWorker (SubGraph)",
             "svelte_type": "taskworker",
             "role": "Reads target project git state, branch, learned Brain rules & service fitness",
@@ -225,6 +263,7 @@ def _default_teamwork_nodes() -> List[Dict[str, Any]]:
         {
             "id": "LeadPlannerWorker",
             "label": "LeadPlannerWorker",
+            "kind": "agent",
             "worker_type": "LLMTaskWorker (SubGraph)",
             "svelte_type": "llmtaskworker",
             "role": "Decomposes goal into disjoint multi-agent roles using evolved prompt",
@@ -235,6 +274,7 @@ def _default_teamwork_nodes() -> List[Dict[str, Any]]:
         {
             "id": "SubtaskFanOutWorker",
             "label": "SubtaskFanOutWorker",
+            "kind": "deterministic",
             "worker_type": "TaskWorker",
             "svelte_type": "taskworker",
             "role": "Publishes N typed SubAgentDirectiveTasks in parallel",
@@ -245,6 +285,7 @@ def _default_teamwork_nodes() -> List[Dict[str, Any]]:
         {
             "id": "MultiAgentDispatchWorker",
             "label": "MultiAgentDispatchWorker",
+            "kind": "agent",
             "worker_type": "TaskWorker (x3 parallel)",
             "svelte_type": "subgraphworker",
             "role": "Executes real agents (Antigravity / MiMo / MiniMax) in isolated git worktrees",
@@ -255,6 +296,7 @@ def _default_teamwork_nodes() -> List[Dict[str, Any]]:
         {
             "id": "TeamSynthesisJoiner",
             "label": "TeamSynthesisJoiner",
+            "kind": "deterministic",
             "worker_type": "JoinedTaskWorker",
             "svelte_type": "joinedtaskworker",
             "role": "Joins all parallel SubAgentResultTasks by ProvenanceChain & merges worktrees",
@@ -265,6 +307,7 @@ def _default_teamwork_nodes() -> List[Dict[str, Any]]:
         {
             "id": "VerificationGateWorker",
             "label": "VerificationGateWorker",
+            "kind": "deterministic",
             "worker_type": "TaskWorker",
             "svelte_type": "taskworker",
             "role": "Runs project test_command + Law-2 Reality Scan + Secret Scan",
@@ -275,11 +318,34 @@ def _default_teamwork_nodes() -> List[Dict[str, Any]]:
         {
             "id": "ChiefEscalationSink",
             "label": "ChiefEscalationSink",
+            "kind": "human_gate",
             "worker_type": "TaskWorker",
             "svelte_type": "taskworker",
-            "role": "Submits verified bundle to Chief Queue & feeds EvolutionEngine",
+            "role": "Human Gate: approve & merge, request revision, or abort",
             "state": "idle",
             "position": {"x": 1550, "y": 150},
+            "metrics": {},
+        },
+        {
+            "id": "DoneTerminal",
+            "label": "Landed",
+            "kind": "terminal",
+            "worker_type": "Terminal",
+            "svelte_type": "taskworker",
+            "role": "Integrated team branch merged onto target branch",
+            "state": "idle",
+            "position": {"x": 1800, "y": 100},
+            "metrics": {},
+        },
+        {
+            "id": "AbortedTerminal",
+            "label": "Aborted",
+            "kind": "terminal",
+            "worker_type": "Terminal",
+            "svelte_type": "taskworker",
+            "role": "Workflow aborted or halted on fatal error",
+            "state": "idle",
+            "position": {"x": 1800, "y": 210},
             "metrics": {},
         },
     ]
@@ -291,43 +357,82 @@ def _default_teamwork_edges() -> List[Dict[str, Any]]:
             "id": "e_ctx_plan",
             "source": "ContextHarvesterWorker",
             "target": "LeadPlannerWorker",
+            "label": "context",
             "task_type": "ProjectContextTask",
             "active": False,
+            "is_back_edge": False,
         },
         {
             "id": "e_plan_fanout",
             "source": "LeadPlannerWorker",
             "target": "SubtaskFanOutWorker",
+            "label": "plan",
             "task_type": "TeamPlanTask",
             "active": False,
+            "is_back_edge": False,
         },
         {
             "id": "e_fanout_exec",
             "source": "SubtaskFanOutWorker",
             "target": "MultiAgentDispatchWorker",
+            "label": "directives",
             "task_type": "SubAgentDirectiveTask",
             "active": False,
+            "is_back_edge": False,
         },
         {
             "id": "e_exec_join",
             "source": "MultiAgentDispatchWorker",
             "target": "TeamSynthesisJoiner",
+            "label": "results",
             "task_type": "SubAgentResultTask",
             "active": False,
+            "is_back_edge": False,
         },
         {
             "id": "e_join_gate",
             "source": "TeamSynthesisJoiner",
             "target": "VerificationGateWorker",
+            "label": "integrated",
             "task_type": "JoinedTeamSynthesisTask",
             "active": False,
+            "is_back_edge": False,
         },
         {
             "id": "e_gate_sink",
             "source": "VerificationGateWorker",
             "target": "ChiefEscalationSink",
+            "label": "verified",
             "task_type": "VerifiedTeamBundleTask",
             "active": False,
+            "is_back_edge": False,
+        },
+        {
+            "id": "e_sink_done",
+            "source": "ChiefEscalationSink",
+            "target": "DoneTerminal",
+            "label": "approve",
+            "task_type": "MergeLanded",
+            "active": False,
+            "is_back_edge": False,
+        },
+        {
+            "id": "e_sink_revision",
+            "source": "ChiefEscalationSink",
+            "target": "LeadPlannerWorker",
+            "label": "revision",
+            "task_type": "RevisionDirective",
+            "active": False,
+            "is_back_edge": True,
+        },
+        {
+            "id": "e_sink_abort",
+            "source": "ChiefEscalationSink",
+            "target": "AbortedTerminal",
+            "label": "abort",
+            "task_type": "Aborted",
+            "active": False,
+            "is_back_edge": False,
         },
     ]
 
@@ -490,6 +595,12 @@ class TeamworkOrchestrator:
                 "edges": edges,
                 "events": [],
                 "provenance": [],
+                "result": {
+                    "round": 1,
+                    "max_rounds": 3,
+                    "visit_counts": {},
+                    "current_state": "ContextHarvesterWorker",
+                },
                 "python_code": TEAMWORK_GRAPH_PYTHON_SOURCE,
                 "evolution_gen": cur_gen,
             }
@@ -527,12 +638,95 @@ class TeamworkOrchestrator:
                 "timeout_per_agent": timeout_per_agent,
                 "nodes": nodes,
                 "edges": edges,
+                "round_num": 1,
+                "max_rounds": 3,
+                "base_branch": str(proj.get("default_branch") or "main"),
+                "existing_queue_item_id": "",
             },
             daemon=True,
             name=f"planai-team-{wf_id}",
         )
         thread.start()
         return wf
+
+    def resume_revision_async(
+        self,
+        *,
+        wf_id: str,
+        item: Dict[str, Any],
+        revision_note: str,
+        timeout_per_agent: int = 180,
+    ) -> Dict[str, Any]:
+        """Run a real cyclic `FORCE_REVISION` round of `MultiAgentTeamworkGraph` on the integrated branch."""
+        clean_note = revision_note.strip()
+        if not clean_note:
+            raise ValueError("Revision feedback note is required for FORCE_REVISION.")
+
+        wf = self.store.get_workflow(wf_id)
+        if not wf or wf.get("graph_type") != "teamwork":
+            raise ValueError(f"Teamwork workflow '{wf_id}' not found.")
+
+        cur_round = int(wf.get("round") or 1)
+        max_rounds = int(wf.get("max_rounds") or 3)
+        if cur_round >= max_rounds:
+            raise ValueError(
+                f"Maximum revision rounds ({max_rounds}) reached for workflow '{wf_id}'."
+            )
+        next_round = cur_round + 1
+
+        proj = (
+            self.store.get_project(str(wf.get("project_id") or item.get("project_id") or ""))
+            or self.store.ensure_default_project(
+                self.root_path, self.agent_manager.default_dispatch_service()
+            )
+        )
+        nodes = list(wf.get("nodes") or _default_teamwork_nodes())
+        edges = list(wf.get("edges") or _default_teamwork_edges())
+        for n in nodes:
+            if n["id"] not in ("DoneTerminal", "AbortedTerminal"):
+                n["state"] = "idle"
+        for e in edges:
+            e["active"] = e.get("id") == "e_sink_revision"
+
+        wf_res = dict(wf.get("result") or {})
+        wf_res["round"] = next_round
+        wf_res["max_rounds"] = max_rounds
+        wf_res["current_state"] = "LeadPlannerWorker"
+        updated_wf = self.store.update_workflow(
+            wf_id, state="running", nodes=nodes, edges=edges, result=wf_res
+        )
+        if updated_wf:
+            self._on_event("planai_workflow_updated", {"workflow": updated_wf})
+
+        self.store.update_item(item["id"], status="in_progress")
+        base_branch = str(item.get("branch") or proj.get("default_branch") or "main")
+        revised_goal = (
+            f"{wf.get('goal')}\n\n"
+            f"[Revision Round {next_round}/{max_rounds} — Operator Gate Feedback]\n"
+            f"{clean_note}"
+        )
+
+        thread = threading.Thread(
+            target=self._execute_teamwork_graph,
+            kwargs={
+                "wf_id": wf_id,
+                "proj": proj,
+                "goal": revised_goal,
+                "preferred_services": list(wf_res.get("services_used") or []),
+                "session_key": str(wf.get("session_key") or ""),
+                "timeout_per_agent": timeout_per_agent,
+                "nodes": nodes,
+                "edges": edges,
+                "round_num": next_round,
+                "max_rounds": max_rounds,
+                "base_branch": base_branch,
+                "existing_queue_item_id": str(item["id"]),
+            },
+            daemon=True,
+            name=f"planai-team-rev-{wf_id}-r{next_round}",
+        )
+        thread.start()
+        return updated_wf or wf
 
     def _execute_teamwork_graph(
         self,
@@ -545,9 +739,20 @@ class TeamworkOrchestrator:
         timeout_per_agent: int,
         nodes: List[Dict[str, Any]],
         edges: List[Dict[str, Any]],
+        round_num: int = 1,
+        max_rounds: int = 3,
+        base_branch: str = "",
+        existing_queue_item_id: str = "",
     ) -> None:
-        events: List[Dict[str, Any]] = []
-        provenance_log: List[Dict[str, Any]] = []
+        existing_wf = self.store.get_workflow(wf_id) or {}
+        events: List[Dict[str, Any]] = list(existing_wf.get("events") or [])
+        provenance_log: List[Dict[str, Any]] = list(existing_wf.get("provenance") or [])
+        result_meta: Dict[str, Any] = dict(existing_wf.get("result") or {})
+        visit_counts: Dict[str, int] = {
+            str(k): int(v) for k, v in dict(result_meta.get("visit_counts") or {}).items()
+        }
+        result_meta["round"] = round_num
+        result_meta["max_rounds"] = max_rounds
         state_lock = threading.Lock()
         orchestrator = self
         final_outcomes: List[Dict[str, Any]] = []
@@ -559,13 +764,20 @@ class TeamworkOrchestrator:
             edge_id: str = "",
             metrics: Optional[Dict[str, Any]] = None,
             prov: Optional[List[str]] = None,
+            count_visit: bool = False,
         ) -> None:
             with state_lock:
+                if count_visit:
+                    visit_counts[node_id] = int(visit_counts.get(node_id) or 0) + 1
                 for n in nodes:
                     if n["id"] == node_id:
                         n["state"] = new_state
+                        merged_m = {**dict(n.get("metrics") or {})}
                         if metrics:
-                            n["metrics"] = {**n.get("metrics", {}), **metrics}
+                            merged_m.update(metrics)
+                        if node_id in visit_counts:
+                            merged_m["visits"] = visit_counts[node_id]
+                        n["metrics"] = merged_m
                 for e in edges:
                     e["active"] = e["id"] == edge_id and new_state == "running"
                 evt = {
@@ -579,15 +791,86 @@ class TeamworkOrchestrator:
                     provenance_log.append(
                         {"ts": time.time(), "node_id": node_id, "chain": prov}
                     )
+                result_meta["visit_counts"] = dict(visit_counts)
+                result_meta["current_state"] = node_id
                 wf_row = orchestrator.store.update_workflow(
                     wf_id,
                     nodes=nodes,
                     edges=edges,
                     events=events,
                     provenance=provenance_log,
+                    result=result_meta,
                 )
             if wf_row:
                 orchestrator._on_event("planai_workflow_updated", {"workflow": wf_row})
+
+        def _build_team_plan_from_parsed(
+            task: ProjectContextTask,
+            parsed: Optional[LLMTeamPlanTask],
+            gen: int,
+        ) -> TeamPlanTask:
+            subtasks: List[SubtaskSpec] = []
+            plan_summary = ""
+            if parsed is not None:
+                plan_summary = parsed.plan_summary.strip()
+                for idx, st in enumerate(parsed.subtasks[:3]):
+                    svc = (
+                        st.service
+                        if st.service in task.dispatch_services
+                        else task.dispatch_services[idx % len(task.dispatch_services)]
+                    )
+                    subtasks.append(
+                        SubtaskSpec(
+                            role=st.role.strip() or f"Specialist-{idx + 1}",
+                            service=svc,
+                            objective=st.objective.strip() or task.goal,
+                            owned_paths=st.owned_paths,
+                        )
+                    )
+            if len(subtasks) < 2:
+                svc_primary = task.dispatch_services[0]
+                svc_secondary = task.dispatch_services[1 % len(task.dispatch_services)]
+                plan_summary = (
+                    f"Two-agent parallel split across {svc_primary} (Implementation) "
+                    f"and {svc_secondary} (Verification & Audit) with isolated git worktrees."
+                )
+                subtasks = [
+                    SubtaskSpec(
+                        role="Implementation Lead",
+                        service=svc_primary,
+                        objective=(
+                            f"Execute primary implementation for goal: {task.goal}. "
+                            "Work strictly inside your assigned workspace directory and keep changes clean and minimal."
+                        ),
+                        owned_paths=["implementation"],
+                    ),
+                    SubtaskSpec(
+                        role="Verification & Edge-Case Auditor",
+                        service=svc_secondary,
+                        objective=(
+                            f"Independently audit requirements, edge cases, and verification criteria for goal: {task.goal}. "
+                            "Produce concise verification notes or companion test checks without conflicting with primary implementation files."
+                        ),
+                        owned_paths=["verification"],
+                    ),
+                ]
+            return TeamPlanTask(
+                workflow_id=task.workflow_id,
+                project_id=task.project_id,
+                project_name=task.project_name,
+                repo_path=task.repo_path,
+                default_branch=task.default_branch,
+                base_branch=task.base_branch,
+                test_command=task.test_command,
+                goal=task.goal,
+                plan_summary=plan_summary,
+                subtasks=subtasks,
+                planner_generation=gen,
+                session_key=task.session_key,
+                round_num=task.round_num,
+                max_rounds=task.max_rounds,
+                existing_queue_item_id=task.existing_queue_item_id,
+            )
 
         class ContextHarvesterWorker(TaskWorker):
             output_types: List[Type[Task]] = [ProjectContextTask]
@@ -597,6 +880,7 @@ class TeamworkOrchestrator:
                     "ContextHarvesterWorker",
                     "running",
                     f"Inspecting project '{task.project_name}' at {task.repo_path}",
+                    count_visit=True,
                 )
                 repo = Path(task.repo_path)
                 git_summary = "Non-git directory"
@@ -607,7 +891,7 @@ class TeamworkOrchestrator:
                         for p in sorted(repo.iterdir(), key=lambda x: x.name)[:18]
                         if not p.name.startswith(".")
                     ]
-                    git_summary = f"Branch: {task.default_branch} | Top entries: {', '.join(top_files)} | Recent commits: {recent}"
+                    git_summary = f"Branch: {task.base_branch or task.default_branch} | Top entries: {', '.join(top_files)} | Recent commits: {recent}"
 
                 services_info = orchestrator.agent_manager.list_services()
                 ready_services = [
@@ -643,6 +927,7 @@ class TeamworkOrchestrator:
                     project_name=task.project_name,
                     repo_path=task.repo_path,
                     default_branch=task.default_branch,
+                    base_branch=task.base_branch or task.default_branch,
                     test_command=task.test_command,
                     goal=task.goal,
                     git_summary=git_summary,
@@ -650,6 +935,9 @@ class TeamworkOrchestrator:
                     dispatch_services=ready_services,
                     fitness_summary=fitness_summary,
                     session_key=task.session_key,
+                    round_num=task.round_num,
+                    max_rounds=task.max_rounds,
+                    existing_queue_item_id=task.existing_queue_item_id,
                 )
                 self.publish_work(ctx_task, input_task=task)
                 update_graph_state(
@@ -660,7 +948,87 @@ class TeamworkOrchestrator:
                     metrics={"dispatch_services": ready_services},
                 )
 
-        class LeadPlannerWorker(TaskWorker):
+        class PlanAILeadPlannerLLMWorker(LLMTaskWorker):
+            """Genuine PlanAI `LLMTaskWorker` executing the evolved LeadPlanner prompt."""
+
+            llm_input_type: Type[Task] = ProjectContextTask
+            llm_output_type: Type[Task] = LLMTeamPlanTask
+            output_types: List[Type[Task]] = [TeamPlanTask]
+
+            def pre_process(self, task: Task) -> Optional[Task]:
+                return None
+
+            def format_prompt(self, task: Task) -> str:
+                assert isinstance(task, ProjectContextTask)
+                pv = orchestrator.store.get_active_prompt("lead_planner")
+                template = (
+                    str(pv["prompt_template"])
+                    if pv
+                    else "Decompose goal '{goal}' for {project_name}"
+                )
+                rendered = (
+                    template.replace("{project_name}", task.project_name)
+                    .replace("{repo_path}", task.repo_path)
+                    .replace("{active_rules_block}", task.active_rules_block)
+                    .replace("{services_fitness_block}", task.fitness_summary)
+                    .replace("{goal}", task.goal)
+                    .replace("{git_context}", task.git_summary)
+                )
+                return (
+                    f"{rendered}\n\n"
+                    f"Assign ONLY from dispatch-ready services: {', '.join(task.dispatch_services)}."
+                )
+
+            def extra_validation(self, response: Task, input_task: Task) -> Optional[str]:
+                if isinstance(response, LLMTeamPlanTask) and len(response.subtasks) < 2:
+                    return "LeadPlanner must return at least 2 non-overlapping subtasks."
+                return None
+
+            def _invoke_llm(self, task: Task):
+                assert isinstance(task, ProjectContextTask)
+                update_graph_state(
+                    "LeadPlannerWorker",
+                    "running",
+                    "Decomposing goal via PlanAI LLMTaskWorker",
+                    edge_id="e_ctx_plan",
+                    count_visit=True,
+                )
+                if not task.dispatch_services:
+                    raise PermissionError(
+                        "No dispatch-ready agent services available to execute multi-agent teamwork."
+                    )
+                try:
+                    return super()._invoke_llm(task)
+                except Exception:
+                    self.post_process(response=None, input_task=task)
+
+            def post_process(self, response: Optional[Task], input_task: Task) -> None:
+                assert isinstance(input_task, ProjectContextTask)
+                pv = orchestrator.store.get_active_prompt("lead_planner")
+                gen = int(pv["generation"]) if pv else 1
+                parsed = response if isinstance(response, LLMTeamPlanTask) else None
+                plan_task = _build_team_plan_from_parsed(input_task, parsed, gen)
+                self.publish_work(task=plan_task, input_task=input_task)
+                update_graph_state(
+                    "LeadPlannerWorker",
+                    "succeeded",
+                    f"Planned {len(plan_task.subtasks)} sub-agent roles (Gen v{gen}): "
+                    + ", ".join(f"{s.role}→{s.service}" for s in plan_task.subtasks),
+                    edge_id="e_plan_fanout",
+                    metrics={
+                        "planner_generation": gen,
+                        "subtasks_count": len(plan_task.subtasks),
+                        "llm_worker": "PlanAILeadPlannerLLMWorker",
+                        "assignments": [
+                            {"role": s.role, "service": s.service}
+                            for s in plan_task.subtasks
+                        ],
+                    },
+                )
+
+        class DeterministicLeadPlannerWorker(TaskWorker):
+            """Deterministic PlanAI planner used only when local/cloud LLM is explicitly disabled."""
+
             output_types: List[Type[Task]] = [TeamPlanTask]
 
             def consume_work(self, task: ProjectContextTask) -> None:
@@ -669,116 +1037,29 @@ class TeamworkOrchestrator:
                     "running",
                     "Decomposing goal into parallel sub-agent assignments",
                     edge_id="e_ctx_plan",
+                    count_visit=True,
                 )
                 if not task.dispatch_services:
                     raise PermissionError(
                         "No dispatch-ready agent services available to execute multi-agent teamwork."
                     )
-
                 pv = orchestrator.store.get_active_prompt("lead_planner")
                 gen = int(pv["generation"]) if pv else 1
-                template = (
-                    str(pv["prompt_template"])
-                    if pv
-                    else "Decompose goal '{goal}' for {project_name}"
-                )
-                rendered_prompt = (
-                    template.replace("{project_name}", task.project_name)
-                    .replace("{repo_path}", task.repo_path)
-                    .replace("{active_rules_block}", task.active_rules_block)
-                    .replace("{services_fitness_block}", task.fitness_summary)
-                    .replace("{goal}", task.goal)
-                    .replace("{git_context}", task.git_summary)
-                )
-
-                subtasks: List[SubtaskSpec] = []
-                plan_summary = ""
-                llm = orchestrator.llm_manager.get_llm()
-                if llm is not None:
-                    try:
-                        parsed = llm.generate_pydantic(
-                            prompt_template="{query}",
-                            output_schema=LLMTeamPlanSchema,
-                            system=(
-                                "You are PlanAI LeadPlannerWorker. Decompose the goal into exactly 2 "
-                                "non-overlapping sub-agent assignments using ONLY services from: "
-                                + ", ".join(task.dispatch_services)
-                            ),
-                            query=rendered_prompt,
-                        )
-                        plan_summary = parsed.plan_summary.strip()
-                        for idx, st in enumerate(parsed.subtasks[:3]):
-                            svc = (
-                                st.service
-                                if st.service in task.dispatch_services
-                                else task.dispatch_services[idx % len(task.dispatch_services)]
-                            )
-                            subtasks.append(
-                                SubtaskSpec(
-                                    role=st.role.strip() or f"Specialist-{idx + 1}",
-                                    service=svc,
-                                    objective=st.objective.strip() or task.goal,
-                                    owned_paths=st.owned_paths,
-                                )
-                            )
-                    except Exception:
-                        subtasks = []
-
-                if len(subtasks) < 2:
-                    svc_primary = task.dispatch_services[0]
-                    svc_secondary = task.dispatch_services[
-                        1 % len(task.dispatch_services)
-                    ]
-                    plan_summary = (
-                        f"Two-agent parallel split across {svc_primary} (Implementation) "
-                        f"and {svc_secondary} (Verification & Audit) with isolated git worktrees."
-                    )
-                    subtasks = [
-                        SubtaskSpec(
-                            role="Implementation Lead",
-                            service=svc_primary,
-                            objective=(
-                                f"Execute primary implementation for goal: {task.goal}. "
-                                "Work strictly inside your assigned workspace directory and keep changes clean and minimal."
-                            ),
-                            owned_paths=["implementation"],
-                        ),
-                        SubtaskSpec(
-                            role="Verification & Edge-Case Auditor",
-                            service=svc_secondary,
-                            objective=(
-                                f"Independently audit requirements, edge cases, and verification criteria for goal: {task.goal}. "
-                                "Produce concise verification notes or companion test checks without conflicting with primary implementation files."
-                            ),
-                            owned_paths=["verification"],
-                        ),
-                    ]
-
-                plan_task = TeamPlanTask(
-                    workflow_id=task.workflow_id,
-                    project_id=task.project_id,
-                    project_name=task.project_name,
-                    repo_path=task.repo_path,
-                    default_branch=task.default_branch,
-                    test_command=task.test_command,
-                    goal=task.goal,
-                    plan_summary=plan_summary,
-                    subtasks=subtasks,
-                    planner_generation=gen,
-                    session_key=task.session_key,
-                )
+                plan_task = _build_team_plan_from_parsed(task, None, gen)
                 self.publish_work(plan_task, input_task=task)
                 update_graph_state(
                     "LeadPlannerWorker",
                     "succeeded",
-                    f"Planned {len(subtasks)} sub-agent roles (Gen v{gen}): "
-                    + ", ".join(f"{s.role}→{s.service}" for s in subtasks),
+                    f"Planned {len(plan_task.subtasks)} sub-agent roles (Gen v{gen}): "
+                    + ", ".join(f"{s.role}→{s.service}" for s in plan_task.subtasks),
                     edge_id="e_plan_fanout",
                     metrics={
                         "planner_generation": gen,
-                        "subtasks_count": len(subtasks),
+                        "subtasks_count": len(plan_task.subtasks),
+                        "llm_worker": "DeterministicLeadPlannerWorker",
                         "assignments": [
-                            {"role": s.role, "service": s.service} for s in subtasks
+                            {"role": s.role, "service": s.service}
+                            for s in plan_task.subtasks
                         ],
                     },
                 )
@@ -797,6 +1078,7 @@ class TeamworkOrchestrator:
                                 {
                                     "id": lane_id,
                                     "label": spec.service,
+                                    "kind": "agent",
                                     "worker_class": "MultiAgentDispatchWorker",
                                     "role": spec.role,
                                     "state": "idle",
@@ -810,8 +1092,10 @@ class TeamworkOrchestrator:
                                     "id": f"e_fanout_{lane_id}",
                                     "source": "SubtaskFanOutWorker",
                                     "target": lane_id,
+                                    "label": spec.role,
                                     "task_type": "SubAgentDirectiveTask",
                                     "active": True,
+                                    "is_back_edge": False,
                                 }
                             )
                             edges.append(
@@ -819,8 +1103,10 @@ class TeamworkOrchestrator:
                                     "id": f"e_{lane_id}_join",
                                     "source": lane_id,
                                     "target": "TeamSynthesisJoiner",
+                                    "label": "result",
                                     "task_type": "SubAgentResultTask",
                                     "active": False,
+                                    "is_back_edge": False,
                                 }
                             )
                 update_graph_state(
@@ -828,6 +1114,7 @@ class TeamworkOrchestrator:
                     "running",
                     f"Fanning out {total} parallel SubAgentDirectiveTasks",
                     edge_id="e_plan_fanout",
+                    count_visit=True,
                 )
                 for idx, spec in enumerate(task.subtasks):
                     directive = SubAgentDirectiveTask(
@@ -835,6 +1122,7 @@ class TeamworkOrchestrator:
                         project_id=task.project_id,
                         repo_path=task.repo_path,
                         default_branch=task.default_branch,
+                        base_branch=task.base_branch,
                         test_command=task.test_command,
                         goal=task.goal,
                         plan_summary=task.plan_summary,
@@ -845,6 +1133,9 @@ class TeamworkOrchestrator:
                         objective=spec.objective,
                         owned_paths=spec.owned_paths,
                         session_key=task.session_key,
+                        round_num=task.round_num,
+                        max_rounds=task.max_rounds,
+                        existing_queue_item_id=task.existing_queue_item_id,
                     )
                     self.publish_work(directive, input_task=task)
                 update_graph_state(
@@ -865,12 +1156,13 @@ class TeamworkOrchestrator:
                     "running",
                     f"Running [{task.subtask_index}/{task.total_subtasks}] {task.role} on {task.service}",
                     edge_id="e_fanout_exec",
+                    count_visit=(task.subtask_index == 1),
                 )
                 repo_path = Path(task.repo_path).resolve()
                 wt_dir, branch_name, is_git_wt = orchestrator._prepare_subagent_worktree(
                     repo_path,
-                    task.default_branch,
-                    task.workflow_id,
+                    task.base_branch or task.default_branch,
+                    f"{task.workflow_id}_r{task.round_num}",
                     task.subtask_index,
                     task.service,
                 )
@@ -883,7 +1175,9 @@ class TeamworkOrchestrator:
                         "service": task.service,
                         "role": task.role,
                         "branch": branch_name,
+                        "round": task.round_num,
                     },
+                    count_visit=True,
                 )
                 run_id = f"run_{uuid.uuid4().hex[:10]}"
                 adapter = orchestrator.agent_manager.get_adapter(task.service)
@@ -899,7 +1193,7 @@ class TeamworkOrchestrator:
                     project_id=task.project_id,
                 )
                 full_prompt = (
-                    f"[Teamwork Role: {task.role} ({task.subtask_index}/{task.total_subtasks})]\n"
+                    f"[Teamwork Role: {task.role} ({task.subtask_index}/{task.total_subtasks}) — Round {task.round_num}/{task.max_rounds}]\n"
                     f"Workspace Directory: {wt_dir}\n"
                     f"Overall Goal: {task.goal}\n"
                     f"Your Assigned Objective: {task.objective}\n"
@@ -919,7 +1213,11 @@ class TeamworkOrchestrator:
                         "workflow_id": task.workflow_id,
                         "role": task.role,
                         "state": "running",
-                        "metadata": {"teamwork": True, "subtask_index": task.subtask_index},
+                        "metadata": {
+                            "teamwork": True,
+                            "subtask_index": task.subtask_index,
+                            "round": task.round_num,
+                        },
                     }
                 )
                 orchestrator._on_event("run_started", {"run": run_row})
@@ -963,7 +1261,7 @@ class TeamworkOrchestrator:
                             wt_dir,
                             "commit",
                             "-m",
-                            f"feat({task.service}): {task.role} for {task.workflow_id}",
+                            f"feat({task.service},r{task.round_num}): {task.role} for {task.workflow_id}",
                         )
                         commit_sha = orchestrator._git(
                             wt_dir, "rev-parse", "HEAD"
@@ -988,6 +1286,7 @@ class TeamworkOrchestrator:
                         "commit_sha": commit_sha,
                         "changed_files": changed_files,
                         "duration_s": res.duration_s,
+                        "round": task.round_num,
                     },
                     finished_at=time.time(),
                 )
@@ -1017,6 +1316,7 @@ class TeamworkOrchestrator:
                     project_id=task.project_id,
                     repo_path=task.repo_path,
                     default_branch=task.default_branch,
+                    base_branch=task.base_branch,
                     test_command=task.test_command,
                     goal=task.goal,
                     plan_summary=task.plan_summary,
@@ -1031,6 +1331,9 @@ class TeamworkOrchestrator:
                     response_text=res.response_text,
                     duration_s=res.duration_s,
                     session_key=task.session_key,
+                    round_num=task.round_num,
+                    max_rounds=task.max_rounds,
+                    existing_queue_item_id=task.existing_queue_item_id,
                 )
                 self.publish_work(out_task, input_task=task)
                 update_graph_state(
@@ -1051,6 +1354,7 @@ class TeamworkOrchestrator:
                     "running",
                     f"Joined {len(tasks)} parallel sub-agent results via ProvenanceChain",
                     edge_id="e_exec_join",
+                    count_visit=True,
                 )
                 first = tasks[0]
                 repo_path = Path(first.repo_path).resolve()
@@ -1061,14 +1365,19 @@ class TeamworkOrchestrator:
                 merge_conflicts: List[str] = []
                 all_changed: List[str] = []
 
+                start_base = first.base_branch or first.default_branch
                 if committed_tasks and (repo_path / ".git").exists():
-                    wt_int = (orchestrator.worktrees_root / first.workflow_id / "integrated").resolve()
+                    wt_int = (
+                        orchestrator.worktrees_root
+                        / f"{first.workflow_id}_r{first.round_num}"
+                        / "integrated"
+                    ).resolve()
                     wt_int.parent.mkdir(parents=True, exist_ok=True)
                     integrated_branch = f"team/{first.workflow_id[-8:]}/integrated"
                     ref_check = orchestrator._git(
-                        repo_path, "rev-parse", "--verify", first.default_branch
+                        repo_path, "rev-parse", "--verify", start_base
                     )
-                    start_ref = first.default_branch if ref_check.returncode == 0 else "HEAD"
+                    start_ref = start_base if ref_check.returncode == 0 else "HEAD"
                     add_wt = orchestrator._git(
                         repo_path,
                         "worktree",
@@ -1098,6 +1407,12 @@ class TeamworkOrchestrator:
                                 )
                             else:
                                 all_changed.extend(ct.changed_files)
+                        diff_all = orchestrator._git(
+                            wt_int, "diff", "--name-only", f"{first.default_branch}..HEAD"
+                        ).stdout
+                        for fn in diff_all.splitlines():
+                            if fn.strip():
+                                all_changed.append(fn.strip())
                         integrated_commit = orchestrator._git(
                             wt_int, "rev-parse", "HEAD"
                         ).stdout.strip()
@@ -1108,6 +1423,7 @@ class TeamworkOrchestrator:
                     project_id=first.project_id,
                     repo_path=first.repo_path,
                     default_branch=first.default_branch,
+                    base_branch=first.base_branch,
                     test_command=first.test_command,
                     goal=first.goal,
                     plan_summary=first.plan_summary,
@@ -1118,6 +1434,9 @@ class TeamworkOrchestrator:
                     changed_files=sorted(set(all_changed)),
                     subagent_results=tasks,
                     session_key=first.session_key,
+                    round_num=first.round_num,
+                    max_rounds=first.max_rounds,
+                    existing_queue_item_id=first.existing_queue_item_id,
                 )
                 self.publish_work(joined_task, input_task=first)
                 update_graph_state(
@@ -1142,6 +1461,7 @@ class TeamworkOrchestrator:
                     "running",
                     "Running project test_command + Law-2 reality & secret scans",
                     edge_id="e_join_gate",
+                    count_visit=True,
                 )
                 repo_path = Path(task.repo_path).resolve()
                 wt_path = Path(task.integrated_worktree) if task.integrated_worktree else None
@@ -1192,7 +1512,7 @@ class TeamworkOrchestrator:
                         wt_path, "diff", f"{task.default_branch}..HEAD"
                     ).stdout
 
-                reality_scan, secret_scan = orchestrator._reality_and_secret_scan(diff_text)
+                reality_scan, secret_scan = run_reality_and_secret_scan(diff_text)
                 if wt_path and wt_path.exists():
                     orchestrator._cleanup_worktree(repo_path, wt_path)
 
@@ -1210,6 +1530,7 @@ class TeamworkOrchestrator:
                     project_id=task.project_id,
                     repo_path=task.repo_path,
                     default_branch=task.default_branch,
+                    base_branch=task.base_branch,
                     test_command=task.test_command,
                     goal=task.goal,
                     plan_summary=task.plan_summary,
@@ -1223,6 +1544,9 @@ class TeamworkOrchestrator:
                     gate_passed=gate_passed,
                     subagent_results=task.subagent_results,
                     session_key=task.session_key,
+                    round_num=task.round_num,
+                    max_rounds=task.max_rounds,
+                    existing_queue_item_id=task.existing_queue_item_id,
                 )
                 self.publish_work(verified, input_task=task)
                 update_graph_state(
@@ -1245,13 +1569,14 @@ class TeamworkOrchestrator:
                 update_graph_state(
                     "ChiefEscalationSink",
                     "running",
-                    "Creating project-scoped Chief ReviewItem & recording Evolution telemetry",
+                    "Preparing Chief ReviewItem & recording Evolution telemetry",
                     edge_id="e_gate_sink",
+                    count_visit=True,
                 )
                 services_used = sorted({r.service for r in task.subagent_results})
                 source_label = "team:" + "+".join(services_used)
                 sections = [
-                    f"### PlanAI Multi-Agent Teamwork Summary (`{task.workflow_id}`)",
+                    f"### PlanAI Multi-Agent Teamwork Summary (`{task.workflow_id}`, Round {task.round_num}/{task.max_rounds})",
                     f"**Plan:** {task.plan_summary}",
                     "",
                     "#### Sub-Agent Outcomes",
@@ -1271,33 +1596,60 @@ class TeamworkOrchestrator:
                     )
 
                 has_code = bool(task.changed_files and task.integrated_branch)
-                item = orchestrator.store.create_item(
-                    {
-                        "source_agent": source_label,
-                        "kind": "code_change" if has_code else "task",
-                        "title": f"[{proj['name']}] Team: {task.goal[:64]}",
-                        "body": redact_secrets("\n".join(sections)),
-                        "repo_path": task.repo_path if has_code else "",
-                        "branch": task.integrated_branch if has_code else "",
-                        "target_branch": task.default_branch,
-                        "test_command": task.test_command if has_code else "",
-                        "priority": 45 if task.gate_passed else 70,
-                        "project_id": task.project_id,
-                        "workflow_id": task.workflow_id,
-                    }
-                )
-                orchestrator.store.update_item(
-                    item["id"],
-                    result={
-                        "workflow_id": task.workflow_id,
-                        "subagent_runs": [r.run_id for r in task.subagent_results],
-                        "reality_scan": task.reality_scan,
-                        "secret_scan": task.secret_scan,
-                        "gate_test": task.test_report,
-                        "changed_files": task.changed_files,
-                    },
-                )
-                refreshed_item = orchestrator.store.get_item(item["id"]) or item
+                item_result_payload: Dict[str, Any] = {
+                    "workflow_id": task.workflow_id,
+                    "round": task.round_num,
+                    "branch_commit": task.integrated_commit,
+                    "subagent_runs": [r.run_id for r in task.subagent_results],
+                    "reality_scan": task.reality_scan,
+                    "secret_scan": task.secret_scan,
+                    "gate_test": task.test_report,
+                    "changed_files": task.changed_files,
+                }
+                if task.test_report.get("configured"):
+                    item_result_payload["test"] = task.test_report
+
+                if task.existing_queue_item_id and orchestrator.store.get_item(
+                    task.existing_queue_item_id
+                ):
+                    existing = orchestrator.store.get_item(task.existing_queue_item_id) or {}
+                    merged_res = {**dict(existing.get("result") or {}), **item_result_payload}
+                    refreshed_item = (
+                        orchestrator.store.update_item(
+                            task.existing_queue_item_id,
+                            status="needs_review",
+                            branch=task.integrated_branch
+                            if has_code
+                            else existing.get("branch", ""),
+                            body=redact_secrets("\n".join(sections)),
+                            result=merged_res,
+                        )
+                        or existing
+                    )
+                    orchestrator.store.add_event(
+                        task.existing_queue_item_id,
+                        "revision_ready",
+                        f"Teamwork round {task.round_num} completed on {task.integrated_branch}.",
+                    )
+                else:
+                    item = orchestrator.store.create_item(
+                        {
+                            "source_agent": source_label,
+                            "kind": "code_change" if has_code else "task",
+                            "title": f"[{proj['name']}] Team: {task.goal.splitlines()[0][:64]}",
+                            "body": redact_secrets("\n".join(sections)),
+                            "repo_path": task.repo_path if has_code else "",
+                            "branch": task.integrated_branch if has_code else "",
+                            "target_branch": task.default_branch,
+                            "test_command": task.test_command if has_code else "",
+                            "priority": 45 if task.gate_passed else 70,
+                            "project_id": task.project_id,
+                            "workflow_id": task.workflow_id,
+                        }
+                    )
+                    orchestrator.store.update_item(item["id"], result=item_result_payload)
+                    refreshed_item = orchestrator.store.get_item(item["id"]) or item
+
                 orchestrator._on_event("queue_item_created", {"item": refreshed_item})
 
                 if task.gate_passed:
@@ -1322,6 +1674,9 @@ class TeamworkOrchestrator:
                     {
                         "queue_item_id": refreshed_item["id"],
                         "gate_passed": task.gate_passed,
+                        "test_report": task.test_report,
+                        "reality_scan": task.reality_scan,
+                        "secret_scan": task.secret_scan,
                         "services_used": services_used,
                         "subagent_runs": [
                             {
@@ -1336,22 +1691,37 @@ class TeamworkOrchestrator:
                         ],
                         "changed_files": task.changed_files,
                         "integrated_branch": task.integrated_branch,
+                        "commit_sha": task.integrated_commit,
+                        "repo_path": task.repo_path,
+                        "target_branch": task.default_branch,
                         "summary_markdown": "\n".join(sections)
-                        + f"\n\nQueued for Chief review as `{refreshed_item['id']}`.",
+                        + f"\n\nPaused at Human Gate (`{refreshed_item['id']}`).",
                     }
                 )
                 update_graph_state(
                     "ChiefEscalationSink",
-                    "succeeded",
-                    f"Queued ReviewItem {refreshed_item['id']} ({len(task.subagent_results)} sub-agents)",
-                    metrics={"queue_item_id": refreshed_item["id"]},
+                    "waiting_gate",
+                    f"Awaiting Human Gate decision on {refreshed_item['id']} ({len(task.subagent_results)} sub-agents)",
+                    metrics={"queue_item_id": refreshed_item["id"], "round": task.round_num},
                 )
 
         try:
-            # Build Inner Planning SubGraph
+            # Build Inner Planning SubGraph using genuine PlanAI LLMTaskWorker when LLM is active
             plan_graph = Graph(name="LeadPlanningSubGraph")
             harvester = ContextHarvesterWorker()
-            planner = LeadPlannerWorker()
+            active_llm = self.llm_manager.get_llm()
+            if active_llm is not None:
+                planner: TaskWorker = PlanAILeadPlannerLLMWorker(
+                    llm=active_llm,
+                    prompt="Decompose goal into disjoint multi-agent roles.",
+                    system_prompt=(
+                        "You are PlanAI LeadPlannerWorker. Decompose the goal into 2 to 3 "
+                        "non-overlapping sub-agent assignments with disjoint file scopes."
+                    ),
+                )
+            else:
+                planner = DeterministicLeadPlannerWorker()
+
             plan_graph.add_workers(harvester, planner)
             plan_graph.set_dependency(harvester, planner)
             plan_graph.set_entry(harvester)
@@ -1383,25 +1753,35 @@ class TeamworkOrchestrator:
                 project_name=proj["name"],
                 repo_path=proj["repo_path"],
                 default_branch=proj["default_branch"],
+                base_branch=base_branch or proj["default_branch"],
                 test_command=proj.get("test_command") or "",
                 goal=goal,
                 preferred_services=preferred_services,
                 session_key=session_key,
+                round_num=round_num,
+                max_rounds=max_rounds,
+                existing_queue_item_id=existing_queue_item_id,
             )
             team_graph.run(
                 initial_tasks=[(planning_subgraph, goal_task)], display_terminal=False
             )
 
             outcome = final_outcomes[0] if final_outcomes else {"gate_passed": False}
+            with state_lock:
+                result_meta.update(outcome)
+                result_meta["visit_counts"] = dict(visit_counts)
+                result_meta["round"] = round_num
+                result_meta["max_rounds"] = max_rounds
+                result_meta["current_state"] = "ChiefEscalationSink"
             for e in edges:
                 e["active"] = False
             wf_final = self.store.update_workflow(
                 wf_id,
-                state="succeeded" if outcome.get("gate_passed", True) else "failed",
+                state="waiting_gate" if outcome.get("queue_item_id") else "failed",
                 nodes=nodes,
                 edges=edges,
-                result=outcome,
-                finished_at=time.time(),
+                result=result_meta,
+                finished_at=None if outcome.get("queue_item_id") else time.time(),
             )
             if wf_final:
                 self._on_event("planai_workflow_updated", {"workflow": wf_final})
@@ -1416,6 +1796,7 @@ class TeamworkOrchestrator:
                         "queueItemId": outcome.get("queue_item_id"),
                         "services": outcome.get("services_used"),
                         "subagentRuns": outcome.get("subagent_runs"),
+                        "round": round_num,
                     },
                     is_error=not bool(outcome.get("gate_passed", True)),
                 )
@@ -1431,12 +1812,22 @@ class TeamworkOrchestrator:
         except Exception as exc:
             for e in edges:
                 e["active"] = False
+            for n in nodes:
+                if n["id"] == "AbortedTerminal":
+                    n["state"] = "failed"
+            with state_lock:
+                visit_counts["AbortedTerminal"] = (
+                    int(visit_counts.get("AbortedTerminal") or 0) + 1
+                )
+                result_meta["error"] = str(exc)
+                result_meta["visit_counts"] = dict(visit_counts)
+                result_meta["current_state"] = "AbortedTerminal"
             wf_err = self.store.update_workflow(
                 wf_id,
                 state="failed",
                 nodes=nodes,
                 edges=edges,
-                result={"error": str(exc)},
+                result=result_meta,
                 finished_at=time.time(),
             )
             if wf_err:
@@ -1459,4 +1850,5 @@ class TeamworkOrchestrator:
                     },
                 )
         finally:
+            shutil.rmtree(self.worktrees_root / f"{wf_id}_r{round_num}", ignore_errors=True)
             shutil.rmtree(self.worktrees_root / wf_id, ignore_errors=True)

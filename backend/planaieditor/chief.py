@@ -48,11 +48,13 @@ class ChiefOfStaff:
         root_path: Path,
         emit: Optional[Callable[[Dict[str, Any]], None]] = None,
         llm_manager: Optional[PlanAILLMManager] = None,
+        on_event: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ):
         self.store = store
         self.root_path = Path(root_path).resolve()
         self.evidence_root = self.root_path / ".planai-queue" / "evidence"
         self._emit = emit or (lambda item: None)
+        self._on_event = on_event
         self._llm_manager = llm_manager
         self._llm = None
         self._base_llm_status = "not configured (set CHIEF_LLM_PROVIDER and CHIEF_LLM_MODEL)"
@@ -313,9 +315,20 @@ class ChiefOfStaff:
         )
 
     def _land(self, item: Dict[str, Any]) -> None:
+        from planaieditor.single_workflow_graph import transition_workflow_gate
+
+        wf_id = str(item.get("workflow_id") or "").strip()
         if item["kind"] != "code_change":
             self.store.update_item(item["id"], status="done")
             self.store.add_event(item["id"], "done", "Approved non-code item closed by chief.")
+            if wf_id:
+                transition_workflow_gate(
+                    self.store,
+                    wf_id,
+                    terminal="done",
+                    summary="Approved task closed cleanly by Chief of Staff",
+                    on_event=self._on_event,
+                )
             return
         repo = self._repo_allowed(item["repo_path"])
         if repo is None:
@@ -348,7 +361,14 @@ class ChiefOfStaff:
                 )
                 return
         status = self._git(repo, "status", "--porcelain")
-        if status.stdout.strip():
+        dirty_lines = [
+            ln
+            for ln in status.stdout.splitlines()
+            if ln.strip()
+            and not ln.strip().endswith(".planai-queue/")
+            and not ln.strip().endswith(".response_cache/")
+        ]
+        if dirty_lines:
             self.store.update_item(item["id"], status="failed")
             self.store.add_event(
                 item["id"], "landing_failed", "Target repo working tree is dirty; refusing to merge."
@@ -377,62 +397,17 @@ class ChiefOfStaff:
         result["target_branch"] = target
         self.store.update_item(item["id"], status="landed", result=result)
         self.store.add_event(item["id"], "landed", f"Merged {item['branch']} into {target} at {head}")
-        self._sync_single_workflow(
-            item,
-            verify_state="succeeded",
-            review_state="succeeded",
-            wf_state="succeeded",
-            summary=f"Merged {item['branch']} into {target} ({head[:10]})",
-            node_id="ChiefReviewSink",
-        )
+        if wf_id:
+            transition_workflow_gate(
+                self.store,
+                wf_id,
+                terminal="done",
+                summary=f"Merged {item['branch']} into {target} ({head[:10]})",
+                merged_commit=head,
+                on_event=self._on_event,
+            )
 
     # ---- main loop ---------------------------------------------------------
-
-    def _sync_single_workflow(
-        self,
-        item: Dict[str, Any],
-        *,
-        verify_state: Optional[str] = None,
-        review_state: Optional[str] = None,
-        wf_state: Optional[str] = None,
-        summary: str = "",
-        node_id: str = "VerificationGate",
-    ) -> None:
-        wf_id = str(item.get("workflow_id") or "").strip()
-        if not wf_id:
-            return
-        wf = self.store.get_workflow(wf_id)
-        if not wf or wf.get("graph_type") != "single":
-            return
-        nodes = list(wf.get("nodes") or [])
-        edges = list(wf.get("edges") or [])
-        events = list(wf.get("events") or [])
-        for n in nodes:
-            if n.get("id") == "VerificationGate" and verify_state:
-                n["state"] = verify_state
-            elif n.get("id") == "ChiefReviewSink" and review_state:
-                n["state"] = review_state
-        for e in edges:
-            e["active"] = (
-                e.get("id") == "e_verify_review" and review_state == "running"
-            )
-        if summary:
-            events.append(
-                {
-                    "ts": time.time(),
-                    "node_id": node_id,
-                    "state": review_state or verify_state or "succeeded",
-                    "summary": summary,
-                }
-            )
-        self.store.update_workflow(
-            wf_id,
-            state=wf_state or wf.get("state") or "running",
-            nodes=nodes,
-            edges=edges,
-            events=events,
-            finished_at=time.time() if wf_state in ("succeeded", "failed") else None,
-        )
 
     def _transition(self, item: Dict[str, Any], **fields: Any) -> Dict[str, Any]:
         updated = self.store.update_item(item["id"], **fields)
@@ -440,6 +415,8 @@ class ChiefOfStaff:
         return updated
 
     def process_once(self) -> None:
+        from planaieditor.single_workflow_graph import transition_workflow_gate
+
         self.last_tick_at = time.time()
         for item in self.store.list_items(status="queued"):
             triage: Optional[Dict[str, Any]] = None
@@ -462,7 +439,10 @@ class ChiefOfStaff:
         for item in self.store.list_items(status="triaged"):
             self._transition(item, status="in_progress")
             result = dict(item.get("result") or {})
-            if item["kind"] == "code_change" and item.get("test_command") and item.get("repo_path"):
+            gate_test = result.get("gate_test")
+            if isinstance(gate_test, dict) and gate_test.get("configured"):
+                result["test"] = gate_test
+            elif item["kind"] == "code_change" and item.get("test_command") and item.get("repo_path"):
                 repo = Path(item["repo_path"]).resolve()
                 if repo.exists():
                     result["test"] = (
@@ -485,19 +465,20 @@ class ChiefOfStaff:
                 fields["evidence"] = evidence
             self._transition(item, **fields)
             self.store.add_event(item["id"], "needs_review", "Review bundle ready for operator.")
-            test_ok = bool((result.get("test") or {}).get("passed", True))
-            self._sync_single_workflow(
-                item,
-                verify_state="succeeded" if test_ok else "failed",
-                review_state="running",
-                wf_state="running",
-                summary=(
-                    f"Tests {'passed' if test_ok else 'failed'}; waiting for review"
-                ),
-                node_id="VerificationGate",
-            )
+            wf_id = str(item.get("workflow_id") or "").strip()
+            if wf_id:
+                transition_workflow_gate(
+                    self.store,
+                    wf_id,
+                    terminal="waiting_gate",
+                    on_event=self._on_event,
+                )
 
         for item in self.store.list_items(status="changes_requested"):
+            # Workflow-backed revisions are re-dispatched directly onto their PlanAI graph;
+            # standalone queue items requeue with the operator note attached.
+            if item.get("workflow_id"):
+                continue
             decisions = self.store.list_decisions(item["id"])
             last_note = decisions[-1]["note"] if decisions else ""
             body = (item["body"] or "") + f"\n\n[Operator requested changes] {last_note}"

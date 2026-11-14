@@ -7,6 +7,7 @@ import os
 import queue
 import threading
 from pathlib import Path
+import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
 from flask import (
@@ -18,11 +19,12 @@ from flask import (
     stream_with_context,
 )
 
-from planaieditor.agent_adapters import AgentRunManager
+from planaieditor.agent_adapters import AgentRunManager, redact_secrets
 from planaieditor.chief import ChiefOfStaff
 from planaieditor.evolution_engine import EvolutionEngine
 from planaieditor.planai_llm_core import PlanAILLMManager
 from planaieditor.queue_store import KINDS, QueueStore
+from planaieditor.single_workflow_graph import transition_workflow_gate
 from planaieditor.teamwork_graph import TeamworkOrchestrator, workflow_to_svelteflow
 
 _DECISION_TO_STATUS = {
@@ -157,7 +159,13 @@ def setup_queue(
         evolution_engine=evolution_engine,
         on_event=on_system_event,
     )
-    chief = ChiefOfStaff(store, root_path, emit=emit_update, llm_manager=llm_manager)
+    chief = ChiefOfStaff(
+        store,
+        root_path,
+        emit=emit_update,
+        llm_manager=llm_manager,
+        on_event=on_system_event,
+    )
 
     app.config["QUEUE_STORE"] = store
     app.config["CHIEF"] = chief
@@ -302,6 +310,244 @@ def setup_queue(
         if not wf:
             return jsonify({"success": False, "error": "Workflow not found"}), 404
         return jsonify({"success": True, **workflow_to_svelteflow(wf)})
+
+    @app.route("/api/planai/workflows/<wf_id>/detail", methods=["GET"])
+    def planai_workflow_detail(wf_id: str):
+        wf = store.get_workflow(wf_id)
+        if not wf:
+            return jsonify({"success": False, "error": "Workflow not found"}), 404
+        wf_res = dict(wf.get("result") or {})
+        q_id = str(wf.get("queue_item_id") or wf_res.get("queue_item_id") or "").strip()
+        item = store.get_item(q_id) if q_id else None
+        decisions = store.list_decisions(q_id) if q_id else []
+        item_res = dict((item or {}).get("result") or {})
+
+        repo_raw = str(
+            (item or {}).get("repo_path") or wf_res.get("repo_path") or ""
+        ).strip()
+        branch = str(
+            (item or {}).get("branch")
+            or wf_res.get("integrated_branch")
+            or wf_res.get("branch")
+            or ""
+        ).strip()
+        target_branch = str(
+            (item or {}).get("target_branch") or wf_res.get("target_branch") or "main"
+        ).strip()
+
+        diff_text = ""
+        changed_files: List[str] = list(
+            item_res.get("changed_files") or wf_res.get("changed_files") or []
+        )
+        if repo_raw and branch and branch != target_branch:
+            repo_path = Path(repo_raw).resolve()
+            if (repo_path / ".git").exists() and store.is_repo_allowed(repo_path, root_path):
+                try:
+                    merged_sha = str(item_res.get("merged_commit") or wf_res.get("merged_commit") or "").strip()
+                    diff_spec = (
+                        f"{merged_sha}^1..{merged_sha}"
+                        if merged_sha
+                        else f"{target_branch}..{branch}"
+                    )
+                    diff_proc = subprocess.run(
+                        ["git", "-C", str(repo_path), "diff", diff_spec],
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                    )
+                    if diff_proc.returncode == 0:
+                        diff_text = redact_secrets(diff_proc.stdout[:60000])
+                    if not changed_files:
+                        names_proc = subprocess.run(
+                            ["git", "-C", str(repo_path), "diff", "--name-only", diff_spec],
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                        )
+                        if names_proc.returncode == 0:
+                            changed_files = [
+                                f.strip() for f in names_proc.stdout.splitlines() if f.strip()
+                            ]
+                except Exception:
+                    pass
+
+        test_report = (
+            item_res.get("landing_test")
+            or item_res.get("test")
+            or item_res.get("gate_test")
+            or wf_res.get("test_report")
+            or {}
+        )
+        reality_scan = item_res.get("reality_scan") or wf_res.get("reality_scan") or {}
+        secret_scan = item_res.get("secret_scan") or wf_res.get("secret_scan") or {}
+
+        return jsonify(
+            {
+                "success": True,
+                "workflow": wf,
+                "item": item,
+                "decisions": decisions,
+                "changed_files": changed_files,
+                "diff_text": diff_text,
+                "test_report": test_report,
+                "reality_scan": reality_scan,
+                "secret_scan": secret_scan,
+            }
+        )
+
+    @app.route("/api/planai/workflows/<wf_id>/gate", methods=["POST"])
+    def planai_workflow_gate(wf_id: str):
+        wf = store.get_workflow(wf_id)
+        if not wf:
+            return jsonify({"success": False, "error": "Workflow not found"}), 404
+
+        data = request.get_json(silent=True) or {}
+        gate_event = str(data.get("event") or "").strip().upper()
+        note = str(data.get("note") or data.get("prompt") or "").strip()
+        actor = str(data.get("actor") or "human").strip() or "human"
+
+        if gate_event not in {"APPROVE", "FORCE_REVISION", "ABORT"}:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "event must be one of ['ABORT', 'APPROVE', 'FORCE_REVISION']",
+                    }
+                ),
+                400,
+            )
+
+        q_id = str(wf.get("queue_item_id") or "").strip()
+        item = store.get_item(q_id) if q_id else None
+        if item and item["status"] in {"queued", "triaged", "in_progress"}:
+            chief.process_once()
+            item = store.get_item(q_id)
+
+        if item is None:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": f"Workflow '{wf_id}' has no active review item at gate.",
+                    }
+                ),
+                409,
+            )
+
+        if gate_event == "APPROVE":
+            if item["status"] != "needs_review":
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": f"Cannot APPROVE item in status '{item['status']}'",
+                        }
+                    ),
+                    409,
+                )
+            decision = store.add_decision(item["id"], "approve", note=note, actor=actor)
+            approved = store.update_item(item["id"], status="approved")
+            if approved:
+                evolution_engine.observe_decision(approved, decision)
+                emit_update(approved)
+            chief.process_once()
+            final_item = store.get_item(item["id"])
+            final_wf = store.get_workflow(wf_id)
+            return jsonify(
+                {
+                    "success": True,
+                    "event": "APPROVE",
+                    "workflow": final_wf,
+                    "item": final_item,
+                }
+            )
+
+        if gate_event == "FORCE_REVISION":
+            if not note:
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": "Revision feedback note is required for FORCE_REVISION.",
+                        }
+                    ),
+                    400,
+                )
+            if item["status"] != "needs_review":
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": f"Cannot FORCE_REVISION when item status is '{item['status']}'",
+                        }
+                    ),
+                    409,
+                )
+            decision = store.add_decision(
+                item["id"], "request_changes", note=note, actor=actor
+            )
+            bounced = store.update_item(item["id"], status="changes_requested")
+            if bounced:
+                evolution_engine.observe_decision(bounced, decision)
+                emit_update(bounced)
+            try:
+                if wf.get("graph_type") == "teamwork":
+                    teamwork_orchestrator.resume_revision_async(
+                        wf_id=wf_id, item=bounced or item, revision_note=note
+                    )
+                else:
+                    agent_manager.resume_revision_async(
+                        wf_id=wf_id, item=bounced or item, revision_note=note
+                    )
+            except (PermissionError, ValueError) as exc:
+                store.update_item(item["id"], status="needs_review")
+                return jsonify({"success": False, "error": str(exc)}), 409
+
+            return jsonify(
+                {
+                    "success": True,
+                    "event": "FORCE_REVISION",
+                    "workflow": store.get_workflow(wf_id),
+                    "item": store.get_item(item["id"]),
+                }
+            )
+
+        # ABORT
+        if item["status"] not in {"needs_review", "queued", "triaged", "in_progress"}:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": f"Cannot ABORT item in status '{item['status']}'",
+                    }
+                ),
+                409,
+            )
+        decision = store.add_decision(
+            item["id"],
+            "reject",
+            note=note or "Aborted at human gate",
+            actor=actor,
+        )
+        rejected = store.update_item(item["id"], status="rejected")
+        if rejected:
+            evolution_engine.observe_decision(rejected, decision)
+            emit_update(rejected)
+        aborted_wf = transition_workflow_gate(
+            store,
+            wf_id,
+            terminal="aborted",
+            summary=f"Aborted at Human Gate{f': {note[:80]}' if note else ''}",
+            on_event=on_system_event,
+        )
+        return jsonify(
+            {
+                "success": True,
+                "event": "ABORT",
+                "workflow": aborted_wf or store.get_workflow(wf_id),
+                "item": rejected,
+            }
+        )
 
     @app.route("/api/planai/teamwork", methods=["POST"])
     def planai_start_teamwork():
@@ -464,15 +710,47 @@ def setup_queue(
                 ),
                 409,
             )
+        note_text = str(data.get("note") or "").strip()
         decision = store.add_decision(
             item_id,
             action,
-            note=data.get("note", ""),
+            note=note_text,
             actor=data.get("actor", "human"),
         )
         updated = store.update_item(item_id, status=_DECISION_TO_STATUS[action])
         if updated:
             evolution_engine.observe_decision(updated, decision)
+            linked_wf_id = str(updated.get("workflow_id") or "").strip()
+            if linked_wf_id:
+                if action == "reject":
+                    transition_workflow_gate(
+                        store,
+                        linked_wf_id,
+                        terminal="aborted",
+                        summary=f"Rejected in review{f': {note_text[:80]}' if note_text else ''}",
+                        on_event=on_system_event,
+                    )
+                elif action == "request_changes" and note_text:
+                    linked_wf = store.get_workflow(linked_wf_id)
+                    if linked_wf and int(linked_wf.get("round") or 1) < int(
+                        linked_wf.get("max_rounds") or 3
+                    ):
+                        try:
+                            if linked_wf.get("graph_type") == "teamwork":
+                                teamwork_orchestrator.resume_revision_async(
+                                    wf_id=linked_wf_id,
+                                    item=updated,
+                                    revision_note=note_text,
+                                )
+                            elif linked_wf.get("graph_type") == "single":
+                                agent_manager.resume_revision_async(
+                                    wf_id=linked_wf_id,
+                                    item=updated,
+                                    revision_note=note_text,
+                                )
+                            updated = store.get_item(item_id) or updated
+                        except Exception:
+                            pass
         emit_update(updated)
         return jsonify({"success": True, "item": updated})
 
@@ -594,10 +872,6 @@ def setup_queue(
         project_id = str(data.get("project_id") or "").strip()
         cwd_raw = str(data.get("cwd") or "").strip()
         cwd_path: Optional[Path] = None
-        if not cwd_raw and project_id:
-            proj = store.get_project(project_id)
-            if proj:
-                cwd_raw = proj["repo_path"]
         if cwd_raw:
             candidate = Path(cwd_raw).resolve()
             if not store.is_repo_allowed(candidate, root_path):

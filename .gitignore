@@ -1,5 +1,6 @@
 .DS_Store
 .planai-queue/
+.response_cache/
 webclaw/**/node_modules/
 webclaw/**/dist/
 webclaw/**/.tanstack/
