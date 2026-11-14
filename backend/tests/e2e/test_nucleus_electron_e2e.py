@@ -154,7 +154,7 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                     wb_frame.locator('[data-testid="planai-dag-canvas"]')
                 ).to_be_visible(timeout=20000)
                 expect(
-                    wb_frame.locator('[data-testid="composer-routing-bar"]')
+                    wb_frame.locator('[data-testid="composer-mode-toggle"]')
                 ).to_be_visible(timeout=20000)
                 _save_shot(window, "nucleus_macos_split_view.png")
 
