@@ -249,6 +249,17 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
             ).to_be_visible()
             expect(
                 page.locator(
+                    '[data-testid="planai-node-CriticWorker"][data-node-kind="agent"]'
+                )
+            ).to_be_visible()
+            expect(
+                page.locator('[data-testid="planai-edge-e_gate_critic"]')
+            ).to_be_visible()
+            expect(
+                page.locator('[data-testid="planai-edge-e_critic_sink"]')
+            ).to_be_visible()
+            expect(
+                page.locator(
                     '[data-testid="planai-node-ChiefEscalationSink"][data-node-kind="human_gate"]'
                 )
             ).to_be_visible()
@@ -510,14 +521,46 @@ def test_webclaw_live_start_demo_through_chief_approval(page: Page):
             "Allowed · severity 0", timeout=10000
         )
         expect(page.locator('[data-testid="gate-trajectory-summary"]')).to_contain_text(
-            "recorded steps", timeout=10000
+            "3 recorded steps", timeout=10000
+        )
+        # Interactive Trajectory step inspection, revert_preview, and persisted revert_to_step
+        page.locator('[data-testid="gate-trajectory-toggle"]').click()
+        expect(page.locator('[data-testid="gate-trajectory-list"]')).to_be_visible()
+        expect(page.locator('[data-testid="trajectory-step-0"]')).to_be_visible()
+        expect(page.locator('[data-testid="trajectory-step-1"]')).to_be_visible()
+        expect(page.locator('[data-testid="trajectory-step-2"]')).to_be_visible()
+
+        with page.expect_response(
+            lambda r: "/trajectory/revert" in r.url and r.request.method == "POST",
+            timeout=15000,
+        ) as prev_resp:
+            page.locator('[data-testid="trajectory-preview-btn-1"]').click()
+        assert prev_resp.value.ok, prev_resp.value.text()
+        expect(page.locator('[data-testid="trajectory-revert-preview"]')).to_contain_text(
+            "Revert to #1: drops 1 step(s)"
         )
         _maybe_screenshot(page, "web_phase2_gate_policy_guardian.png")
+
+        with page.expect_response(
+            lambda r: "/trajectory/revert" in r.url and r.request.method == "POST",
+            timeout=15000,
+        ) as exec_rev_resp:
+            page.locator('[data-testid="trajectory-confirm-revert-btn"]').click()
+        assert exec_rev_resp.value.ok, exec_rev_resp.value.text()
+        expect(page.locator('[data-testid="gate-trajectory-summary"]')).to_contain_text(
+            "2 recorded steps", timeout=10000
+        )
+        expect(page.locator('[data-testid="trajectory-step-2"]')).to_have_count(0)
+
         page.locator('[data-testid="gate-tab-diff"]').click()
         _maybe_screenshot(page, "web_ironcurtain_gate_review_panel.png")
 
         # Exercise bounded cyclic FORCE_REVISION directly from GateReviewPanel -> Round 2 (x2 badges)
         page.locator('[data-testid="gate-revision-toggle"]').click()
+        expect(page.locator('[data-testid="gate-revision-reset-branch"]')).to_be_visible()
+        expect(
+            page.locator('[data-testid="gate-revision-reset-branch"]')
+        ).not_to_be_checked()
         rev_input = page.locator('[data-testid="gate-revision-input"]')
         expect(rev_input).to_be_visible()
         rev_input.fill(

@@ -165,6 +165,13 @@ def test_nucleus_macos_shell_and_in_process_apple_foundation_models():
                         '[data-testid="planai-node-DoneTerminal"][data-node-kind="terminal"]'
                     )
                 ).to_be_visible(timeout=20000)
+                wb_frame.locator('[data-testid="mode-team-btn"]').click()
+                expect(
+                    wb_frame.locator(
+                        '[data-testid="planai-node-CriticWorker"][data-node-kind="agent"]'
+                    )
+                ).to_be_visible(timeout=15000)
+                wb_frame.locator('[data-testid="mode-single-btn"]').click()
                 _save_shot(window, "nucleus_macos_workbench_3col.png")
 
                 # Verify Phase 2 Guardrails / Memories / Skills sub-tabs inside packaged Nucleus.app
