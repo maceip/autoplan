@@ -131,7 +131,7 @@ def main() -> int:
     args = parser.parse_args()
 
     root = args.root.resolve()
-    python_exe = str(args.python.resolve()) if args.python else sys.executable
+    python_exe = os.path.abspath(str(args.python)) if args.python else sys.executable
     static_dir = root / "backend" / "planaieditor" / "static_frontend"
 
     if args.skip_frontend_build and (static_dir / "index.html").is_file():

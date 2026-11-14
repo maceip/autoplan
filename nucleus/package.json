@@ -1,7 +1,7 @@
 {
   "name": "nucleus-autoplan",
   "productName": "Nucleus",
-  "version": "0.2.1",
+  "version": "0.2.0",
   "description": "Nucleus macOS Desktop Workbench (Electron Chromium 156 + LanguageModel Prompt API + PlanAI Multi-Project & Multi-Agent Teamwork)",
   "main": "src/main.cjs",
   "scripts": {
