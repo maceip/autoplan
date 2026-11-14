@@ -138,14 +138,6 @@
           >
             Workbench
           </button>
-          <button
-            type="button"
-            class="nav-btn"
-            data-mode="editor"
-            data-testid="nucleus-mode-editor"
-          >
-            Graph Studio
-          </button>
         </nav>
       </header>
 
@@ -156,48 +148,20 @@
           class="frame-view"
           title="Workbench"
         ></iframe>
-
-        <iframe
-          id="editor-frame"
-          data-testid="nucleus-editor-frame"
-          class="frame-view hidden"
-          title="Visual Editor"
-        ></iframe>
       </main>
     </div>
 
     <script>
       (async () => {
         const wbFrame = document.getElementById('workbench-frame');
-        const edFrame = document.getElementById('editor-frame');
-        const modeBtns = Array.from(document.querySelectorAll('[data-mode]'));
-
-        let backendUrl = 'http://127.0.0.1:5051';
         let webclawUrl = 'https://queue.secure.build';
         if (window.nucleusDesktop) {
           const info = await window.nucleusDesktop.getRuntimeInfo();
-          if (info && info.backendUrl) backendUrl = info.backendUrl;
           if (info && info.webclawUrl) webclawUrl = info.webclawUrl;
         }
-
-        wbFrame.src = webclawUrl.endsWith('/new') ? webclawUrl : `${webclawUrl}/new`;
-        let editorLoaded = false;
-
-        function setMode(mode) {
-          modeBtns.forEach((btn) =>
-            btn.classList.toggle('active', btn.dataset.mode === mode)
-          );
-          wbFrame.classList.toggle('hidden', mode !== 'workbench');
-          edFrame.classList.toggle('hidden', mode !== 'editor');
-          if (mode === 'editor' && !editorLoaded) {
-            edFrame.src = `${backendUrl}/planai-editor`;
-            editorLoaded = true;
-          }
-        }
-
-        modeBtns.forEach((btn) => {
-          btn.addEventListener('click', () => setMode(btn.dataset.mode));
-        });
+        wbFrame.src = webclawUrl.endsWith('/new')
+          ? webclawUrl
+          : `${webclawUrl}/new`;
       })();
     </script>
   </body>

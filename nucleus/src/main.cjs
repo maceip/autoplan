@@ -3,9 +3,9 @@
 /**
  * Nucleus macOS Desktop Shell
  *
- * Lightweight native macOS window hosting:
- *  1. 3-Column AutoPlan Multi-Project Workbench (`webclaw`)
- *  2. PlanAI SvelteFlow Visual Graph Studio (`/planai-editor`)
+ * Lightweight native macOS window hosting the unified 3-Column AutoPlan
+ * Multi-Project Workbench (`webclaw`) with inline Dagre state-machine graphs
+ * and human-gate diff/check review.
  *
  * On-device LLM inference runs directly inside the Python backend via macOS
  * `FoundationModels` (`SystemLanguageModel.default`) with zero Electron
