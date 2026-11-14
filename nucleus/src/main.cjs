@@ -279,6 +279,7 @@ async function createMainWindow() {
       process.platform === 'darwin' ? { x: 14, y: 12 } : undefined,
     icon: fs.existsSync(iconPng) ? iconPng : undefined,
     show: process.env.NUCLEUS_HEADLESS_TEST !== '1',
+    paintWhenInitiallyHidden: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -336,6 +337,9 @@ ipcMain.handle('nucleus:open-external', async (_event, url) => {
 });
 
 app.whenReady().then(async () => {
+  if (process.env.NUCLEUS_HEADLESS_TEST === '1' && app.dock) {
+    app.dock.hide();
+  }
   startLocalAIUtility();
   // Kick off local Metal MLX warm-up in parallel without blocking macOS window open
   void ensureLocalMlxServer();

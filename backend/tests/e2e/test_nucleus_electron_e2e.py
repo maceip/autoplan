@@ -83,6 +83,7 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
     env = {
         **os.environ,
         "AUTOPLAN_ROOT": str(REPO_ROOT),
+        "NUCLEUS_HEADLESS_TEST": "1",
     }
 
     proc = subprocess.Popen(
