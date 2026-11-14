@@ -14,6 +14,7 @@ dist/
 build/
 *.spec
 backend/planaieditor/static_frontend/
+.claude/
 
 # Claude Code worktrees
 .claude/worktrees/

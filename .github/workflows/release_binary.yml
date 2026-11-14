@@ -195,6 +195,7 @@ jobs:
           REL_VERSION: ${{ needs.bump-version.outputs.version }}
         run: |
           set -euo pipefail
+          find release_upload -mindepth 2 -type f -exec mv -f {} release_upload/ \;
           python3 - <<'PY'
           import json, os
           from pathlib import Path
