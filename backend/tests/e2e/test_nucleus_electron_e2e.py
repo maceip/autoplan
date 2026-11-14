@@ -148,12 +148,23 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                 ).to_be_visible(timeout=25000)
                 _save_shot(window, "nucleus_macos_planai_graph.png")
 
+                # Switch Nucleus to Split View mode and verify both chat + graph render side by side
+                window.locator('[data-testid="nucleus-mode-split"]').click()
+                expect(
+                    wb_frame.locator('[data-testid="planai-dag-canvas"]')
+                ).to_be_visible(timeout=20000)
+                expect(
+                    wb_frame.locator('[data-testid="composer-routing-bar"]')
+                ).to_be_visible(timeout=20000)
+                _save_shot(window, "nucleus_macos_split_view.png")
+
                 # Switch Nucleus to SvelteFlow Editor mode and verify SvelteFlow loads
                 window.locator('[data-testid="nucleus-mode-editor"]').click()
                 ed_frame = window.frame_locator('[data-testid="nucleus-editor-frame"]')
                 expect(
                     ed_frame.locator('[data-testid="toolshelf-container"]')
                 ).to_be_visible(timeout=25000)
+                _save_shot(window, "nucleus_macos_svelteflow_editor.png")
 
                 # Switch Nucleus to Chromium Prompt API Console
                 window.locator('[data-testid="nucleus-mode-prompt-api"]').click()
@@ -194,7 +205,7 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                 # 3. Wait for PlanAI Bridge registration, then exercise full Python -> Chromium round-trip
                 expect(
                     window.locator('[data-testid="nucleus-bridge-client"]')
-                ).to_contain_text("chromium_", timeout=20000)
+                ).to_contain_text("nucleus_", timeout=20000)
 
                 window.locator('[data-testid="nucleus-run-backend-roundtrip"]').click()
                 rt_out = window.locator('[data-testid="nucleus-roundtrip-output"]')
