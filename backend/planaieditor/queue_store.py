@@ -389,6 +389,39 @@ class QueueStore:
             self._conn.commit()
         return self.get_run(run_id)
 
+    def transition_run(
+        self, run_id: str, from_state: str, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a run only if it is still in from_state (atomic compare-and-set).
+
+        Returns the updated run, or None when the run was not in from_state —
+        e.g. a worker finishing after stop_run already marked the run stopped.
+        """
+        allowed = set(_RUN_FIELDS) | {"metadata"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return None
+        sets, params = [], []
+        for key, value in updates.items():
+            if key == "metadata":
+                sets.append("metadata_json = ?")
+                params.append(json.dumps(value))
+            else:
+                sets.append(f"{key} = ?")
+                params.append(value)
+        if "last_output_at" not in updates:
+            sets.append("last_output_at = ?")
+            params.append(_now())
+        params.extend([run_id, from_state])
+        with self._lock:
+            cursor = self._conn.execute(
+                f"UPDATE runs SET {', '.join(sets)} WHERE id = ? AND state = ?",
+                params,
+            )
+            self._conn.commit()
+            changed = cursor.rowcount
+        return self.get_run(run_id) if changed else None
+
     def claim_ownership(
         self, repo: str, worktree: str, branch: str, service: str, run_id: str
     ) -> Dict[str, Any]:
