@@ -1,17 +1,14 @@
-"""End-to-end Playwright CDP verification for the packaged Nucleus.app macOS desktop app.
+"""End-to-end Playwright CDP verification for the packaged Nucleus.app macOS desktop shell
+and in-process macOS FoundationModels (`SystemLanguageModel.default`) backend.
 
-Launches the actual packaged Electron 45.3.2 (Chromium 156) binary inside
-`nucleus/dist/Nucleus-darwin-arm64/Nucleus.app/Contents/MacOS/Nucleus`, attaches
-Playwright over CDP, and verifies:
-1. Native Chromium Blink `window.LanguageModel.availability() === "available"` backed by
-   local Apple Silicon Metal `mlx_lm.server` (`mlx-community/Qwen3-4B-Instruct-2507-4bit`)
-   via `session.defaultSession.registerLocalAIHandler(utilityProcess)`.
-2. Direct renderer `await (await window.LanguageModel.create()).prompt(...)` execution.
-3. Full Python `PlanAI.LLMInterface` -> `/api/llm/chromium-bridge` -> `Nucleus` Chromium
-   `window.LanguageModel.prompt()` -> Metal MLX -> Python round-trip (`provider_used`
-   contains `chromium-prompt-api`).
-4. Left Project Activity Rail, 3-Column Workbench iframe, PlanAI Graph view,
-   and SvelteFlow Editor view inside `Nucleus.app`.
+Launches `nucleus/dist/Nucleus-darwin-arm64/Nucleus.app/Contents/MacOS/Nucleus` strictly
+headlessly (`NUCLEUS_HEADLESS_TEST=1`), attaches Playwright over CDP, and verifies:
+1. Clean 2-mode Nucleus shell (`Workbench` | `Graph Studio`) with zero Electron AI utility
+   processes, zero Chromium Prompt API bridges, and zero `mlx_lm.server` daemons.
+2. 3-Column Workbench iframe with inline zero-click PlanAI 2D DAG (`planai-dag-canvas`).
+3. PlanAI SvelteFlow Visual Editor (`Graph Studio`) iframe (`toolshelf-container`).
+4. Direct Python backend `/api/llm/test-prompt` executing in-process on macOS
+   `FoundationModels` (`provider_used == "apple-foundation-models"`).
 """
 
 import json
@@ -74,7 +71,7 @@ def _save_shot(window, filename: str) -> None:
     window.screenshot(path=str(out_dir / filename))
 
 
-def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
+def test_nucleus_macos_shell_and_in_process_apple_foundation_models():
     assert PACKAGED_NUCLEUS_BIN.is_file(), (
         f"Packaged Nucleus.app binary missing at {PACKAGED_NUCLEUS_BIN}"
     )
@@ -101,7 +98,6 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
         with sync_playwright() as pw:
             browser = pw.chromium.connect_over_cdp(cdp_endpoint)
             try:
-                # Wait for Nucleus shell window page
                 deadline = time.time() + 25.0
                 window = None
                 while time.time() < deadline and window is None:
@@ -121,8 +117,11 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                 expect(
                     window.locator('[data-testid="nucleus-titlebar"]')
                 ).to_contain_text("Nucleus")
+                expect(
+                    window.locator('[data-testid="nucleus-mode-prompt-api"]')
+                ).to_have_count(0)
 
-                # Verify 3-Column Workbench frame loads with inline zero-click PlanAI 2D DAG
+                # 1. Verify 3-Column Workbench frame loads with inline zero-click PlanAI 2D DAG
                 wb_frame = window.frame_locator(
                     '[data-testid="nucleus-workbench-frame"]'
                 )
@@ -135,12 +134,9 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                 expect(
                     wb_frame.locator('[data-testid="planai-dag-canvas"]')
                 ).to_be_visible(timeout=25000)
-                expect(
-                    window.locator('[data-testid="nucleus-mode-graph"]')
-                ).to_have_count(0)
                 _save_shot(window, "nucleus_macos_workbench_3col.png")
 
-                # Switch Nucleus to Visual Editor mode and verify SvelteFlow loads
+                # 2. Switch Nucleus to Visual Editor mode and verify SvelteFlow loads
                 window.locator('[data-testid="nucleus-mode-editor"]').click()
                 ed_frame = window.frame_locator('[data-testid="nucleus-editor-frame"]')
                 expect(
@@ -148,66 +144,24 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                 ).to_be_visible(timeout=25000)
                 _save_shot(window, "nucleus_macos_svelteflow_editor.png")
 
-                # Switch Nucleus to Chromium Prompt API Console
-                window.locator('[data-testid="nucleus-mode-prompt-api"]').click()
-                expect(
-                    window.locator('[data-testid="nucleus-prompt-api-view"]')
-                ).to_be_visible(timeout=10000)
-
-                # 1. Assert Chromium Blink window.LanguageModel.availability() === 'available'
-                expect(
-                    window.locator('[data-testid="nucleus-lm-availability"]')
-                ).to_have_text("available", timeout=25000)
-
-                lm_probe = window.evaluate(
-                    """async () => ({
-                        isSecureContext: window.isSecureContext,
-                        hasLanguageModel: typeof window.LanguageModel !== 'undefined',
-                        availability: await window.LanguageModel.availability(),
-                    })"""
+                # 3. Verify backend `/api/llm/test-prompt` executes via Apple FoundationModels in-process
+                runtime_info = window.evaluate(
+                    "() => window.nucleusDesktop.getRuntimeInfo()"
                 )
-                assert lm_probe == {
-                    "isSecureContext": True,
-                    "hasLanguageModel": True,
-                    "availability": "available",
-                }
-
-                # 2. Exercise direct renderer window.LanguageModel.prompt() via button
-                window.locator('[data-testid="nucleus-run-prompt-test"]').click()
-                prompt_out = window.locator('[data-testid="nucleus-prompt-output"]')
-                expect(prompt_out).not_to_have_text("Ready.", timeout=45000)
-                expect(prompt_out).not_to_contain_text(
-                    "Running local prompt", timeout=45000
+                backend_url = runtime_info["backendUrl"]
+                req = urllib.request.Request(
+                    f"{backend_url}/api/llm/test-prompt",
+                    data=json.dumps(
+                        {"prompt": "Confirm in-process Apple FoundationModels in one short sentence."}
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
                 )
-                direct_text = prompt_out.inner_text().strip()
-                assert len(direct_text) > 12 and not direct_text.startswith(
-                    "Error:"
-                ), f"Unexpected direct LanguageModel reply: {direct_text}"
-
-                # 3. Wait for PlanAI Bridge registration, then exercise full Python -> Chromium round-trip
-                expect(
-                    window.locator('[data-testid="nucleus-bridge-client"]')
-                ).to_contain_text("nucleus_", timeout=20000)
-
-                window.locator('[data-testid="nucleus-run-backend-roundtrip"]').click()
-                rt_out = window.locator('[data-testid="nucleus-roundtrip-output"]')
-                expect(rt_out).not_to_have_text("Ready.", timeout=45000)
-                expect(rt_out).not_to_contain_text("Dispatching round-trip", timeout=45000)
-                rt_text = rt_out.inner_text().strip()
-                assert (
-                    len(rt_text) > 12
-                    and "undefined" not in rt_text.lower()
-                    and not rt_text.startswith("Error:")
-                ), f"Unexpected Python->Chromium bridge reply: {rt_text}"
-                expect(window.locator("#roundtrip-meta")).to_contain_text(
-                    "chromium-prompt-api", timeout=10000
-                )
-                bridged_n = int(
-                    window.locator('[data-testid="nucleus-bridged-count"]').inner_text()
-                )
-                assert bridged_n >= 1
-
-                _save_shot(window, "nucleus_macos_chromium_prompt_api.png")
+                with urllib.request.urlopen(req, timeout=30.0) as resp:
+                    llm_res = json.loads(resp.read().decode("utf-8"))
+                assert llm_res["success"] is True
+                assert llm_res["provider_used"] == "apple-foundation-models"
+                assert len(llm_res["reply"].strip()) >= 8
             finally:
                 browser.close()
     finally:

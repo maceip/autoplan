@@ -728,7 +728,7 @@ class EvolutionEngine:
                         for p in final_prompts
                     ],
                     "added_rules": final_rules,
-                    "llm_provider_used": self.llm_manager.hybrid_client.last_provider_used,
+                    "llm_provider_used": self.llm_manager.last_provider_used,
                 },
                 finished_at=time.time(),
             )

@@ -1,37 +1,23 @@
 'use strict';
 
 /**
- * Nucleus macOS Desktop Application — Electron 45.3.2 (Chromium 156)
+ * Nucleus macOS Desktop Shell
  *
- * Unifies:
+ * Lightweight native macOS window hosting:
  *  1. 3-Column AutoPlan Multi-Project Workbench (`webclaw`)
- *  2. Live Interactive PlanAI DAG Visualizations + Split View + SvelteFlow Editor
- *  3. Chromium Blink `window.LanguageModel` Prompt API backed by local Apple Metal
- *     `mlx_lm.server` (`mlx-community/Qwen3-4B-Instruct-2507-4bit`) via Electron's
- *     `session.defaultSession.registerLocalAIHandler(utilityProcess)` and bridged
- *     live into Python's `PlanAI.LLMInterface` Core.
+ *  2. PlanAI SvelteFlow Visual Graph Studio (`/planai-editor`)
+ *
+ * On-device LLM inference runs directly inside the Python backend via macOS
+ * `FoundationModels` (`SystemLanguageModel.default`) with zero Electron
+ * AI utility processes, HTTP bridges, or MLX daemons.
  */
 
-const {
-  app,
-  BrowserWindow,
-  ipcMain,
-  session,
-  shell,
-  utilityProcess,
-} = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-
-// Enable Chromium Blink Prompt API (`window.LanguageModel`) before app ready
-app.commandLine.appendSwitch('enable-experimental-web-platform-features');
-app.commandLine.appendSwitch(
-  'enable-features',
-  'AIPromptAPI,AIPromptAPIMultimodalInput'
-);
 
 const EXPLICIT_BACKEND_URL = (process.env.NUCLEUS_BACKEND_URL || '').replace(
   /\/+$/,
@@ -43,14 +29,9 @@ const BACKEND_CANDIDATES = [
   'http://100.80.211.36:5051',
 ].filter(Boolean);
 let resolvedBackendUrl = BACKEND_CANDIDATES[0] || 'http://127.0.0.1:5051';
-const MLX_PORT = Number(process.env.AUTOPLAN_MLX_PORT || 18089);
-const MLX_MODEL =
-  process.env.AUTOPLAN_MLX_MODEL || 'mlx-community/Qwen3-4B-Instruct-2507-4bit';
 const LOCAL_WEBCLAW_PORT = Number(process.env.NUCLEUS_WEBCLAW_PORT || 5199);
 
 let mainWindow = null;
-let aiUtilityProcess = null;
-let spawnedMlxProc = null;
 let spawnedWebclawProc = null;
 let shellHttpServer = null;
 let shellBaseUrl = '';
@@ -94,50 +75,7 @@ async function waitForHttp(urlStr, maxWaitMs = 20000) {
   return false;
 }
 
-function findMlxServerBinary() {
-  const candidates = [
-    process.env.AUTOPLAN_MLX_BIN || '',
-    path.join(os.homedir(), '.local', 'bin', 'mlx_lm.server'),
-    '/opt/homebrew/bin/mlx_lm.server',
-    '/usr/local/bin/mlx_lm.server',
-  ].filter(Boolean);
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
-  }
-  return '';
-}
-
-async function ensureLocalMlxServer() {
-  const modelsUrl = `http://127.0.0.1:${MLX_PORT}/v1/models`;
-  if (await probeHttpOk(modelsUrl, 1200)) {
-    return { running: true, spawned: false };
-  }
-  const bin = findMlxServerBinary();
-  if (!bin) {
-    return { running: false, spawned: false, reason: 'mlx_lm.server not found' };
-  }
-  spawnedMlxProc = spawn(
-    bin,
-    [
-      '--model',
-      MLX_MODEL,
-      '--host',
-      '127.0.0.1',
-      '--port',
-      String(MLX_PORT),
-    ],
-    {
-      stdio: 'ignore',
-      env: { ...process.env },
-    }
-  );
-  spawnedMlxProc.unref();
-  const ready = await waitForHttp(modelsUrl, 22000);
-  return { running: ready, spawned: true };
-}
-
 function resolveRepoRoot() {
-  // Works both in dev (`/Users/mac/autoplan/nucleus/src`) and packaged `Nucleus.app`
   const candidates = [
     process.env.AUTOPLAN_ROOT || '',
     path.resolve(__dirname, '..', '..'),
@@ -245,26 +183,6 @@ async function startLocalShellServer() {
   return shellBaseUrl;
 }
 
-function startLocalAIUtility() {
-  const utilityScript = path.join(__dirname, 'ai-utility.cjs');
-  aiUtilityProcess = utilityProcess.fork(utilityScript, [], {
-    serviceName: 'Nucleus Chromium Local AI Utility',
-    env: {
-      ...process.env,
-      AUTOPLAN_MLX_PORT: String(MLX_PORT),
-      AUTOPLAN_MLX_MODEL: MLX_MODEL,
-    },
-  });
-
-  aiUtilityProcess.on('message', (msg) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('nucleus:ai-telemetry', msg);
-    }
-  });
-
-  session.defaultSession.registerLocalAIHandler(aiUtilityProcess);
-}
-
 async function createMainWindow() {
   const iconPng = path.join(__dirname, '..', 'assets', 'icon.png');
   mainWindow = new BrowserWindow({
@@ -284,7 +202,6 @@ async function createMainWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      enableBlinkFeatures: 'AIPromptAPI,AIPromptAPIMultimodalInput',
     },
   });
 
@@ -297,25 +214,20 @@ ipcMain.handle('nucleus:get-runtime-info', () => ({
   electronVersion: process.versions.electron,
   chromeVersion: process.versions.chrome,
   nodeVersion: process.versions.node,
-  v8Version: process.versions.v8,
   arch: process.arch,
   platform: process.platform,
   backendUrl: resolvedBackendUrl,
   webclawUrl: resolvedWebclawUrl,
-  mlxPort: MLX_PORT,
-  mlxModel: MLX_MODEL,
 }));
 
 ipcMain.handle('nucleus:get-services-status', async () => {
   await detectBackendUrl();
-  const [backendOk, mlxOk, webclawOk] = await Promise.all([
+  const [backendOk, webclawOk] = await Promise.all([
     probeHttpOk(`${resolvedBackendUrl}/api/projects`),
-    probeHttpOk(`http://127.0.0.1:${MLX_PORT}/v1/models`),
     resolvedWebclawUrl ? probeHttpOk(resolvedWebclawUrl) : Promise.resolve(false),
   ]);
   return {
     backendOk,
-    mlxOk,
     webclawOk,
     backendUrl: resolvedBackendUrl,
     webclawUrl: resolvedWebclawUrl,
@@ -323,9 +235,8 @@ ipcMain.handle('nucleus:get-services-status', async () => {
 });
 
 ipcMain.handle('nucleus:ensure-local-services', async () => {
-  const mlx = await ensureLocalMlxServer();
   const wc = await ensureLocalWebclawServer();
-  return { mlx, webclawUrl: wc };
+  return { webclawUrl: wc };
 });
 
 ipcMain.handle('nucleus:open-external', async (_event, url) => {
@@ -340,9 +251,6 @@ app.whenReady().then(async () => {
   if (process.env.NUCLEUS_HEADLESS_TEST === '1' && app.dock) {
     app.dock.hide();
   }
-  startLocalAIUtility();
-  // Kick off local Metal MLX warm-up in parallel without blocking macOS window open
-  void ensureLocalMlxServer();
   await ensureLocalWebclawServer();
   await startLocalShellServer();
   await createMainWindow();
@@ -355,21 +263,6 @@ app.whenReady().then(async () => {
 });
 
 function cleanupChildren() {
-  try {
-    session.defaultSession.registerLocalAIHandler(null);
-  } catch {}
-  if (aiUtilityProcess) {
-    try {
-      aiUtilityProcess.kill();
-    } catch {}
-    aiUtilityProcess = null;
-  }
-  if (spawnedMlxProc) {
-    try {
-      spawnedMlxProc.kill('SIGTERM');
-    } catch {}
-    spawnedMlxProc = null;
-  }
   if (spawnedWebclawProc) {
     try {
       spawnedWebclawProc.kill('SIGTERM');

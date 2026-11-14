@@ -10,13 +10,9 @@
         --bg-surface: #002b36;
         --bg-card: #0c3540;
         --border-subtle: #133b45;
-        --border-strong: #1e4b56;
         --fg-primary: #e6f0f2;
         --fg-body: #c9d8db;
         --fg-muted: #8ca3a8;
-        --accent: #268bd2;
-        --ok: #7aae66;
-        --danger: #e05a5a;
       }
 
       * {
@@ -46,7 +42,6 @@
         height: 100dvh;
       }
 
-      /* Single 36px native macOS titlebar (76px left inset for traffic lights) */
       .titlebar {
         height: 36px;
         min-height: 36px;
@@ -106,16 +101,6 @@
         color: var(--fg-primary);
       }
 
-      .dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 999px;
-        background: var(--fg-muted);
-      }
-      .dot.ok {
-        background: var(--ok);
-      }
-
       .viewport {
         flex: 1;
         min-height: 0;
@@ -133,106 +118,6 @@
 
       .hidden {
         display: none !important;
-      }
-
-      /* Clean Local AI Diagnostic Panel (shown only when Local AI is clicked) */
-      .local-ai-panel {
-        flex: 1;
-        overflow-y: auto;
-        padding: 28px 32px;
-        user-select: text;
-      }
-
-      .local-ai-inner {
-        max-width: 680px;
-        margin: 0 auto;
-        display: flex;
-        flex-direction: column;
-        gap: 18px;
-      }
-
-      .section-card {
-        background: var(--bg-card);
-        border: 1px solid var(--border-subtle);
-        border-radius: 10px;
-        padding: 16px 18px;
-      }
-
-      .section-card h3 {
-        margin: 0 0 10px;
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--fg-primary);
-      }
-
-      .kv-row {
-        display: flex;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 5px 0;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-        font-size: 12px;
-      }
-
-      .kv-row:last-child {
-        border-bottom: 0;
-      }
-
-      .kv-val {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 11.5px;
-        color: var(--fg-primary);
-        font-variant-numeric: tabular-nums;
-      }
-
-      .prompt-textarea {
-        width: 100%;
-        min-height: 60px;
-        border-radius: 8px;
-        border: 1px solid var(--border-strong);
-        background: var(--bg-window);
-        color: var(--fg-primary);
-        padding: 8px 10px;
-        font-family: inherit;
-        font-size: 12.5px;
-        outline: none;
-        resize: vertical;
-      }
-
-      .btn-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-top: 10px;
-      }
-
-      .btn-primary {
-        appearance: none;
-        border: 0;
-        background: var(--accent);
-        color: #ffffff;
-        border-radius: 6px;
-        padding: 6px 12px;
-        font-size: 12px;
-        font-weight: 500;
-        cursor: pointer;
-      }
-
-      .btn-primary:disabled {
-        opacity: 0.45;
-        cursor: not-allowed;
-      }
-
-      .output-box {
-        margin-top: 10px;
-        padding: 10px 12px;
-        border-radius: 8px;
-        background: var(--bg-window);
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 11.5px;
-        line-height: 1.5;
-        color: var(--fg-primary);
-        white-space: pre-wrap;
       }
     </style>
   </head>
@@ -261,15 +146,6 @@
           >
             Graph Studio
           </button>
-          <button
-            type="button"
-            class="nav-btn"
-            data-mode="prompt-api"
-            data-testid="nucleus-mode-prompt-api"
-          >
-            <span class="dot" id="local-ai-dot"></span>
-            <span>Local AI</span>
-          </button>
         </nav>
       </header>
 
@@ -287,425 +163,41 @@
           class="frame-view hidden"
           title="Visual Editor"
         ></iframe>
-
-        <section
-          id="prompt-api-view"
-          data-testid="nucleus-prompt-api-view"
-          class="local-ai-panel hidden"
-        >
-          <div class="local-ai-inner">
-            <div class="section-card">
-              <h3>On-Device LanguageModel Runtime</h3>
-              <div class="kv-row">
-                <span>Runtime</span>
-                <span class="kv-val" id="diag-electron-chrome">—</span>
-              </div>
-              <div class="kv-row">
-                <span>window.LanguageModel</span>
-                <span class="kv-val" data-testid="nucleus-lm-availability" id="diag-lm-availability">checking…</span>
-              </div>
-              <div class="kv-row">
-                <span>Local Metal Model</span>
-                <span class="kv-val" id="diag-mlx-model">—</span>
-              </div>
-              <div class="kv-row">
-                <span>Chrome Gemini Nano Weights</span>
-                <span class="kv-val" id="diag-nano-weights">checking…</span>
-              </div>
-              <div class="kv-row">
-                <span>Backend Bridge</span>
-                <span class="kv-val" data-testid="nucleus-bridge-client" id="diag-bridge-client">connecting…</span>
-              </div>
-              <div class="kv-row">
-                <span>Bridged Calls</span>
-                <span class="kv-val" data-testid="nucleus-bridged-count" id="diag-bridged-count">0</span>
-              </div>
-            </div>
-
-            <div class="section-card">
-              <h3>Test On-Device Prompt</h3>
-              <textarea
-                id="direct-prompt-input"
-                data-testid="nucleus-prompt-input"
-                class="prompt-textarea"
-              >Summarize in one sentence how isolated git worktrees prevent multi-agent file conflicts.</textarea>
-              <div class="btn-row">
-                <button
-                  type="button"
-                  id="run-direct-prompt-btn"
-                  data-testid="nucleus-run-prompt-test"
-                  class="btn-primary"
-                >
-                  Run Local Prompt
-                </button>
-                <span id="direct-prompt-meta" style="color: var(--fg-muted); font-size: 11.5px"></span>
-              </div>
-              <div
-                id="direct-prompt-output"
-                data-testid="nucleus-prompt-output"
-                class="output-box"
-              >Ready.</div>
-            </div>
-
-            <div class="section-card">
-              <h3>Test Backend Bridge Round-Trip</h3>
-              <div class="btn-row" style="margin-top: 0">
-                <button
-                  type="button"
-                  id="run-roundtrip-btn"
-                  data-testid="nucleus-run-backend-roundtrip"
-                  class="btn-primary"
-                >
-                  Verify Backend → Chromium Bridge
-                </button>
-                <span id="roundtrip-meta" style="color: var(--fg-muted); font-size: 11.5px"></span>
-              </div>
-              <div
-                id="roundtrip-output"
-                data-testid="nucleus-roundtrip-output"
-                class="output-box"
-              >Ready.</div>
-            </div>
-          </div>
-        </section>
       </main>
     </div>
 
     <script>
-      (async function initNucleusShell() {
-        const runtime = await window.nucleusDesktop.getRuntimeInfo();
-        const backendUrl = runtime.backendUrl;
-        const webclawUrl = runtime.webclawUrl;
+      (async () => {
+        const wbFrame = document.getElementById('workbench-frame');
+        const edFrame = document.getElementById('editor-frame');
+        const modeBtns = Array.from(document.querySelectorAll('[data-mode]'));
 
-        document.getElementById('diag-electron-chrome').textContent =
-          `Electron ${runtime.electronVersion} · Chromium ${runtime.chromeVersion}`;
-        document.getElementById('diag-mlx-model').textContent =
-          `${runtime.mlxModel} (127.0.0.1:${runtime.mlxPort})`;
+        let backendUrl = 'http://127.0.0.1:5051';
+        let webclawUrl = 'https://queue.secure.build';
+        if (window.nucleusDesktop) {
+          const info = await window.nucleusDesktop.getRuntimeInfo();
+          if (info && info.backendUrl) backendUrl = info.backendUrl;
+          if (info && info.webclawUrl) webclawUrl = info.webclawUrl;
+        }
 
-        const workbenchFrame = document.getElementById('workbench-frame');
-        const editorFrame = document.getElementById('editor-frame');
-        const promptApiView = document.getElementById('prompt-api-view');
+        wbFrame.src = webclawUrl.endsWith('/new') ? webclawUrl : `${webclawUrl}/new`;
+        let editorLoaded = false;
 
-        let currentMode = 'workbench';
-        let bridgedCalls = 0;
-        let bridgeClientId = '';
-        let lmAvailability = 'unavailable';
-
-        function updateFrames(forceReload = false) {
-          if (currentMode === 'prompt-api') {
-            workbenchFrame.classList.add('hidden');
-            editorFrame.classList.add('hidden');
-            promptApiView.classList.remove('hidden');
-            return;
-          }
-          promptApiView.classList.add('hidden');
-          if (currentMode === 'editor') {
-            workbenchFrame.classList.add('hidden');
-            editorFrame.classList.remove('hidden');
-            const target = `${backendUrl}/planai-editor`;
-            if (forceReload || !editorFrame.src) {
-              editorFrame.src = target;
-            }
-            return;
-          }
-          editorFrame.classList.add('hidden');
-          workbenchFrame.classList.remove('hidden');
-          const target = `${webclawUrl}/chat/new?view=${encodeURIComponent(currentMode)}`;
-          if (forceReload || !workbenchFrame.src) {
-            workbenchFrame.dataset.mode = currentMode;
-            workbenchFrame.src = target;
-          } else {
-            workbenchFrame.dataset.mode = currentMode;
-            try {
-              workbenchFrame.contentWindow?.postMessage(
-                { type: 'nucleus:set-view', view: currentMode },
-                '*'
-              );
-            } catch {
-              workbenchFrame.src = target;
-            }
+        function setMode(mode) {
+          modeBtns.forEach((btn) =>
+            btn.classList.toggle('active', btn.dataset.mode === mode)
+          );
+          wbFrame.classList.toggle('hidden', mode !== 'workbench');
+          edFrame.classList.toggle('hidden', mode !== 'editor');
+          if (mode === 'editor' && !editorLoaded) {
+            edFrame.src = `${backendUrl}/planai-editor`;
+            editorLoaded = true;
           }
         }
 
-        workbenchFrame.addEventListener('load', () => {
-          if (currentMode === 'workbench' || currentMode === 'graph') {
-            try {
-              workbenchFrame.contentWindow?.postMessage(
-                { type: 'nucleus:set-view', view: currentMode },
-                '*'
-              );
-            } catch {
-              // ignore cross-origin load timing
-            }
-          }
+        modeBtns.forEach((btn) => {
+          btn.addEventListener('click', () => setMode(btn.dataset.mode));
         });
-
-        document.querySelectorAll('.nav-btn').forEach((btn) => {
-          btn.addEventListener('click', () => {
-            document
-              .querySelectorAll('.nav-btn')
-              .forEach((b) => b.classList.remove('active'));
-            btn.classList.add('active');
-            currentMode = btn.dataset.mode || 'workbench';
-            updateFrames(false);
-          });
-        });
-
-        updateFrames(true);
-
-        async function refreshLanguageModelAvailability() {
-          if (typeof window.LanguageModel === 'undefined') {
-            lmAvailability = 'unavailable';
-          } else {
-            try {
-              lmAvailability = await window.LanguageModel.availability();
-            } catch (err) {
-              lmAvailability = `error: ${err.message || err}`;
-            }
-          }
-          document.getElementById('diag-lm-availability').textContent =
-            lmAvailability;
-          const dot = document.getElementById('local-ai-dot');
-          if (lmAvailability === 'available') {
-            dot.classList.add('ok');
-          } else {
-            dot.classList.remove('ok');
-          }
-          return lmAvailability;
-        }
-
-        await refreshLanguageModelAvailability();
-
-        async function loadBackendDiagnostics() {
-          try {
-            const lRes = await fetch(`${backendUrl}/api/llm/status`);
-            if (lRes.ok) {
-              const lData = await lRes.json();
-              const nano = lData.gemini_nano_investigation || {};
-              document.getElementById('diag-nano-weights').textContent =
-                nano.weights_present
-                  ? `Installed (${nano.weights_path})`
-                  : '0 bytes (unbranded Chromium uses Metal MLX)';
-            }
-          } catch {
-            // ignore transient startup
-          }
-        }
-        await loadBackendDiagnostics();
-
-        document
-          .getElementById('run-direct-prompt-btn')
-          .addEventListener('click', async () => {
-            const btn = document.getElementById('run-direct-prompt-btn');
-            const outEl = document.getElementById('direct-prompt-output');
-            const metaEl = document.getElementById('direct-prompt-meta');
-            const text = document
-              .getElementById('direct-prompt-input')
-              .value.trim();
-            if (!text) return;
-            btn.disabled = true;
-            outEl.textContent = 'Running local prompt…';
-            const t0 = performance.now();
-            try {
-              const session = await window.LanguageModel.create();
-              try {
-                const reply = await session.prompt(text);
-                const elapsed = Math.round(performance.now() - t0);
-                outEl.textContent = reply;
-                metaEl.textContent = `${elapsed}ms`;
-              } finally {
-                session.destroy();
-              }
-            } catch (err) {
-              outEl.textContent = `Error: ${err.message || err}`;
-            } finally {
-              btn.disabled = false;
-            }
-          });
-
-        document
-          .getElementById('run-roundtrip-btn')
-          .addEventListener('click', async () => {
-            const btn = document.getElementById('run-roundtrip-btn');
-            const outEl = document.getElementById('roundtrip-output');
-            const metaEl = document.getElementById('roundtrip-meta');
-            btn.disabled = true;
-            outEl.textContent = 'Dispatching round-trip…';
-            const t0 = performance.now();
-            try {
-              const res = await fetch(`${backendUrl}/api/llm/test-prompt`, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({
-                  prompt:
-                    'Reply in one short sentence confirming the backend bridged through Chromium LanguageModel.',
-                }),
-              });
-              const data = await res.json();
-              if (!res.ok || data.success === false) {
-                throw new Error(data.error || `HTTP ${res.status}`);
-              }
-              const elapsed = Math.round(performance.now() - t0);
-              outEl.textContent = data.reply ?? data.response ?? '';
-              metaEl.textContent = `Provider: ${data.provider_used} · ${elapsed}ms`;
-            } catch (err) {
-              outEl.textContent = `Error: ${err.message || err}`;
-            } finally {
-              btn.disabled = false;
-            }
-          });
-
-        async function executeBridgedPrompt(req) {
-          const messages = Array.isArray(req.messages) ? req.messages : [];
-          const systemMsg = messages.find((m) => m.role === 'system');
-          const nonSystem = messages.filter((m) => m.role !== 'system');
-          const createOpts = {};
-          if (systemMsg && systemMsg.content) {
-            createOpts.initialPrompts = [
-              { role: 'system', content: String(systemMsg.content) },
-            ];
-          }
-          if (typeof req.temperature === 'number') {
-            createOpts.temperature = req.temperature;
-          }
-          const session = await window.LanguageModel.create(createOpts);
-          try {
-            const promptInput =
-              nonSystem.length === 1 && nonSystem[0].role === 'user'
-                ? String(nonSystem[0].content)
-                : nonSystem.map((m) => ({
-                    role: m.role === 'assistant' ? 'assistant' : 'user',
-                    content: String(m.content || ''),
-                  }));
-            const promptOpts = {};
-            if (req.response_constraint) {
-              promptOpts.responseConstraint = req.response_constraint;
-            }
-            const reply = await session.prompt(promptInput, promptOpts);
-            return {
-              content: String(reply || ''),
-              contextUsage: session.contextUsage,
-              contextWindow: session.contextWindow,
-            };
-          } finally {
-            session.destroy();
-          }
-        }
-
-        let lastRegisteredAvailability = '';
-        let executionChain = Promise.resolve();
-
-        function dispatchJobAsync(job) {
-          executionChain = executionChain
-            .catch(() => {})
-            .then(async () => {
-              try {
-                const result = await executeBridgedPrompt(job);
-                bridgedCalls += 1;
-                document.getElementById('diag-bridged-count').textContent =
-                  String(bridgedCalls);
-                await fetch(`${backendUrl}/api/llm/chromium-bridge/respond`, {
-                  method: 'POST',
-                  headers: { 'content-type': 'application/json' },
-                  body: JSON.stringify({
-                    request_id: job.request_id,
-                    content: result.content,
-                    metrics: {
-                      usage: {
-                        total_tokens: result.contextUsage || 0,
-                      },
-                    },
-                  }),
-                });
-              } catch (jobErr) {
-                await fetch(`${backendUrl}/api/llm/chromium-bridge/respond`, {
-                  method: 'POST',
-                  headers: { 'content-type': 'application/json' },
-                  body: JSON.stringify({
-                    request_id: job.request_id,
-                    error: String(jobErr.message || jobErr),
-                  }),
-                });
-              }
-            });
-        }
-
-        window.setInterval(async () => {
-          if (!bridgeClientId) return;
-          try {
-            const avail = await refreshLanguageModelAvailability();
-            await fetch(`${backendUrl}/api/llm/chromium-bridge/heartbeat`, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                client_id: bridgeClientId,
-                language_model_availability: avail,
-              }),
-            });
-          } catch {
-            // ignore transient heartbeat failure
-          }
-        }, 5000);
-
-        async function startBridgeWorkerLoop() {
-          while (true) {
-            try {
-              const avail = await refreshLanguageModelAvailability();
-              if (!bridgeClientId || avail !== lastRegisteredAvailability) {
-                const regRes = await fetch(
-                  `${backendUrl}/api/llm/chromium-bridge/register`,
-                  {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({
-                      client_id: bridgeClientId || undefined,
-                      app_name: 'Nucleus',
-                      electron_version: runtime.electronVersion,
-                      chrome_version: runtime.chromeVersion,
-                      language_model_availability: avail,
-                      local_backend_model: runtime.mlxModel,
-                    }),
-                  }
-                );
-                if (regRes.ok) {
-                  const regData = await regRes.json();
-                  bridgeClientId = regData.client?.client_id || '';
-                  lastRegisteredAvailability = avail;
-                  document.getElementById('diag-bridge-client').textContent =
-                    bridgeClientId;
-                } else {
-                  await new Promise((r) => setTimeout(r, 2500));
-                  continue;
-                }
-              }
-
-              const pollRes = await fetch(
-                `${backendUrl}/api/llm/chromium-bridge/poll?client_id=${encodeURIComponent(bridgeClientId)}&availability=${encodeURIComponent(avail)}&timeout=6`
-              );
-              if (!pollRes.ok) {
-                bridgeClientId = '';
-                lastRegisteredAvailability = '';
-                await new Promise((r) => setTimeout(r, 2000));
-                continue;
-              }
-              const pollData = await pollRes.json();
-              const job = pollData.request;
-              if (!job || !job.request_id) {
-                continue;
-              }
-
-              // Acknowledge pickup immediately and return to polling so concurrent
-              // PlanAI worker prompts are picked up in <20ms without evicting this client!
-              dispatchJobAsync(job);
-            } catch {
-              bridgeClientId = '';
-              lastRegisteredAvailability = '';
-              await new Promise((r) => setTimeout(r, 2500));
-            }
-          }
-        }
-
-        void startBridgeWorkerLoop();
       })();
     </script>
   </body>

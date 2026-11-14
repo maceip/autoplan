@@ -1,5 +1,5 @@
 """End-to-end unit & integration tests for Multi-Project registry, PlanAI Teamwork Graph,
-Continuous Evolution Engine, and Electron Chromium Prompt API LLM Core bridge.
+Continuous Evolution Engine, and In-Process macOS FoundationModels (`SystemLanguageModel`).
 """
 
 from __future__ import annotations
@@ -7,10 +7,11 @@ from __future__ import annotations
 import json
 import stat
 import subprocess
-import threading
+import sys
 import time
 from pathlib import Path
 
+import pytest
 from flask import Flask
 
 from planaieditor.evolution_engine import EvolutionEngine
@@ -65,7 +66,7 @@ def _make_app(root_path: Path):
 def test_multi_project_registry_discover_and_external_repo_landing(
     tmp_path: Path, monkeypatch
 ):
-    monkeypatch.setenv("AUTOPLAN_DISABLE_LOCAL_MLX", "1")
+    monkeypatch.setenv("AUTOPLAN_DISABLE_APPLE_FM", "1")
     workspace_parent = tmp_path / "workspace"
     root_repo = _init_git_repo(workspace_parent / "autoplan_root")
     ext_repo = _init_git_repo(
@@ -179,7 +180,7 @@ def test_multi_project_registry_discover_and_external_repo_landing(
 def test_planai_multi_agent_teamwork_graph_and_svelteflow_projection(
     tmp_path: Path, monkeypatch
 ):
-    monkeypatch.setenv("AUTOPLAN_DISABLE_LOCAL_MLX", "1")
+    monkeypatch.setenv("AUTOPLAN_DISABLE_APPLE_FM", "1")
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     root_repo = _init_git_repo(tmp_path / "autoplan_root")
     team_repo = _init_git_repo(
@@ -310,7 +311,7 @@ def test_planai_multi_agent_teamwork_graph_and_svelteflow_projection(
 def test_teamwork_reality_scan_catches_unapproved_mock_and_allows_verbatim_quote(
     tmp_path: Path, monkeypatch
 ):
-    monkeypatch.setenv("AUTOPLAN_DISABLE_LOCAL_MLX", "1")
+    monkeypatch.setenv("AUTOPLAN_DISABLE_APPLE_FM", "1")
     root_repo = _init_git_repo(tmp_path / "root")
     _, _, _, orchestrator, _, _ = _make_app(root_repo)
 
@@ -334,13 +335,16 @@ def test_teamwork_reality_scan_catches_unapproved_mock_and_allows_verbatim_quote
     assert reality_ok["passed"] is True
 
 
-def test_chromium_prompt_bridge_and_evolution_engine_planai_graph(
+@pytest.mark.skipif(sys.platform != "darwin", reason="FoundationModels requires macOS")
+def test_apple_foundation_models_in_process_and_evolution_engine_planai_graph(
     tmp_path: Path, monkeypatch
 ):
-    monkeypatch.setenv("AUTOPLAN_DISABLE_LOCAL_MLX", "1")
+    monkeypatch.delenv("AUTOPLAN_DISABLE_APPLE_FM", raising=False)
+    monkeypatch.setenv("AUTOPLAN_ENABLE_TEST_LLM", "1")
+    monkeypatch.delenv("CHIEF_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("CHIEF_LLM_MODEL", raising=False)
     root_repo = _init_git_repo(tmp_path / "root")
 
-    # Seed realistic breakdown_trends.json corpus snapshot
     corpus_file = tmp_path / "breakdown_trends.json"
     corpus_file.write_text(
         json.dumps(
@@ -358,7 +362,6 @@ def test_chromium_prompt_bridge_and_evolution_engine_planai_graph(
 
     client, store, _, _, _, llm_manager = _make_app(root_repo)
 
-    # Bootstrap EvolutionEngine from corpus snapshot
     evo = EvolutionEngine(
         store=store,
         llm_manager=llm_manager,
@@ -368,172 +371,61 @@ def test_chromium_prompt_bridge_and_evolution_engine_planai_graph(
     assert evo.bootstrap_summary["corpus_loaded"] is True
     assert evo.bootstrap_summary["seeded_corpus_rules"] == 2
 
-    # Register simulated Electron Chromium 156 `window.LanguageModel` bridge client
-    reg = client.post(
-        "/api/llm/chromium-bridge/register",
+    # 1. Verify /api/llm/test-prompt runs directly in-process on macOS SystemLanguageModel
+    test_llm = client.post(
+        "/api/llm/test-prompt",
+        json={"prompt": "Reply in one short sentence confirming FoundationModels is online."},
+    )
+    assert test_llm.status_code == 200
+    llm_body = test_llm.get_json()
+    assert llm_body["provider_used"] == "apple-foundation-models"
+    assert len(llm_body["reply"].strip()) >= 8
+    assert llm_body["diagnostics"]["apple_foundation_models"]["available"] is True
+    assert llm_body["diagnostics"]["total_calls"] >= 1
+
+    # 2. Submit a queue item and trigger operator request_changes -> live rule learned
+    q_item = client.post(
+        "/api/queue/items",
+        json={"title": "Draft API update", "kind": "decision"},
+    ).get_json()["item"]
+    store.update_item(q_item["id"], status="needs_review")
+
+    dec_res = client.post(
+        f"/api/queue/items/{q_item['id']}/decision",
         json={
-            "client_id": "nucleus_test_arm64",
-            "app_name": "Nucleus",
-            "electron_version": "45.3.2",
-            "chrome_version": "156.0.8078.100",
-            "language_model_availability": "available",
-            "local_backend_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+            "action": "request_changes",
+            "note": "Always attach latency measurements before requesting approval",
         },
     )
-    assert reg.status_code == 200
+    assert dec_res.status_code == 200
+    rules_now = store.list_evolution_rules(active_only=True)
+    assert any("latency measurements" in r["rule_text"] for r in rules_now)
 
-    stop_poller = threading.Event()
-
-    def _chromium_poller():
-        while not stop_poller.is_set():
-            req_item = llm_manager.bridge.poll_request("nucleus_test_arm64", timeout_s=0.2)
-            if not req_item:
-                continue
-            schema = req_item.get("response_constraint")
-            if schema:
-                reply_payload = json.dumps(
-                    {
-                        "weaknesses": ["Missing explicit benchmark verification check"],
-                        "proposed_rule": "Include exact test exit code and runtime latency in review summary.",
-                        "improved_directives": [
-                            "Require explicit command exit code verification before escalation."
-                        ],
-                        "rationale": "Addresses operator request_changes bounce feedback.",
-                    }
-                )
-            else:
-                reply_payload = "Chromium 156 LanguageModel Prompt API online via Nucleus."
-            llm_manager.bridge.submit_response(
-                request_id=req_item["request_id"],
-                content=reply_payload,
-                metrics={"engine": "window.LanguageModel"},
-            )
-
-    poller_thread = threading.Thread(target=_chromium_poller, daemon=True)
-    poller_thread.start()
-
-    try:
-        # 1. Verify /api/llm/test-prompt routes through `chromium-prompt-api`
-        test_llm = client.post(
-            "/api/llm/test-prompt",
-            json={"prompt": "Confirm Prompt API bridge"},
-        )
-        assert test_llm.status_code == 200
-        llm_body = test_llm.get_json()
-        assert llm_body["provider_used"] == "chromium-prompt-api"
-        assert "Chromium 156 LanguageModel" in llm_body["reply"]
-        assert llm_body["diagnostics"]["chromium_prompt_bridge"]["total_bridged_calls"] >= 1
-
-        # 2. Submit a queue item and trigger operator request_changes -> live rule learned
-        q_item = client.post(
-            "/api/queue/items",
-            json={"title": "Draft API update", "kind": "decision"},
-        ).get_json()["item"]
-        store.update_item(q_item["id"], status="needs_review")
-
-        dec_res = client.post(
-            f"/api/queue/items/{q_item['id']}/decision",
-            json={
-                "action": "request_changes",
-                "note": "Always attach latency measurements before requesting approval",
-            },
-        )
-        assert dec_res.status_code == 200
-        rules_now = store.list_evolution_rules(active_only=True)
-        assert any("latency measurements" in r["rule_text"] for r in rules_now)
-
-        # 3. Run full PlanAI AutoplanPromptEvolutionGraph via /api/evolution/evolve
-        evolve_res = client.post(
-            "/api/evolution/evolve",
-            json={"project_id": "*", "reason": "operator_bounce_cycle"},
-        )
-        assert evolve_res.status_code == 200
-        evo_data = evolve_res.get_json()
-        assert evo_data["workflow"]["state"] == "succeeded"
-
-        evo_node_states = {n["id"]: n["state"] for n in evo_data["workflow"]["nodes"]}
-        assert evo_node_states == {
-            "TraceCollectorWorker": "succeeded",
-            "FailureCritiqueWorker": "succeeded",
-            "EvolutionCritiqueJoiner": "succeeded",
-            "EvolutionCommitSink": "succeeded",
-        }
-
-        evo_joiner = next(
-            n for n in evo_data["workflow"]["nodes"] if n["id"] == "EvolutionCritiqueJoiner"
-        )
-        assert evo_joiner["metrics"]["joined_critiques"] == 2
-
-        lead_gen = store.get_active_prompt("lead_planner")
-        chief_gen = store.get_active_prompt("chief_triage")
-        assert lead_gen is not None and lead_gen["generation"] == 2
-        assert chief_gen is not None and chief_gen["generation"] == 2
-        assert "Evolved Directives (Gen v2)" in lead_gen["prompt_template"]
-    finally:
-        stop_poller.set()
-        poller_thread.join(timeout=2.0)
-
-
-def test_chromium_bridge_cold_start_availability_and_concurrent_non_eviction():
-    from planaieditor.planai_llm_core import ChromiumPromptBridge
-
-    bridge = ChromiumPromptBridge()
-
-    # 1. Cold start: desktop registers while MLX model is still warming up ('unavailable')
-    reg = bridge.register_client(
-        {
-            "app_name": "Nucleus",
-            "language_model_availability": "unavailable",
-        }
+    # 3. Run full PlanAI AutoplanPromptEvolutionGraph via /api/evolution/evolve on Apple FoundationModels
+    evolve_res = client.post(
+        "/api/evolution/evolve",
+        json={"project_id": "*", "reason": "operator_bounce_cycle"},
     )
-    cid = reg["client_id"]
-    assert bridge.active_client() is None
+    assert evolve_res.status_code == 200
+    evo_data = evolve_res.get_json()
+    assert evo_data["workflow"]["state"] == "succeeded"
+    assert evo_data["workflow"]["result"]["llm_provider_used"] == "apple-foundation-models"
 
-    # Poll passes updated availability='available' once MLX finishes loading
-    assert bridge.poll_request(cid, timeout_s=0.05, availability="available") is None
-    active = bridge.active_client()
-    assert active is not None and active["client_id"] == cid
+    evo_node_states = {n["id"]: n["state"] for n in evo_data["workflow"]["nodes"]}
+    assert evo_node_states == {
+        "TraceCollectorWorker": "succeeded",
+        "FailureCritiqueWorker": "succeeded",
+        "EvolutionCritiqueJoiner": "succeeded",
+        "EvolutionCommitSink": "succeeded",
+    }
 
-    # 2. Concurrent prompts: prompt #1 is picked up and takes 0.45s (> pickup_timeout_s=0.15s).
-    # Prompt #2 arrives concurrently while #1 is in-flight — client MUST NOT be evicted!
-    results: dict[str, str] = {}
-    errors: list[Exception] = []
+    evo_joiner = next(
+        n for n in evo_data["workflow"]["nodes"] if n["id"] == "EvolutionCritiqueJoiner"
+    )
+    assert evo_joiner["metrics"]["joined_critiques"] == 2
 
-    def _desktop_sequential_worker():
-        for idx in range(2):
-            job = bridge.poll_request(cid, timeout_s=2.0, availability="available")
-            assert job is not None
-            time.sleep(0.35)
-            bridge.submit_response(
-                request_id=job["request_id"],
-                content=f"reply_{idx + 1}",
-            )
-
-    worker_t = threading.Thread(target=_desktop_sequential_worker, daemon=True)
-    worker_t.start()
-
-    def _caller(key: str):
-        try:
-            out = bridge.execute_prompt(
-                [{"role": "user", "content": key}],
-                timeout_s=5.0,
-                pickup_timeout_s=0.12,
-            )
-            results[key] = out["content"]
-        except Exception as exc:
-            errors.append(exc)
-
-    t1 = threading.Thread(target=_caller, args=("p1",))
-    t2 = threading.Thread(target=_caller, args=("p2",))
-    t1.start()
-    time.sleep(0.03)
-    t2.start()
-    t1.join(timeout=5.0)
-    t2.join(timeout=5.0)
-    worker_t.join(timeout=2.0)
-
-    assert errors == [], f"Unexpected concurrent bridge errors: {errors}"
-    assert set(results.values()) == {"reply_1", "reply_2"}
-    assert bridge.active_client() is not None
-    assert bridge.active_client()["client_id"] == cid
-
+    lead_gen = store.get_active_prompt("lead_planner")
+    chief_gen = store.get_active_prompt("chief_triage")
+    assert lead_gen is not None and lead_gen["generation"] == 2
+    assert chief_gen is not None and chief_gen["generation"] == 2
+    assert "Evolved Directives (Gen v2)" in lead_gen["prompt_template"]

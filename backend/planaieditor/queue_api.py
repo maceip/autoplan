@@ -390,52 +390,11 @@ def setup_queue(
             {
                 "success": True,
                 "reply": reply,
-                "provider_used": llm_manager.hybrid_client.last_provider_used
+                "provider_used": llm_manager.last_provider_used
                 or llm_manager.status_label,
                 "diagnostics": llm_manager.full_diagnostics(),
             }
         )
-
-    @app.route("/api/llm/chromium-bridge/register", methods=["POST"])
-    def chromium_bridge_register():
-        data = request.get_json(silent=True) or {}
-        rec = llm_manager.bridge.register_client(data)
-        return jsonify({"success": True, "client": rec})
-
-    @app.route("/api/llm/chromium-bridge/heartbeat", methods=["POST"])
-    def chromium_bridge_heartbeat():
-        data = request.get_json(silent=True) or {}
-        ok = llm_manager.bridge.heartbeat(
-            str(data.get("client_id") or ""),
-            availability=data.get("language_model_availability"),
-        )
-        return jsonify({"success": ok})
-
-    @app.route("/api/llm/chromium-bridge/poll", methods=["GET"])
-    def chromium_bridge_poll():
-        client_id = str(request.args.get("client_id") or "").strip()
-        if not client_id:
-            return jsonify({"success": False, "error": "client_id required"}), 400
-        availability = str(request.args.get("availability") or "").strip() or None
-        timeout_s = min(15.0, max(0.1, float(request.args.get("timeout") or 6.0)))
-        req_item = llm_manager.bridge.poll_request(
-            client_id, timeout_s=timeout_s, availability=availability
-        )
-        return jsonify({"success": True, "request": req_item})
-
-    @app.route("/api/llm/chromium-bridge/respond", methods=["POST"])
-    def chromium_bridge_respond():
-        data = request.get_json(silent=True) or {}
-        req_id = str(data.get("request_id") or "").strip()
-        if not req_id:
-            return jsonify({"success": False, "error": "request_id required"}), 400
-        delivered = llm_manager.bridge.submit_response(
-            request_id=req_id,
-            content=str(data.get("content") or ""),
-            error=str(data.get("error") or ""),
-            metrics=data.get("metrics") if isinstance(data.get("metrics"), dict) else {},
-        )
-        return jsonify({"success": delivered})
 
     # ---- Chief-of-Staff Review Queue API --------------------------------
 
