@@ -1387,7 +1387,7 @@ class RateLimiter:
 class Board:
     """Rate-limited, channel-scoped, cursor-tracked multi-agent coordination board."""
 
-    def __init__(self, swarm_id: str = "", rate_per_minute: int = 120) -> None:
+    def __init__(self, swarm_id: str = "", rate_per_minute: int = 60) -> None:
         self.swarm_id = swarm_id or uuid.uuid4().hex[:12]
         self.messages: List[BoardMessage] = []
         self.members: Dict[str, Member] = {}
@@ -1775,18 +1775,71 @@ class CascadeManager:
         self.trajectories[t.conversation_id] = t
         return t
 
+    def warm_up_agent_process(self) -> bool:
+        return True
+
     def shutdown(self) -> None:
         self.hub.kill_all()
 
+    def is_all_fully_idle(self) -> bool:
+        return self._running_tasks == 0 and all(
+            a.state != "running" for a in self.hub.agents.values()
+        )
+
+    def is_quiesced(self) -> bool:
+        return self.is_all_fully_idle() and not self.planexec.handoffs
+
+    def wait_for_conversation_fully_idle(self) -> None:
+        return None
+
+    def running_tasks(self) -> int:
+        return self._running_tasks
+
     def get_resolved_cascade_config(self) -> CascadeConfig:
         return self.cfg
+
+    def resolve_request_agent_config(self, requested: Dict[str, Any]) -> CascadeConfig:
+        cfg = self.cfg
+        if "permission_preset" in requested:
+            if self.admin.permission_preset_locked:
+                raise PermissionError("permission_preset is locked by administrator")
+            cfg = replace(cfg, permission_preset=str(requested["permission_preset"]))
+        return cfg
 
     def get_trajectory(self, conversation_id: str) -> Trajectory:
         if conversation_id not in self.trajectories:
             raise KeyError(f"trajectory {conversation_id} not found")
         return self.trajectories[conversation_id]
 
-    def fork_conversation(self, conversation_id: str) -> Trajectory:
+    def save_trajectory(self, conversation_id: str) -> str:
+        return self.get_trajectory(conversation_id).save(self.data_root)
+
+    def load_trajectory(self, conversation_id: str) -> Trajectory:
+        t = Trajectory.load(self.data_root, conversation_id)
+        self.trajectories[t.conversation_id] = t
+        return t
+
+    def delete_trajectory(self, conversation_id: str) -> None:
+        self.get_trajectory(conversation_id).delete(self.data_root)
+        self.trajectories.pop(conversation_id, None)
+
+    def revert_to_step(self, conversation_id: str, index: int) -> Dict[str, Any]:
+        return self.get_trajectory(conversation_id).revert_to_step(index)
+
+    def resident_trajectory_count(self) -> int:
+        return resident_trajectory_count(self.data_root)
+
+    def conversation_summary(self, conversation_id: str) -> str:
+        t = self.get_trajectory(conversation_id)
+        kinds: Dict[str, int] = {}
+        for s in t.steps:
+            kinds[s.type] = kinds.get(s.type, 0) + 1
+        return (
+            f"conversation {conversation_id}: {t.count()} steps "
+            f"{kinds} sensitivity={t.sensitivity_level}"
+        )
+
+    def fork_conversation(self, conversation_id: str, name: str = "") -> Trajectory:
         src = self.get_trajectory(conversation_id)
         last_step = src.last()
         if last_step is not None and not last_step.is_terminal:
@@ -1807,6 +1860,62 @@ class CascadeManager:
             self.board.set_coordinator("coordinator")
             self.board.add_member(Member(name="coordinator", role="coordinator"))
         return self.board
+
+    def swarm_status(self) -> Dict[str, Any]:
+        b = self.ensure_swarm()
+        return {
+            "swarm_id": b.swarm_id,
+            "coordinator": b.coordinator,
+            "members": b.roster(),
+            "messages": len(b.messages),
+        }
+
+    def swarm_models(self) -> Dict[str, Any]:
+        return {
+            "tiers": list(MODEL_TIERS),
+            "quota_remaining": None,
+            "quota_resets": None,
+            "note": "quota is resolved by the model layer, out of scope here",
+        }
+
+    def define_subagent(self, name: str, role: str, system_prompt: str) -> SubagentSpec:
+        return SubagentSpec(role=role or name, system_prompt=system_prompt)
+
+    def manage_subagents(
+        self, action: str, conversation_ids: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        if action == "list":
+            return [
+                {
+                    "id": a.id,
+                    "role": a.spec.role,
+                    "state": a.state,
+                    "model_tier": a.model_tier,
+                    "workspace": a.workspace,
+                }
+                for a in self.hub.list()
+            ]
+        if action == "list_peers":
+            return [{"id": a.id, "parent": a.parent_id} for a in self.hub.list()]
+        if action == "kill":
+            for cid in conversation_ids or []:
+                self.hub.kill(cid)
+            return [{"killed": cid} for cid in (conversation_ids or [])]
+        if action == "kill_all":
+            self.hub.kill_all()
+            return [{"killed": "*"}]
+        raise ValueError(
+            f"unknown action {action!r}, want one of {MANAGE_ACTIONS}"
+        )
+
+    def send_message(self, recipient: str, message: str, sender: str = "root") -> None:
+        targets = (
+            [a.id for a in self.hub.list() if a.parent_id == sender]
+            if recipient == "@children"
+            else [recipient]
+        )
+        for t in targets:
+            self.board.post(sender, "fyi", message, channel=t)
 
     def invoke_subagent(
         self,

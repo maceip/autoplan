@@ -1534,14 +1534,15 @@ class EvolutionEngine:
                     )
                     saved_prompts.append(pv)
                     if crit.proposed_rule and len(crit.proposed_rule) >= 12:
-                        rule = engine.store.upsert_evolution_rule(
+                        rule = engine._guarded_upsert_rule(
                             category="evolved_guardrail",
                             rule_text=crit.proposed_rule[:240],
                             source_type="planai_evolution_graph",
                             source_ref=wf_id,
                             project_id=task.project_id or "*",
                         )
-                        saved_rules.append(rule)
+                        if rule is not None:
+                            saved_rules.append(rule)
 
                 new_gen = (
                     max(int(p["generation"]) for p in saved_prompts)

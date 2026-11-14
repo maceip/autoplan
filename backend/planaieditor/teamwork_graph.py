@@ -303,6 +303,35 @@ team_graph.set_dependency(planning_subgraph, fanout).next(executor).next(joiner)
 """
 
 
+def validate_subagent_role_contract(
+    raw_role: str, objective: str, workspace: str = "branch"
+) -> Tuple[str, Optional[Dict[str, str]]]:
+    """Validate `raw_role` directly against `SubagentSpec`'s 2-5 word job-title contract.
+
+    Returns `(validated_role, coercion_record_or_None)` so callers never silently mask
+    an invalid LLM-generated role without recording the contract violation.
+    """
+    try:
+        SubagentSpec(
+            role=raw_role,
+            system_prompt=objective,
+            workspace=workspace,
+        )
+        return raw_role, None
+    except ValueError as role_err:
+        coerced = normalize_role_title(raw_role)
+        SubagentSpec(
+            role=coerced,
+            system_prompt=objective,
+            workspace=workspace,
+        )
+        return coerced, {
+            "raw_role": raw_role,
+            "normalized_role": coerced,
+            "reason": str(role_err),
+        }
+
+
 def _default_teamwork_nodes() -> List[Dict[str, Any]]:
     return [
         {
@@ -916,22 +945,11 @@ class TeamworkOrchestrator:
                     )
                     raw_role = st.role.strip() or f"Task Specialist {idx + 1}"
                     obj_text = st.objective.strip() or task.goal
-                    try:
-                        SubagentSpec(
-                            role=raw_role,
-                            system_prompt=obj_text,
-                            workspace="branch",
-                        )
-                        validated_role = raw_role
-                    except ValueError as role_err:
-                        validated_role = normalize_role_title(raw_role)
-                        role_coercions.append(
-                            {
-                                "raw_role": raw_role,
-                                "normalized_role": validated_role,
-                                "reason": str(role_err),
-                            }
-                        )
+                    validated_role, coercion = validate_subagent_role_contract(
+                        raw_role, obj_text, workspace="branch"
+                    )
+                    if coercion is not None:
+                        role_coercions.append(coercion)
                     subtasks.append(
                         SubtaskSpec(
                             role=validated_role,
