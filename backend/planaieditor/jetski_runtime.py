@@ -796,14 +796,22 @@ class PolicyGuardian:
 
 
 def _extract_added_lines_by_file(diff_text: str) -> Dict[str, str]:
-    """Parse a unified git diff into `{rel_path: added_lines_text}`."""
+    """Parse a unified git diff into `{rel_path: added_lines_text}`.
+
+    Resets `current_file` on `diff --git` headers and `+++ /dev/null` deleted-file
+    hunks so trailing lines never bleed into an earlier file's bucket.
+    """
     by_file: Dict[str, List[str]] = {}
     current_file = ""
     for line in diff_text.splitlines():
-        if line.startswith("+++ b/"):
+        if line.startswith("diff --git "):
+            current_file = ""
+        elif line.startswith("+++ /dev/null"):
+            current_file = ""
+        elif line.startswith("+++ b/"):
             current_file = line[6:].strip()
             by_file.setdefault(current_file, [])
-        elif line.startswith("+++ ") and not line.startswith("+++ /dev/null"):
+        elif line.startswith("+++ "):
             current_file = line[4:].strip()
             by_file.setdefault(current_file, [])
         elif line.startswith("+") and not line.startswith("+++"):
@@ -812,32 +820,55 @@ def _extract_added_lines_by_file(diff_text: str) -> Dict[str, str]:
     return {k: "\n".join(v) for k, v in by_file.items()}
 
 
+def _extract_non_line_diff_notes(diff_text: str) -> List[str]:
+    """Surface binary blobs and executable mode changes (`100755`) that have no `+` text lines."""
+    notes: List[str] = []
+    for line in diff_text.splitlines():
+        if line.startswith("Binary files ") or line == "GIT binary patch":
+            notes.append(line.strip()[:120])
+        elif line.startswith(("new mode 100755", "new file mode 100755")):
+            notes.append(line.strip())
+    return notes
+
+
 def evaluate_diff_with_policy_guardian(
     diff_text: str,
     changed_files: List[str],
     test_command: str = "",
     model: Optional[Model] = None,
 ) -> Dict[str, Any]:
-    """Run Jet Ski `PolicyGuardian` over a workflow's test command and git diff."""
+    """Run Jet Ski `PolicyGuardian` over a workflow's test command and git diff.
+
+    Note on diff scope: content-level token scanning inspects added (`+`) text lines
+    per file, while path-level checks (`../` boundary escapes, `.git/hooks/` tampering,
+    and secret filenames) run across all `changed_files` including deletions, renames,
+    mode changes, and binary files. Binary/executable-mode metadata is reported in
+    `diff_notes`, and `verified_non_empty` distinguishes `checks_run > 0` from empty input.
+    """
     guardian = PolicyGuardian(model=model)
     verdicts: List[GuardVerdict] = []
     risk_entries: List[Dict[str, Any]] = []
+
+    def _record_risk(v: GuardVerdict, target: str) -> None:
+        if v.risk_signal and (not v.allowed or v.severity >= 2.0):
+            risk_entries.append(
+                {
+                    "code": v.risk_signal,
+                    "label": RISK_SIGNALS.get(v.risk_signal, v.risk_signal),
+                    "target": target,
+                    "reason": v.reason,
+                    "severity": v.severity,
+                    "allowed": v.allowed,
+                    "escalated_to_judge": v.escalated_to_judge,
+                }
+            )
 
     if test_command.strip():
         v_cmd = guardian.check(
             {"tool_name": "run_command", "args": {"command": test_command.strip()}}
         )
         verdicts.append(v_cmd)
-        if v_cmd.risk_signal and not v_cmd.allowed:
-            risk_entries.append(
-                {
-                    "code": v_cmd.risk_signal,
-                    "label": RISK_SIGNALS.get(v_cmd.risk_signal, v_cmd.risk_signal),
-                    "target": test_command.strip()[:120],
-                    "reason": v_cmd.reason,
-                    "severity": v_cmd.severity,
-                }
-            )
+        _record_risk(v_cmd, test_command.strip()[:120])
 
     added_by_file = _extract_added_lines_by_file(diff_text)
     all_paths = list(dict.fromkeys([*changed_files, *added_by_file.keys()]))
@@ -849,16 +880,7 @@ def evaluate_diff_with_policy_guardian(
             {"tool_name": "repo_diff_write", "args": {"path": path, "content": added}}
         )
         verdicts.append(v_file)
-        if v_file.risk_signal and (not v_file.allowed or v_file.severity >= 2.0):
-            risk_entries.append(
-                {
-                    "code": v_file.risk_signal,
-                    "label": RISK_SIGNALS.get(v_file.risk_signal, v_file.risk_signal),
-                    "target": path,
-                    "reason": v_file.reason,
-                    "severity": v_file.severity,
-                }
-            )
+        _record_risk(v_file, path)
 
     if not all_paths and diff_text.strip():
         added_raw = added_by_file.get("__diff__", diff_text)
@@ -866,21 +888,13 @@ def evaluate_diff_with_policy_guardian(
             {"tool_name": "repo_diff_write", "args": {"path": "diff.patch", "content": added_raw}}
         )
         verdicts.append(v_raw)
-        if v_raw.risk_signal and (not v_raw.allowed or v_raw.severity >= 2.0):
-            risk_entries.append(
-                {
-                    "code": v_raw.risk_signal,
-                    "label": RISK_SIGNALS.get(v_raw.risk_signal, v_raw.risk_signal),
-                    "target": "diff.patch",
-                    "reason": v_raw.reason,
-                    "severity": v_raw.severity,
-                }
-            )
+        _record_risk(v_raw, "diff.patch")
 
     allowed = all(v.allowed for v in verdicts) if verdicts else True
     max_sev = round(max((v.severity for v in verdicts), default=0.0), 2)
     all_routine = all(v.routine for v in verdicts) if verdicts else True
     escalated = any(v.escalated_to_judge for v in verdicts)
+    diff_notes = _extract_non_line_diff_notes(diff_text)
 
     monitor_summary: Dict[str, Dict[str, Any]] = {}
     for sig in guardian.monitors.signals:
@@ -895,11 +909,13 @@ def evaluate_diff_with_policy_guardian(
 
     return {
         "allowed": allowed,
+        "verified_non_empty": len(verdicts) > 0,
         "severity": max_sev,
         "routine": all_routine,
         "escalated_to_judge": escalated,
         "checks_run": len(verdicts),
         "risk_signals": risk_entries,
+        "diff_notes": diff_notes,
         "monitors": list(monitor_summary.values()),
         "summary": (
             f"ALLOW (severity {max_sev:.1f}, {len(verdicts)} checks)"

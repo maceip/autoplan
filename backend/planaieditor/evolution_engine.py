@@ -426,20 +426,73 @@ class EvolutionEngine:
         model = PlanAIModelAdapter(self.llm_manager)
         return PolicyGuardian(model=model)
 
+    def _guarded_upsert_rule(
+        self,
+        *,
+        category: str,
+        rule_text: str,
+        source_type: str,
+        source_ref: str,
+        project_id: str = "*",
+        evidence_count: Optional[int] = None,
+        guardian: Optional[PolicyGuardian] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Vet rule content through `PolicyGuardian` before persisting to `evolution_rules`."""
+        g = guardian or self._make_policy_guardian()
+        verdict = g.check(
+            {
+                "tool_name": "repo_diff_write",
+                "args": {"path": ".agents/rules/learned.md", "content": rule_text},
+            }
+        )
+        if not verdict.allowed:
+            return None
+        kwargs: Dict[str, Any] = {
+            "category": category,
+            "rule_text": rule_text,
+            "source_type": source_type,
+            "source_ref": source_ref,
+            "project_id": project_id,
+        }
+        if evidence_count is not None:
+            kwargs["evidence_count"] = evidence_count
+        return self.store.upsert_evolution_rule(**kwargs)
+
     def bootstrap(self) -> Dict[str, Any]:
         """Seed Generation 1 prompts and ingest real breakdown_trends.json + historical decisions."""
+        boot_guardian = self._make_policy_guardian()
         if not self.store.get_active_prompt("lead_planner"):
-            self.store.create_prompt_version(
-                worker_role="lead_planner",
-                prompt_template=DEFAULT_LEAD_PLANNER_PROMPT,
-                rationale="Bootstrap Generation 1 LeadPlanner multi-agent decomposition template.",
+            v_lp = boot_guardian.check(
+                {
+                    "tool_name": "repo_diff_write",
+                    "args": {
+                        "path": ".agents/prompts/lead_planner.md",
+                        "content": DEFAULT_LEAD_PLANNER_PROMPT,
+                    },
+                }
             )
+            if v_lp.allowed:
+                self.store.create_prompt_version(
+                    worker_role="lead_planner",
+                    prompt_template=DEFAULT_LEAD_PLANNER_PROMPT,
+                    rationale="Bootstrap Generation 1 LeadPlanner multi-agent decomposition template.",
+                )
         if not self.store.get_active_prompt("chief_triage"):
-            self.store.create_prompt_version(
-                worker_role="chief_triage",
-                prompt_template=DEFAULT_CHIEF_TRIAGE_PROMPT,
-                rationale="Bootstrap Generation 1 ChiefOfStaff triage template.",
+            v_ct = boot_guardian.check(
+                {
+                    "tool_name": "repo_diff_write",
+                    "args": {
+                        "path": ".agents/prompts/chief_triage.md",
+                        "content": DEFAULT_CHIEF_TRIAGE_PROMPT,
+                    },
+                }
             )
+            if v_ct.allowed:
+                self.store.create_prompt_version(
+                    worker_role="chief_triage",
+                    prompt_template=DEFAULT_CHIEF_TRIAGE_PROMPT,
+                    rationale="Bootstrap Generation 1 ChiefOfStaff triage template.",
+                )
 
         corpus_loaded = False
         corpus_total_prompts = 0
@@ -456,15 +509,16 @@ class EvolutionEngine:
                 for cat_key, (rule_cat, rule_text) in _CORPUS_CATEGORY_RULES.items():
                     cat_data = categories.get(cat_key)
                     if isinstance(cat_data, dict) and int(cat_data.get("prompts") or 0) > 0:
-                        self.store.upsert_evolution_rule(
+                        if self._guarded_upsert_rule(
                             category=rule_cat,
                             rule_text=rule_text,
                             source_type="operator_corpus_bootstrap",
                             source_ref=f"breakdown_trends:{cat_key}",
                             project_id="*",
                             evidence_count=int(cat_data["prompts"]),
-                        )
-                        seeded_rules += 1
+                            guardian=boot_guardian,
+                        ):
+                            seeded_rules += 1
             except Exception:
                 corpus_loaded = False
 
@@ -472,13 +526,14 @@ class EvolutionEngine:
             if dec["action"] in ("request_changes", "reject") and str(dec.get("note") or "").strip():
                 item = self.store.get_item(dec["item_id"])
                 proj_id = (item.get("project_id") if item else "") or "*"
-                self.store.upsert_evolution_rule(
+                self._guarded_upsert_rule(
                     category="operator_feedback",
                     rule_text=f"Operator correction ({dec['action']}): {str(dec['note']).strip()[:240]}",
                     source_type="operator_decision",
                     source_ref=dec["id"],
                     project_id=proj_id,
                     evidence_count=1,
+                    guardian=boot_guardian,
                 )
 
         return {
@@ -526,33 +581,35 @@ class EvolutionEngine:
             self.store.record_prompt_outcome("lead_planner", passed=False)
             self.store.record_prompt_outcome("chief_triage", passed=False)
             if note:
-                rule = self.store.upsert_evolution_rule(
+                rule = self._guarded_upsert_rule(
                     category="operator_feedback",
                     rule_text=f"Operator feedback ({action}): {note[:240]}",
                     source_type="operator_decision",
                     source_ref=str(decision.get("id") or ""),
                     project_id=project_id,
                 )
-                self._on_event(
-                    "evolution_rule_learned", {"rule": rule, "item_id": item["id"]}
-                )
+                if rule:
+                    self._on_event(
+                        "evolution_rule_learned", {"rule": rule, "item_id": item["id"]}
+                    )
                 return rule
         return None
 
     def observe_gate_failure(
         self, project_id: str, workflow_id: str, failure_summary: str
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
         self.store.record_prompt_outcome("lead_planner", passed=False)
-        rule = self.store.upsert_evolution_rule(
+        rule = self._guarded_upsert_rule(
             category="verification_gate",
             rule_text=f"Avoid repeat verification failure: {failure_summary.strip()[:240]}",
             source_type="gate_failure",
             source_ref=workflow_id,
             project_id=project_id or "*",
         )
-        self._on_event(
-            "evolution_rule_learned", {"rule": rule, "workflow_id": workflow_id}
-        )
+        if rule:
+            self._on_event(
+                "evolution_rule_learned", {"rule": rule, "workflow_id": workflow_id}
+            )
         return rule
 
     def observe_policy_violation(
@@ -566,16 +623,17 @@ class EvolutionEngine:
         code = str(top.get("code") or "POLICY")
         label = str(top.get("label") or "policy violation")
         reason = str(top.get("reason") or "unsafe step")
-        rule = self.store.upsert_evolution_rule(
+        rule = self._guarded_upsert_rule(
             category=f"policy_guardian_{code.lower()}",
             rule_text=f"PolicyGuardian [{code}: {label}] block: {reason[:180]}",
             source_type="policy_guardian",
             source_ref=workflow_id,
             project_id=project_id or "*",
         )
-        self._on_event(
-            "evolution_rule_learned", {"rule": rule, "workflow_id": workflow_id}
-        )
+        if rule:
+            self._on_event(
+                "evolution_rule_learned", {"rule": rule, "workflow_id": workflow_id}
+            )
         return rule
 
     def observe_revision_resolution(
@@ -678,22 +736,34 @@ class EvolutionEngine:
             f"3. Run deterministic verification command `{test_cmd or 'project test suite'}` before requesting Human Gate review.",
             "4. Ensure PolicyGuardian fastpath & Law-2 reality checks pass with zero secrets or unauthorized placeholders.",
         ]
-        disk_skill = self.skill_accumulator.upsert_skill(
-            name=skill_slug,
-            description=skill_desc,
-            instructions_md="\n".join(checklist),
-            source_workflow_id=wf_id,
-            evidence_count=next_evidence,
+        checklist_md = "\n".join(checklist)
+        v_skill = guardian.check(
+            {
+                "tool_name": "repo_diff_write",
+                "args": {
+                    "path": f".agents/skills/{skill_slug}/SKILL.md",
+                    "content": checklist_md,
+                },
+            }
         )
-        saved_skill = self.store.upsert_accumulated_skill(
-            name=skill_slug,
-            description=skill_desc,
-            skill_path=disk_skill["skill_path"],
-            instructions_md="\n".join(checklist),
-            project_id=proj_id,
-            source_workflow_id=wf_id,
-            evidence_count=next_evidence,
-        )
+        saved_skill = None
+        if v_skill.allowed:
+            disk_skill = self.skill_accumulator.upsert_skill(
+                name=skill_slug,
+                description=skill_desc,
+                instructions_md=checklist_md,
+                source_workflow_id=wf_id,
+                evidence_count=next_evidence,
+            )
+            saved_skill = self.store.upsert_accumulated_skill(
+                name=skill_slug,
+                description=skill_desc,
+                skill_path=disk_skill["skill_path"],
+                instructions_md=checklist_md,
+                project_id=proj_id,
+                source_workflow_id=wf_id,
+                evidence_count=next_evidence,
+            )
 
         self._on_event(
             "evolution_memory_updated",

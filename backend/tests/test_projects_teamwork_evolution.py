@@ -278,6 +278,7 @@ def test_planai_multi_agent_teamwork_graph_and_svelteflow_projection(
         "subagent_2": "succeeded",
         "TeamSynthesisJoiner": "succeeded",
         "VerificationGateWorker": "succeeded",
+        "CriticWorker": "succeeded",
         "ChiefEscalationSink": "waiting_gate",
         "DoneTerminal": "idle",
         "AbortedTerminal": "idle",
@@ -287,6 +288,7 @@ def test_planai_multi_agent_teamwork_graph_and_svelteflow_projection(
     assert kinds_by_id["LeadPlannerWorker"] == "agent"
     assert kinds_by_id["TeamSynthesisJoiner"] == "deterministic"
     assert kinds_by_id["VerificationGateWorker"] == "deterministic"
+    assert kinds_by_id["CriticWorker"] == "agent"
     assert kinds_by_id["ChiefEscalationSink"] == "human_gate"
     assert kinds_by_id["DoneTerminal"] == "terminal"
     assert kinds_by_id["AbortedTerminal"] == "terminal"
@@ -296,13 +298,19 @@ def test_planai_multi_agent_teamwork_graph_and_svelteflow_projection(
     assert joiner_node["metrics"]["joined_agents"] == 2
     assert len(wf["provenance"]) >= 2
 
+    detail_res = client.get(f"/api/planai/workflows/{wf_id}/detail").get_json()
+    assert detail_res["success"] is True
+    assert detail_res["critic_review"]["verdict"] == "APPROVED"
+    assert detail_res["critic_review"]["notes"]
+
     # SvelteFlow projection endpoint returns live nodes + typed Task edges + Python source
     sf = client.get(f"/api/planai/workflows/{wf_id}/svelteflow").get_json()
     assert sf["success"] is True
-    assert len(sf["nodes"]) == 11
-    assert len(sf["edges"]) == 13
+    assert len(sf["nodes"]) == 12
+    assert len(sf["edges"]) == 14
     assert "JoinedTaskWorker" in sf["pythonCode"]
     assert "PlanAILeadPlannerLLMWorker" in sf["pythonCode"]
+    assert "PlanAICriticLLMWorker" in sf["pythonCode"]
 
     # Chief reviews and lands the integrated branch combining BOTH sub-agents' commits!
     chief.process_once()

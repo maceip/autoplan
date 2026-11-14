@@ -215,6 +215,7 @@ class VerifiedTeamBundleTask(Task):
     plan_summary: str
     integrated_branch: str = ""
     integrated_commit: str = ""
+    diff_excerpt: str = ""
     changed_files: List[str] = Field(default_factory=list)
     merge_conflicts: List[str] = Field(default_factory=list)
     test_report: Dict[str, Any] = Field(default_factory=dict)
@@ -222,6 +223,47 @@ class VerifiedTeamBundleTask(Task):
     secret_scan: Dict[str, Any] = Field(default_factory=dict)
     policy_guardian: Dict[str, Any] = Field(default_factory=dict)
     gate_passed: bool = True
+    subagent_results: List[SubAgentResultTask] = Field(default_factory=list)
+    session_key: str = ""
+    round_num: int = 1
+    max_rounds: int = 3
+    existing_queue_item_id: str = ""
+
+
+class LLMTeamCritiqueTask(Task):
+    verdict: str = Field(
+        description="'APPROVED' if all sub-agent changes, tests, and guardrails align cleanly, else 'NEEDS_REVISION'"
+    )
+    blind_spots: List[str] = Field(
+        default_factory=list,
+        description="Up to 3 concrete blind spots, cross-lane assumptions, or missing checks",
+    )
+    review_notes: str = Field(
+        description="Concise adversarial review grounded in the integrated diff and verification report"
+    )
+
+
+class CritiquedTeamBundleTask(Task):
+    workflow_id: str
+    project_id: str
+    repo_path: str
+    default_branch: str
+    base_branch: str = ""
+    test_command: str
+    goal: str
+    plan_summary: str
+    integrated_branch: str = ""
+    integrated_commit: str = ""
+    changed_files: List[str] = Field(default_factory=list)
+    merge_conflicts: List[str] = Field(default_factory=list)
+    test_report: Dict[str, Any] = Field(default_factory=dict)
+    reality_scan: Dict[str, Any] = Field(default_factory=dict)
+    secret_scan: Dict[str, Any] = Field(default_factory=dict)
+    policy_guardian: Dict[str, Any] = Field(default_factory=dict)
+    gate_passed: bool = True
+    critic_verdict: str = "APPROVED"
+    critic_blind_spots: List[str] = Field(default_factory=list)
+    critic_notes: str = ""
     subagent_results: List[SubAgentResultTask] = Field(default_factory=list)
     session_key: str = ""
     round_num: int = 1
@@ -247,16 +289,17 @@ planning_subgraph = SubGraphWorker(
     exit_worker=planner,
 )
 
-# Outer Multi-Agent Teamwork Graph
+# Outer Multi-Agent Teamwork Graph (with Adversarial Critic Subswarm)
 team_graph = Graph(name="MultiAgentTeamworkGraph")
 fanout = SubtaskFanOutWorker()
 executor = MultiAgentDispatchWorker(num_consumers=3)
 joiner = TeamSynthesisJoiner()
 gate = VerificationGateWorker()
+critic = PlanAICriticLLMWorker(llm=llm, prompt=critic_prompt)
 sink = ChiefEscalationSink()
 
-team_graph.add_workers(planning_subgraph, fanout, executor, joiner, gate, sink)
-team_graph.set_dependency(planning_subgraph, fanout).next(executor).next(joiner).next(gate).next(sink)
+team_graph.add_workers(planning_subgraph, fanout, executor, joiner, gate, critic, sink)
+team_graph.set_dependency(planning_subgraph, fanout).next(executor).next(joiner).next(gate).next(critic).next(sink)
 """
 
 
@@ -323,9 +366,20 @@ def _default_teamwork_nodes() -> List[Dict[str, Any]]:
             "kind": "deterministic",
             "worker_type": "TaskWorker",
             "svelte_type": "taskworker",
-            "role": "Runs project test_command + Law-2 Reality Scan + Secret Scan",
+            "role": "Runs project test_command + Law-2 Reality Scan + Secret Scan + PolicyGuardian",
             "state": "idle",
             "position": {"x": 1300, "y": 150},
+            "metrics": {},
+        },
+        {
+            "id": "CriticWorker",
+            "label": "CriticWorker",
+            "kind": "agent",
+            "worker_type": "LLMTaskWorker",
+            "svelte_type": "llmtaskworker",
+            "role": "Adversarial critic subswarm auditing integrated diff, cross-lane scope & blind spots",
+            "state": "idle",
+            "position": {"x": 1525, "y": 150},
             "metrics": {},
         },
         {
@@ -336,7 +390,7 @@ def _default_teamwork_nodes() -> List[Dict[str, Any]]:
             "svelte_type": "taskworker",
             "role": "Human Gate: approve & merge, request revision, or abort",
             "state": "idle",
-            "position": {"x": 1550, "y": 150},
+            "position": {"x": 1750, "y": 150},
             "metrics": {},
         },
         {
@@ -347,7 +401,7 @@ def _default_teamwork_nodes() -> List[Dict[str, Any]]:
             "svelte_type": "taskworker",
             "role": "Integrated team branch merged onto target branch",
             "state": "idle",
-            "position": {"x": 1800, "y": 100},
+            "position": {"x": 1980, "y": 100},
             "metrics": {},
         },
         {
@@ -358,7 +412,7 @@ def _default_teamwork_nodes() -> List[Dict[str, Any]]:
             "svelte_type": "taskworker",
             "role": "Workflow aborted or halted on fatal error",
             "state": "idle",
-            "position": {"x": 1800, "y": 210},
+            "position": {"x": 1980, "y": 210},
             "metrics": {},
         },
     ]
@@ -412,11 +466,20 @@ def _default_teamwork_edges() -> List[Dict[str, Any]]:
             "is_back_edge": False,
         },
         {
-            "id": "e_gate_sink",
+            "id": "e_gate_critic",
             "source": "VerificationGateWorker",
-            "target": "ChiefEscalationSink",
+            "target": "CriticWorker",
             "label": "verified",
             "task_type": "VerifiedTeamBundleTask",
+            "active": False,
+            "is_back_edge": False,
+        },
+        {
+            "id": "e_critic_sink",
+            "source": "CriticWorker",
+            "target": "ChiefEscalationSink",
+            "label": "critiqued",
+            "task_type": "CritiquedTeamBundleTask",
             "active": False,
             "is_back_edge": False,
         },
@@ -669,6 +732,7 @@ class TeamworkOrchestrator:
         item: Dict[str, Any],
         revision_note: str,
         timeout_per_agent: int = 180,
+        reset_branch: bool = False,
     ) -> Dict[str, Any]:
         """Run a real cyclic `FORCE_REVISION` round of `MultiAgentTeamworkGraph` on the integrated branch."""
         clean_note = revision_note.strip()
@@ -712,7 +776,11 @@ class TeamworkOrchestrator:
             self._on_event("planai_workflow_updated", {"workflow": updated_wf})
 
         self.store.update_item(item["id"], status="in_progress")
-        base_branch = str(item.get("branch") or proj.get("default_branch") or "main")
+        base_branch = (
+            str(proj.get("default_branch") or "main")
+            if reset_branch
+            else str(item.get("branch") or proj.get("default_branch") or "main")
+        )
         revised_goal = (
             f"{wf.get('goal')}\n\n"
             f"[Revision Round {next_round}/{max_rounds} — Operator Gate Feedback]\n"
@@ -837,6 +905,7 @@ class TeamworkOrchestrator:
         ) -> TeamPlanTask:
             subtasks: List[SubtaskSpec] = []
             plan_summary = ""
+            role_coercions: List[Dict[str, str]] = []
             if parsed is not None:
                 plan_summary = parsed.plan_summary.strip()
                 for idx, st in enumerate(parsed.subtasks[:3]):
@@ -845,14 +914,29 @@ class TeamworkOrchestrator:
                         if st.service in task.dispatch_services
                         else task.dispatch_services[idx % len(task.dispatch_services)]
                     )
-                    norm_role = normalize_role_title(
-                        st.role.strip() or f"Task Specialist {idx + 1}"
-                    )
+                    raw_role = st.role.strip() or f"Task Specialist {idx + 1}"
+                    obj_text = st.objective.strip() or task.goal
+                    try:
+                        SubagentSpec(
+                            role=raw_role,
+                            system_prompt=obj_text,
+                            workspace="branch",
+                        )
+                        validated_role = raw_role
+                    except ValueError as role_err:
+                        validated_role = normalize_role_title(raw_role)
+                        role_coercions.append(
+                            {
+                                "raw_role": raw_role,
+                                "normalized_role": validated_role,
+                                "reason": str(role_err),
+                            }
+                        )
                     subtasks.append(
                         SubtaskSpec(
-                            role=norm_role,
+                            role=validated_role,
                             service=svc,
-                            objective=st.objective.strip() or task.goal,
+                            objective=obj_text,
                             owned_paths=st.owned_paths,
                         )
                     )
@@ -883,14 +967,16 @@ class TeamworkOrchestrator:
                         owned_paths=["verification"],
                     ),
                 ]
-            # Validate every subtask against Jet Ski's SubagentSpec 2-5 word job-title contract
+            # Strictly enforce SubagentSpec 2-5 word job-title contract without silent masking
             for st in subtasks:
-                st.role = normalize_role_title(st.role)
                 SubagentSpec(
                     role=st.role,
                     system_prompt=st.objective,
                     workspace="branch",
                 )
+            if role_coercions:
+                with state_lock:
+                    result_meta["role_contract_coercions"] = role_coercions
             with state_lock:
                 plan_exec.enter_plan_mode(
                     {"goal": task.goal, "subtasks": [s.role for s in subtasks]}
@@ -1709,6 +1795,7 @@ class TeamworkOrchestrator:
                     plan_summary=task.plan_summary,
                     integrated_branch=task.integrated_branch if task.changed_files else "",
                     integrated_commit=task.integrated_commit if task.changed_files else "",
+                    diff_excerpt=diff_text[:4000],
                     changed_files=task.changed_files,
                     merge_conflicts=task.merge_conflicts,
                     test_report=test_report,
@@ -1727,7 +1814,7 @@ class TeamworkOrchestrator:
                     "VerificationGateWorker",
                     "succeeded" if gate_passed else "failed",
                     f"Gate {'PASSED' if gate_passed else 'FLAGGED'} (reality={reality_scan['passed']}, policy={policy_guardian.get('summary')})",
-                    edge_id="e_gate_sink",
+                    edge_id="e_gate_critic",
                     metrics={
                         "gate_passed": gate_passed,
                         "test_passed": test_report.get("passed", True),
@@ -1738,15 +1825,205 @@ class TeamworkOrchestrator:
                     },
                 )
 
+        def _build_deterministic_critique(
+            task: VerifiedTeamBundleTask,
+        ) -> tuple[str, List[str], str]:
+            blind_spots: List[str] = []
+            if task.merge_conflicts:
+                blind_spots.append(
+                    f"Cross-lane merge conflict(s): {', '.join(task.merge_conflicts[:3])}"
+                )
+            if not task.reality_scan.get("passed", True):
+                blind_spots.append(
+                    "Law-2 reality scan flagged unauthorized mock/placeholder markers."
+                )
+            if not task.secret_scan.get("passed", True):
+                blind_spots.append("Secret scan detected credential token pattern.")
+            if not task.policy_guardian.get("allowed", True):
+                blind_spots.append(
+                    f"PolicyGuardian blocked diff ({task.policy_guardian.get('summary')})."
+                )
+            if task.changed_files and not task.test_report.get("configured", False):
+                blind_spots.append(
+                    "Code files changed without a configured project test_command."
+                )
+            elif task.test_report.get("configured") and not task.test_report.get(
+                "passed", True
+            ):
+                blind_spots.append(
+                    f"Integrated test command failed (exit {task.test_report.get('exit_code')})."
+                )
+            failed_lanes = [r.role for r in task.subagent_results if not r.passed]
+            if failed_lanes:
+                blind_spots.append(
+                    f"Sub-agent lane failure in: {', '.join(failed_lanes)}"
+                )
+
+            verdict = "APPROVED" if (task.gate_passed and not failed_lanes) else "NEEDS_REVISION"
+            notes = (
+                f"Audited {len(task.subagent_results)} sub-agent lanes across "
+                f"{len(task.changed_files)} integrated file(s); "
+                f"{len(blind_spots)} blind spot(s) noted."
+            )
+            return verdict, blind_spots[:3], notes
+
+        def _emit_critiqued_bundle(
+            worker_self: TaskWorker,
+            task: VerifiedTeamBundleTask,
+            verdict: str,
+            blind_spots: List[str],
+            notes: str,
+        ) -> None:
+            norm_verdict = (
+                "APPROVED"
+                if (task.gate_passed and verdict.strip().upper() == "APPROVED")
+                else "NEEDS_REVISION"
+            )
+            with state_lock:
+                plan_exec.review(
+                    reviewer="CriticWorker",
+                    verdict="APPROVED" if norm_verdict == "APPROVED" else "REJECTED",
+                    notes=notes[:240],
+                )
+                board.post(
+                    "coordinator",
+                    "review",
+                    f"CriticWorker {norm_verdict}: {notes[:180]}",
+                )
+                traj.append(
+                    Step(
+                        index=0,
+                        type="REVIEW",
+                        tool_name="CriticWorker",
+                        args={
+                            "lanes": len(task.subagent_results),
+                            "files": len(task.changed_files),
+                        },
+                        result={
+                            "verdict": norm_verdict,
+                            "blind_spots": blind_spots[:3],
+                            "notes": notes[:300],
+                        },
+                        status="COMPLETED" if norm_verdict == "APPROVED" else "FAILED",
+                        vetting_verdict=norm_verdict,
+                    )
+                )
+            critiqued = CritiquedTeamBundleTask(
+                workflow_id=task.workflow_id,
+                project_id=task.project_id,
+                repo_path=task.repo_path,
+                default_branch=task.default_branch,
+                base_branch=task.base_branch,
+                test_command=task.test_command,
+                goal=task.goal,
+                plan_summary=task.plan_summary,
+                integrated_branch=task.integrated_branch,
+                integrated_commit=task.integrated_commit,
+                changed_files=task.changed_files,
+                merge_conflicts=task.merge_conflicts,
+                test_report=task.test_report,
+                reality_scan=task.reality_scan,
+                secret_scan=secret_scan if (secret_scan := task.secret_scan) is not None else {},
+                policy_guardian=task.policy_guardian,
+                gate_passed=task.gate_passed,
+                critic_verdict=norm_verdict,
+                critic_blind_spots=blind_spots[:3],
+                critic_notes=notes.strip(),
+                subagent_results=task.subagent_results,
+                session_key=task.session_key,
+                round_num=task.round_num,
+                max_rounds=task.max_rounds,
+                existing_queue_item_id=task.existing_queue_item_id,
+            )
+            worker_self.publish_work(critiqued, input_task=task)
+            update_graph_state(
+                "CriticWorker",
+                "succeeded" if norm_verdict == "APPROVED" else "failed",
+                f"Critic {norm_verdict} ({len(blind_spots)} blind spots)",
+                edge_id="e_critic_sink",
+                metrics={
+                    "critic_verdict": norm_verdict,
+                    "blind_spots_count": len(blind_spots[:3]),
+                },
+            )
+
+        class PlanAICriticLLMWorker(LLMTaskWorker):
+            llm_input_type: Type[Task] = VerifiedTeamBundleTask
+            llm_output_type: Type[Task] = LLMTeamCritiqueTask
+            output_types: List[Type[Task]] = [CritiquedTeamBundleTask]
+
+            def format_prompt(self, task: Task) -> str:
+                assert isinstance(task, VerifiedTeamBundleTask)
+                update_graph_state(
+                    "CriticWorker",
+                    "running",
+                    "Adversarial critic subswarm auditing integrated diff & blind spots",
+                    edge_id="e_gate_critic",
+                    count_visit=True,
+                )
+                lanes_txt = "\n".join(
+                    f"- {r.role} ({r.service}): passed={r.passed}, files={r.changed_files}"
+                    for r in task.subagent_results
+                )
+                return (
+                    f"Goal: {task.goal}\n"
+                    f"Plan Summary: {task.plan_summary}\n"
+                    f"Sub-Agent Lanes:\n{lanes_txt}\n"
+                    f"Changed Files: {task.changed_files}\n"
+                    f"Verification Gate Passed: {task.gate_passed}\n"
+                    f"Test Report: {task.test_report}\n"
+                    f"PolicyGuardian: {task.policy_guardian.get('summary')}\n"
+                    f"Diff Excerpt:\n{task.diff_excerpt[:2400]}\n\n"
+                    "Audit this integrated multi-agent bundle as an adversarial skeptic. "
+                    "Return verdict ('APPROVED' or 'NEEDS_REVISION'), up to 3 concrete blind_spots, and concise review_notes."
+                )
+
+            def consume_work(self, task: VerifiedTeamBundleTask) -> None:
+                try:
+                    super().consume_work(task)
+                except Exception:
+                    det_v, det_bs, det_notes = _build_deterministic_critique(task)
+                    _emit_critiqued_bundle(self, task, det_v, det_bs, det_notes)
+
+            def post_process(
+                self, response: Optional[Task], input_task: Task
+            ) -> None:
+                assert isinstance(input_task, VerifiedTeamBundleTask)
+                if isinstance(response, LLMTeamCritiqueTask):
+                    _emit_critiqued_bundle(
+                        self,
+                        input_task,
+                        response.verdict,
+                        list(response.blind_spots or []),
+                        response.review_notes,
+                    )
+                else:
+                    det_v, det_bs, det_notes = _build_deterministic_critique(input_task)
+                    _emit_critiqued_bundle(self, input_task, det_v, det_bs, det_notes)
+
+        class DeterministicCriticWorker(TaskWorker):
+            output_types: List[Type[Task]] = [CritiquedTeamBundleTask]
+
+            def consume_work(self, task: VerifiedTeamBundleTask) -> None:
+                update_graph_state(
+                    "CriticWorker",
+                    "running",
+                    "Auditing cross-lane scope, test coverage & policy signals",
+                    edge_id="e_gate_critic",
+                    count_visit=True,
+                )
+                det_v, det_bs, det_notes = _build_deterministic_critique(task)
+                _emit_critiqued_bundle(self, task, det_v, det_bs, det_notes)
+
         class ChiefEscalationSink(TaskWorker):
             output_types: List[Type[Task]] = []
 
-            def consume_work(self, task: VerifiedTeamBundleTask) -> None:
+            def consume_work(self, task: CritiquedTeamBundleTask) -> None:
                 update_graph_state(
                     "ChiefEscalationSink",
                     "running",
                     "Preparing Chief ReviewItem & recording Evolution telemetry",
-                    edge_id="e_gate_sink",
+                    edge_id="e_critic_sink",
                     count_visit=True,
                 )
                 services_used = sorted({r.service for r in task.subagent_results})
@@ -1770,7 +2047,18 @@ class TeamworkOrchestrator:
                         "\n**Law-2 Reality Violations:** "
                         + "; ".join(task.reality_scan.get("violations") or [])
                     )
+                if task.critic_notes:
+                    sections.append(
+                        f"\n#### Adversarial Critic (`{task.critic_verdict}`)\n{task.critic_notes}"
+                    )
+                    for bs in task.critic_blind_spots:
+                        sections.append(f"- Blind spot: {bs}")
 
+                critic_review_payload = {
+                    "verdict": task.critic_verdict,
+                    "notes": task.critic_notes,
+                    "blind_spots": list(task.critic_blind_spots),
+                }
                 has_code = bool(task.changed_files and task.integrated_branch)
                 item_result_payload: Dict[str, Any] = {
                     "workflow_id": task.workflow_id,
@@ -1780,6 +2068,7 @@ class TeamworkOrchestrator:
                     "reality_scan": task.reality_scan,
                     "secret_scan": task.secret_scan,
                     "policy_guardian": task.policy_guardian,
+                    "critic_review": critic_review_payload,
                     "gate_test": task.test_report,
                     "changed_files": task.changed_files,
                 }
@@ -1864,6 +2153,7 @@ class TeamworkOrchestrator:
                         "reality_scan": task.reality_scan,
                         "secret_scan": task.secret_scan,
                         "policy_guardian": task.policy_guardian,
+                        "critic_review": critic_review_payload,
                         "trajectory_step_count": traj.count(),
                         "board_messages_count": len(board.messages),
                         "spawn_decision": dict(spawn_decision_state),
@@ -1924,18 +2214,31 @@ class TeamworkOrchestrator:
                 exit_worker=planner,
             )
 
-            # Build Outer Multi-Agent Teamwork Graph
+            # Build Outer Multi-Agent Teamwork Graph (with Adversarial CriticWorker)
             team_graph = Graph(name="MultiAgentTeamworkGraph")
             fanout = SubtaskFanOutWorker()
             executor = MultiAgentDispatchWorker(num_consumers=3)
             joiner = TeamSynthesisJoiner()
             gate = VerificationGateWorker()
+            if active_llm is not None:
+                critic: TaskWorker = PlanAICriticLLMWorker(
+                    llm=active_llm,
+                    prompt="Audit integrated multi-agent bundle for blind spots and regressions.",
+                    system_prompt=(
+                        "You are PlanAI CriticWorker, an adversarial skeptic auditing integrated "
+                        "multi-agent diffs, test results, and policy checks prior to the Human Gate."
+                    ),
+                )
+            else:
+                critic = DeterministicCriticWorker()
             sink = ChiefEscalationSink()
 
-            team_graph.add_workers(planning_subgraph, fanout, executor, joiner, gate, sink)
+            team_graph.add_workers(
+                planning_subgraph, fanout, executor, joiner, gate, critic, sink
+            )
             team_graph.set_dependency(planning_subgraph, fanout).next(executor).next(
                 joiner
-            ).next(gate).next(sink)
+            ).next(gate).next(critic).next(sink)
 
             goal_task = TeamGoalTask(
                 workflow_id=wf_id,

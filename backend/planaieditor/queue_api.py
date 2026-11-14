@@ -395,6 +395,11 @@ def setup_queue(
             or traj_row.get("guard_summary")
             or {}
         )
+        critic_review = (
+            item_res.get("critic_review")
+            or wf_res.get("critic_review")
+            or {}
+        )
 
         return jsonify(
             {
@@ -408,6 +413,7 @@ def setup_queue(
                 "reality_scan": reality_scan,
                 "secret_scan": secret_scan,
                 "policy_guardian": policy_guardian,
+                "critic_review": critic_review,
                 "trajectory": traj_row,
             }
         )
@@ -561,6 +567,24 @@ def setup_queue(
                     ),
                     409,
                 )
+            reset_branch = bool(data.get("reset_branch", False))
+            revert_to_idx = data.get("revert_to_step")
+            if revert_to_idx is not None:
+                from planaieditor.jetski_runtime import Trajectory
+
+                traj_row = store.get_workflow_trajectory(wf_id)
+                if traj_row and traj_row.get("steps"):
+                    traj = Trajectory.from_steps(
+                        conversation_id=wf_id,
+                        steps_data=traj_row["steps"],
+                        project_id=str(traj_row.get("project_id") or ""),
+                    )
+                    try:
+                        traj.revert_to_step(int(revert_to_idx))
+                        store.save_workflow_trajectory(wf_id, steps=traj.readonly())
+                    except (IndexError, PermissionError) as rev_exc:
+                        return jsonify({"success": False, "error": str(rev_exc)}), 409
+
             decision = store.add_decision(
                 item["id"], "request_changes", note=note, actor=actor
             )
@@ -571,11 +595,17 @@ def setup_queue(
             try:
                 if wf.get("graph_type") == "teamwork":
                     teamwork_orchestrator.resume_revision_async(
-                        wf_id=wf_id, item=bounced or item, revision_note=note
+                        wf_id=wf_id,
+                        item=bounced or item,
+                        revision_note=note,
+                        reset_branch=reset_branch,
                     )
                 else:
                     agent_manager.resume_revision_async(
-                        wf_id=wf_id, item=bounced or item, revision_note=note
+                        wf_id=wf_id,
+                        item=bounced or item,
+                        revision_note=note,
+                        reset_branch=reset_branch,
                     )
             except (PermissionError, ValueError) as exc:
                 store.update_item(item["id"], status="needs_review")
@@ -674,6 +704,23 @@ def setup_queue(
         rule_text = str(data.get("rule_text") or "").strip()
         if not rule_text:
             return jsonify({"success": False, "error": "Missing required field: rule_text"}), 400
+        guardian = evolution_engine._make_policy_guardian()
+        verdict = guardian.check(
+            {
+                "tool_name": "repo_diff_write",
+                "args": {"path": ".agents/rules/operator_manual.md", "content": rule_text},
+            }
+        )
+        if not verdict.allowed:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": f"Blocked by PolicyGuardian [{verdict.risk_signal}]: {verdict.reason}",
+                    }
+                ),
+                409,
+            )
         rule = store.upsert_evolution_rule(
             category=str(data.get("category") or "operator_rule").strip(),
             rule_text=rule_text,

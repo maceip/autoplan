@@ -1288,6 +1288,7 @@ class AgentRunManager:
         item: Dict[str, Any],
         revision_note: str,
         timeout: int = 180,
+        reset_branch: bool = False,
     ) -> Dict[str, Any]:
         """Execute a real PlanAI cyclic `FORCE_REVISION` round on the existing branch."""
         from planaieditor.single_workflow_graph import (
@@ -1341,6 +1342,8 @@ class AgentRunManager:
             workspace_dir = Path(repo_raw).resolve()
             repo_dir = workspace_dir
             self._git(workspace_dir, "checkout", branch_name)
+            if reset_branch:
+                self._git(workspace_dir, "reset", "--hard", target_branch)
         elif repo_raw and (Path(repo_raw) / ".git").exists() and branch_name:
             repo_dir = Path(repo_raw).resolve()
             workspace_dir = (self.demo_workspaces_root / run_id).resolve()
@@ -1351,6 +1354,8 @@ class AgentRunManager:
                 raise ValueError(
                     f"Could not mount revision worktree for branch '{branch_name}': {wt_res.stderr.strip()}"
                 )
+            if reset_branch:
+                self._git(workspace_dir, "reset", "--hard", target_branch)
             is_project_worktree = True
         else:
             workspace_dir = (self.demo_workspaces_root / run_id).resolve()
