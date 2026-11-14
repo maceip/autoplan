@@ -39,15 +39,21 @@ def sha256_file(path: Path) -> str:
 def build_frontend(root: Path) -> Path:
     frontend_dir = root / "frontend"
     static_dest = root / "backend" / "planaieditor" / "static_frontend"
+    node_env = {**os.environ}
+    existing_opts = node_env.get("NODE_OPTIONS", "").strip()
+    if "--max-old-space-size" not in existing_opts:
+        node_env["NODE_OPTIONS"] = f"{existing_opts} --max-old-space-size=6144".strip()
     if not (frontend_dir / "node_modules").is_dir():
         subprocess.run(
             ["npm", "ci"],
             cwd=str(frontend_dir),
+            env=node_env,
             check=True,
         )
     subprocess.run(
         ["npm", "run", "build"],
         cwd=str(frontend_dir),
+        env=node_env,
         check=True,
     )
     build_out = frontend_dir / "build"

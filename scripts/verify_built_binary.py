@@ -77,6 +77,8 @@ def init_scratch_git_repo(repo_dir: Path) -> Dict[str, str]:
         return proc.stdout.strip()
 
     run_git("init", "-b", "main")
+    run_git("config", "user.name", "AutoPlan Binary Verifier")
+    run_git("config", "user.email", "verifier@autoplan.local")
     (repo_dir / "README.md").write_text(
         "# Scratch Repo for Live Binary Verification\n", encoding="utf-8"
     )
@@ -174,6 +176,10 @@ def verify_binary(
             "AUTOPLAN_DISABLE_APPLE_FM": "1",
             "AUTOPLAN_NO_EVENTLET": "1",
             "HOME": str(tmp_dir / "isolated_home"),
+            "GIT_AUTHOR_NAME": "AutoPlan Binary Verifier",
+            "GIT_AUTHOR_EMAIL": "verifier@autoplan.local",
+            "GIT_COMMITTER_NAME": "AutoPlan Binary Verifier",
+            "GIT_COMMITTER_EMAIL": "verifier@autoplan.local",
         }
         Path(env["HOME"]).mkdir(parents=True, exist_ok=True)
 
