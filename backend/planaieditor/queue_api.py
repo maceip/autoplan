@@ -1,23 +1,29 @@
-"""HTTP/SocketIO/SSE API for the chief-of-staff review queue, agent adapters, and WebClaw.
+"""HTTP/SocketIO/SSE API for Multi-Project, PlanAI Teamwork, Evolution, Chromium LLM Bridge, Queue & WebClaw."""
 
-Any agent or UI submits work or dispatches live runs over localhost HTTP:
-  - /api/queue/*      -> Chief-of-Staff persistent review queue & decisions
-  - /api/agents/*     -> Antigravity, MiniMax, and Xiaomi MiMo probes, session scans, runs, and simple demo task
-  - /api/ownership    -> Active workspace ownership claims
-  - /api/webclaw/*    -> Persisted sessions, history, real agent send, and SSE stream for maceip/webclaw
-"""
+from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    request,
+    send_from_directory,
+    stream_with_context,
+)
 
 from planaieditor.agent_adapters import AgentRunManager
 from planaieditor.chief import ChiefOfStaff
+from planaieditor.evolution_engine import EvolutionEngine
+from planaieditor.planai_llm_core import PlanAILLMManager
 from planaieditor.queue_store import KINDS, QueueStore
+from planaieditor.teamwork_graph import TeamworkOrchestrator, workflow_to_svelteflow
 
 _DECISION_TO_STATUS = {
     "approve": "approved",
@@ -40,8 +46,12 @@ _LOCALHOST_ORIGINS = {
     "http://127.0.0.1:3001",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5198",
+    "http://127.0.0.1:5198",
     "http://localhost:5001",
     "http://127.0.0.1:5001",
+    "http://localhost:5051",
+    "http://127.0.0.1:5051",
 }
 
 
@@ -80,7 +90,10 @@ def setup_queue(
     def emit_update(item: Optional[Dict[str, Any]]) -> None:
         if item is None:
             return
-        broadcast_sse("queue_updated", {"item_id": item["id"], "status": item["status"], "item": item})
+        broadcast_sse(
+            "queue_updated",
+            {"item_id": item["id"], "status": item["status"], "item": item},
+        )
         if socketio is None:
             return
         try:
@@ -91,7 +104,7 @@ def setup_queue(
         except Exception:
             pass
 
-    def on_agent_event(event_type: str, payload: Dict[str, Any]) -> None:
+    def on_system_event(event_type: str, payload: Dict[str, Any]) -> None:
         if event_type == "webclaw_chat":
             broadcast_sse("chat", payload)
         elif event_type == "queue_item_created":
@@ -101,52 +114,346 @@ def setup_queue(
         if socketio is not None:
             try:
                 socketio.emit("agent_event", {"type": event_type, **payload})
+                if event_type == "planai_workflow_updated":
+                    wf = payload.get("workflow") or {}
+                    socketio.emit("planai_workflow_updated", wf)
+                    # Also emit PlanAI Editor debug events for live node animation
+                    events = wf.get("events") or []
+                    if events:
+                        latest = events[-1]
+                        socketio.emit(
+                            "planai_debug_event",
+                            {
+                                "type": latest.get("state", "running"),
+                                "data": {
+                                    "workflow_id": wf.get("id"),
+                                    "node_name": latest.get("node_id"),
+                                    "detail": latest.get("detail"),
+                                },
+                            },
+                        )
             except Exception:
                 pass
 
-    chief = ChiefOfStaff(store, root_path, emit=emit_update)
-    agent_manager = AgentRunManager(store, root_path, on_event=on_agent_event)
+    enable_auto_local = start_chief or (
+        os.environ.get("AUTOPLAN_ENABLE_TEST_LLM", "").strip() == "1"
+    )
+    llm_manager = PlanAILLMManager(root_path, enable_auto_local=enable_auto_local)
+    agent_manager = AgentRunManager(store, root_path, on_event=on_system_event)
+    default_proj = store.ensure_default_project(
+        root_path, default_service=agent_manager.default_dispatch_service()
+    )
+    evolution_engine = EvolutionEngine(
+        store,
+        llm_manager,
+        on_event=on_system_event,
+        enable_host_corpus=start_chief,
+    )
+    teamwork_orchestrator = TeamworkOrchestrator(
+        store=store,
+        root_path=root_path,
+        agent_manager=agent_manager,
+        llm_manager=llm_manager,
+        evolution_engine=evolution_engine,
+        on_event=on_system_event,
+    )
+    chief = ChiefOfStaff(store, root_path, emit=emit_update, llm_manager=llm_manager)
+
     app.config["QUEUE_STORE"] = store
     app.config["CHIEF"] = chief
     app.config["AGENT_MANAGER"] = agent_manager
+    app.config["LLM_MANAGER"] = llm_manager
+    app.config["EVOLUTION_ENGINE"] = evolution_engine
+    app.config["TEAMWORK_ORCHESTRATOR"] = teamwork_orchestrator
 
     @app.after_request
     def add_localhost_cors(response: Response) -> Response:
         origin = request.headers.get("Origin", "")
-        if origin in _LOCALHOST_ORIGINS:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
+        if origin in _LOCALHOST_ORIGINS or origin.startswith("file://"):
+            response.headers["Access-Control-Allow-Origin"] = origin or "*"
+            response.headers["Access-Control-Allow-Headers"] = (
+                "Content-Type, Authorization"
+            )
+            response.headers["Access-Control-Allow-Methods"] = (
+                "GET, POST, PATCH, DELETE, OPTIONS"
+            )
         return response
 
     @app.route("/queue", methods=["GET"])
-    def queue_page():
+    @app.route("/planai-editor", methods=["GET"])
+    def svelte_spa_routes():
         if app.static_folder and (Path(app.static_folder) / "index.html").is_file():
             return send_from_directory(app.static_folder, "index.html")
         return (
             jsonify(
                 {
                     "success": False,
-                    "error": "Queue UI is served by the frontend dev server in development mode.",
+                    "error": "Static Svelte UI is served by the frontend dev server in development mode.",
                 }
             ),
             404,
         )
 
+    # ---- Multi-Project Registry API -------------------------------------
+
+    @app.route("/api/projects", methods=["GET", "POST"])
+    def projects_collection():
+        if request.method == "GET":
+            store.ensure_default_project(
+                root_path, default_service=agent_manager.default_dispatch_service()
+            )
+            return jsonify({"success": True, "projects": store.list_projects()})
+
+        data = request.get_json(silent=True) or {}
+        try:
+            proj = store.create_project(
+                data, require_git=bool(data.get("require_git", True))
+            )
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        broadcast_sse("projects_updated", {"project": proj})
+        return jsonify({"success": True, "project": proj}), 201
+
+    @app.route("/api/projects/discover", methods=["GET"])
+    def projects_discover():
+        raw_dir = (request.args.get("dir") or "").strip()
+        search_dir = Path(raw_dir).expanduser() if raw_dir else root_path.parent
+        repos = store.discover_git_repos(search_dir, limit=int(request.args.get("limit") or 25))
+        return jsonify(
+            {
+                "success": True,
+                "search_dir": str(search_dir.resolve()) if search_dir.exists() else str(search_dir),
+                "repositories": repos,
+            }
+        )
+
+    @app.route("/api/projects/<project_id>", methods=["GET", "PATCH", "DELETE"])
+    def project_detail(project_id: str):
+        if request.method == "GET":
+            proj = store.get_project(project_id)
+            if not proj:
+                return jsonify({"success": False, "error": "Project not found"}), 404
+            return jsonify({"success": True, "project": proj})
+
+        if request.method == "PATCH":
+            data = request.get_json(silent=True) or {}
+            updated = store.update_project(project_id, **data)
+            if not updated:
+                return jsonify({"success": False, "error": "Project not found"}), 404
+            broadcast_sse("projects_updated", {"project": updated})
+            return jsonify({"success": True, "project": updated})
+
+        if project_id == default_proj["id"]:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "Cannot delete primary workspace root project.",
+                    }
+                ),
+                409,
+            )
+        try:
+            deleted = store.delete_project(project_id)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 409
+        if not deleted:
+            return jsonify({"success": False, "error": "Project not found"}), 404
+        broadcast_sse("projects_updated", {"deleted_id": project_id})
+        return jsonify({"success": True, "deleted": project_id})
+
+    # ---- PlanAI Workflows, Visualizations & Multi-Agent Teamwork --------
+
+    @app.route("/api/planai/workflows", methods=["GET"])
+    def planai_list_workflows():
+        project_id = request.args.get("project_id") or None
+        session_key = request.args.get("session_key") or None
+        graph_type = request.args.get("graph_type") or None
+        limit = int(request.args.get("limit") or 30)
+        workflows = store.list_workflows(
+            project_id=project_id,
+            session_key=session_key,
+            graph_type=graph_type,
+            limit=limit,
+        )
+        return jsonify({"success": True, "workflows": workflows})
+
+    @app.route("/api/planai/workflows/<wf_id>", methods=["GET"])
+    def planai_get_workflow(wf_id: str):
+        wf = store.get_workflow(wf_id)
+        if not wf:
+            return jsonify({"success": False, "error": "Workflow not found"}), 404
+        return jsonify(
+            {
+                "success": True,
+                "workflow": wf,
+                "svelteflow": workflow_to_svelteflow(wf),
+            }
+        )
+
+    @app.route("/api/planai/workflows/<wf_id>/svelteflow", methods=["GET"])
+    def planai_workflow_svelteflow(wf_id: str):
+        wf = store.get_workflow(wf_id)
+        if not wf:
+            return jsonify({"success": False, "error": "Workflow not found"}), 404
+        return jsonify({"success": True, **workflow_to_svelteflow(wf)})
+
+    @app.route("/api/planai/teamwork", methods=["POST"])
+    def planai_start_teamwork():
+        data = request.get_json(silent=True) or {}
+        goal = str(data.get("goal") or data.get("prompt") or "").strip()
+        if not goal:
+            return jsonify({"success": False, "error": "Missing required field: goal"}), 400
+        project_id = str(data.get("project_id") or data.get("projectId") or "").strip()
+        session_key = str(data.get("session_key") or data.get("sessionKey") or "").strip()
+        preferred = data.get("services") if isinstance(data.get("services"), list) else []
+        timeout_s = int(data.get("timeout") or 180)
+        try:
+            wf = teamwork_orchestrator.start_teamwork_async(
+                goal=goal,
+                project_id=project_id,
+                preferred_services=[str(s) for s in preferred],
+                session_key=session_key,
+                timeout_per_agent=timeout_s,
+            )
+        except (PermissionError, ValueError) as exc:
+            return jsonify({"success": False, "error": str(exc)}), 409
+        return jsonify({"success": True, "workflow": wf}), 201
+
+    # ---- Evolution & Continuous Learning API ----------------------------
+
+    @app.route("/api/evolution/status", methods=["GET"])
+    def evolution_status():
+        project_id = request.args.get("project_id") or None
+        return jsonify(
+            {"success": True, **evolution_engine.status(project_id=project_id)}
+        )
+
+    @app.route("/api/evolution/evolve", methods=["POST"])
+    def evolution_run():
+        data = request.get_json(silent=True) or {}
+        project_id = str(data.get("project_id") or "*").strip() or "*"
+        reason = str(data.get("reason") or "manual").strip() or "manual"
+        result = evolution_engine.run_evolution_cycle(
+            project_id=project_id, reason=reason
+        )
+        return jsonify({"success": True, **result})
+
+    @app.route("/api/evolution/rules", methods=["POST"])
+    def evolution_add_rule():
+        data = request.get_json(silent=True) or {}
+        rule_text = str(data.get("rule_text") or "").strip()
+        if not rule_text:
+            return jsonify({"success": False, "error": "Missing required field: rule_text"}), 400
+        rule = store.upsert_evolution_rule(
+            category=str(data.get("category") or "operator_rule").strip(),
+            rule_text=rule_text,
+            source_type="operator_manual",
+            project_id=str(data.get("project_id") or "*").strip() or "*",
+        )
+        return jsonify({"success": True, "rule": rule}), 201
+
+    # ---- Chromium Prompt API Bridge & PlanAI LLM Core API ---------------
+
+    @app.route("/api/llm/status", methods=["GET"])
+    def llm_status():
+        return jsonify({"success": True, **llm_manager.full_diagnostics()})
+
+    @app.route("/api/llm/test-prompt", methods=["POST"])
+    def llm_test_prompt():
+        data = request.get_json(silent=True) or {}
+        prompt = str(data.get("prompt") or "Reply in one short sentence confirming PlanAI LLM Core is online.").strip()
+        llm = llm_manager.get_llm()
+        if llm is None:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": llm_manager.status_label,
+                    }
+                ),
+                409,
+            )
+        try:
+            reply = llm.chat(
+                [{"role": "user", "content": prompt}],
+                allow_json_mode=False,
+            )
+        except Exception as exc:
+            return jsonify({"success": False, "error": str(exc)}), 502
+        return jsonify(
+            {
+                "success": True,
+                "reply": reply,
+                "provider_used": llm_manager.hybrid_client.last_provider_used
+                or llm_manager.status_label,
+                "diagnostics": llm_manager.full_diagnostics(),
+            }
+        )
+
+    @app.route("/api/llm/chromium-bridge/register", methods=["POST"])
+    def chromium_bridge_register():
+        data = request.get_json(silent=True) or {}
+        rec = llm_manager.bridge.register_client(data)
+        return jsonify({"success": True, "client": rec})
+
+    @app.route("/api/llm/chromium-bridge/heartbeat", methods=["POST"])
+    def chromium_bridge_heartbeat():
+        data = request.get_json(silent=True) or {}
+        ok = llm_manager.bridge.heartbeat(
+            str(data.get("client_id") or ""),
+            availability=data.get("language_model_availability"),
+        )
+        return jsonify({"success": ok})
+
+    @app.route("/api/llm/chromium-bridge/poll", methods=["GET"])
+    def chromium_bridge_poll():
+        client_id = str(request.args.get("client_id") or "").strip()
+        if not client_id:
+            return jsonify({"success": False, "error": "client_id required"}), 400
+        timeout_s = min(15.0, max(0.1, float(request.args.get("timeout") or 6.0)))
+        req_item = llm_manager.bridge.poll_request(client_id, timeout_s=timeout_s)
+        return jsonify({"success": True, "request": req_item})
+
+    @app.route("/api/llm/chromium-bridge/respond", methods=["POST"])
+    def chromium_bridge_respond():
+        data = request.get_json(silent=True) or {}
+        req_id = str(data.get("request_id") or "").strip()
+        if not req_id:
+            return jsonify({"success": False, "error": "request_id required"}), 400
+        delivered = llm_manager.bridge.submit_response(
+            request_id=req_id,
+            content=str(data.get("content") or ""),
+            error=str(data.get("error") or ""),
+            metrics=data.get("metrics") if isinstance(data.get("metrics"), dict) else {},
+        )
+        return jsonify({"success": delivered})
+
+    # ---- Chief-of-Staff Review Queue API --------------------------------
+
     @app.route("/api/queue/items", methods=["POST"])
     def queue_create_item():
         data = request.get_json(silent=True) or {}
         if not data.get("title"):
-            return jsonify({"success": False, "error": "Missing required field: title"}), 400
+            return (
+                jsonify({"success": False, "error": "Missing required field: title"}),
+                400,
+            )
         if data.get("kind") and data["kind"] not in KINDS:
-            return jsonify({"success": False, "error": f"kind must be one of {KINDS}"}), 400
+            return (
+                jsonify({"success": False, "error": f"kind must be one of {KINDS}"}),
+                400,
+            )
         item = store.create_item(data)
         emit_update(item)
         return jsonify({"success": True, "item": item}), 201
 
     @app.route("/api/queue/items", methods=["GET"])
     def queue_list_items():
-        items = store.list_items(status=request.args.get("status") or None)
+        items = store.list_items(
+            status=request.args.get("status") or None,
+            project_id=request.args.get("project_id") or None,
+        )
         return jsonify({"success": True, "items": items})
 
     @app.route("/api/queue/items/<item_id>", methods=["GET"])
@@ -190,10 +497,15 @@ def setup_queue(
                 ),
                 409,
             )
-        store.add_decision(
-            item_id, action, note=data.get("note", ""), actor=data.get("actor", "human")
+        decision = store.add_decision(
+            item_id,
+            action,
+            note=data.get("note", ""),
+            actor=data.get("actor", "human"),
         )
         updated = store.update_item(item_id, status=_DECISION_TO_STATUS[action])
+        if updated:
+            evolution_engine.observe_decision(updated, decision)
         emit_update(updated)
         return jsonify({"success": True, "item": updated})
 
@@ -205,7 +517,10 @@ def setup_queue(
         if item["status"] not in {"snoozed", "failed"}:
             return (
                 jsonify(
-                    {"success": False, "error": f"Cannot wake an item in status '{item['status']}'"}
+                    {
+                        "success": False,
+                        "error": f"Cannot wake an item in status '{item['status']}'",
+                    }
                 ),
                 409,
             )
@@ -216,15 +531,24 @@ def setup_queue(
 
     @app.route("/api/queue/stats", methods=["GET"])
     def queue_stats():
+        project_id = request.args.get("project_id") or None
+        lead_pv = store.get_active_prompt("lead_planner")
         return jsonify(
             {
                 "success": True,
-                "counts": store.counts(),
+                "counts": store.counts(project_id=project_id),
                 "chief": {
                     "llm_configured": chief.llm_configured,
                     "llm_status": chief.llm_status,
                     "last_tick_at": chief.last_tick_at,
                 },
+                "evolution": {
+                    "generation": int(lead_pv["generation"]) if lead_pv else 1,
+                    "rules_count": len(
+                        store.list_evolution_rules(project_id=project_id, active_only=True)
+                    ),
+                },
+                "projects_count": len(store.list_projects()),
             }
         )
 
@@ -247,6 +571,7 @@ def setup_queue(
                 "success": True,
                 "services": agent_manager.list_services(),
                 "default_service": agent_manager.default_dispatch_service(),
+                "llm_core": llm_manager.full_diagnostics(),
             }
         )
 
@@ -263,11 +588,19 @@ def setup_queue(
     def agents_list_runs():
         service = request.args.get("service") or None
         state = request.args.get("state") or None
+        project_id = request.args.get("project_id") or None
+        workflow_id = request.args.get("workflow_id") or None
         limit = int(request.args.get("limit") or 50)
         return jsonify(
             {
                 "success": True,
-                "runs": store.list_runs(service=service, state=state, limit=limit),
+                "runs": store.list_runs(
+                    service=service,
+                    state=state,
+                    project_id=project_id,
+                    workflow_id=workflow_id,
+                    limit=limit,
+                ),
             }
         )
 
@@ -281,22 +614,31 @@ def setup_queue(
     @app.route("/api/agents/runs", methods=["POST"])
     def agents_dispatch_run():
         data = request.get_json(silent=True) or {}
-        service = str(data.get("service") or "").strip() or agent_manager.default_dispatch_service()
+        service = (
+            str(data.get("service") or "").strip()
+            or agent_manager.default_dispatch_service()
+        )
         prompt = str(data.get("prompt") or "").strip()
         if not prompt:
-            return jsonify({"success": False, "error": "Missing required field: prompt"}), 400
+            return (
+                jsonify({"success": False, "error": "Missing required field: prompt"}),
+                400,
+            )
+        project_id = str(data.get("project_id") or "").strip()
         cwd_raw = str(data.get("cwd") or "").strip()
         cwd_path: Optional[Path] = None
+        if not cwd_raw and project_id:
+            proj = store.get_project(project_id)
+            if proj:
+                cwd_raw = proj["repo_path"]
         if cwd_raw:
             candidate = Path(cwd_raw).resolve()
-            try:
-                candidate.relative_to(root_path)
-            except ValueError:
+            if not store.is_repo_allowed(candidate, root_path):
                 return (
                     jsonify(
                         {
                             "success": False,
-                            "error": f"cwd '{cwd_raw}' must be inside server root '{root_path}'",
+                            "error": f"cwd '{cwd_raw}' is not inside server root '{root_path}' or any registered project.",
                         }
                     ),
                     400,
@@ -310,6 +652,7 @@ def setup_queue(
                 branch=str(data.get("branch") or ""),
                 model=str(data.get("model") or ""),
                 webclaw_session_key=str(data.get("webclaw_session_key") or ""),
+                project_id=project_id,
                 submit_to_queue=bool(data.get("submit_to_queue", True)),
                 queue_title=str(data.get("title") or ""),
                 timeout=int(data.get("timeout") or 180),
@@ -351,7 +694,10 @@ def setup_queue(
 
     @app.route("/api/ownership", methods=["GET"])
     def ownership_list():
-        return jsonify({"success": True, "ownership": store.list_ownership()})
+        project_id = request.args.get("project_id") or None
+        return jsonify(
+            {"success": True, "ownership": store.list_ownership(project_id=project_id)}
+        )
 
     # ---- WebClaw persisted session & stream API -------------------------
 
@@ -361,6 +707,7 @@ def setup_queue(
             {
                 "ok": True,
                 "rootPath": str(root_path),
+                "defaultProjectId": default_proj["id"],
                 "chief": {
                     "llm_configured": chief.llm_configured,
                     "llm_status": chief.llm_status,
@@ -374,8 +721,17 @@ def setup_queue(
     def webclaw_sessions():
         default_svc = agent_manager.default_dispatch_service()
         if request.method == "GET":
-            store.get_or_create_main_chat_session(default_service=default_svc)
-            return jsonify({"sessions": store.list_chat_sessions(limit=50)})
+            store.get_or_create_main_chat_session(
+                default_service=default_svc, default_project_id=default_proj["id"]
+            )
+            project_filter = request.args.get("projectId") or None
+            return jsonify(
+                {
+                    "sessions": store.list_chat_sessions(
+                        project_id=project_filter, limit=80
+                    )
+                }
+            )
 
         if request.method == "POST":
             body = request.get_json(silent=True) or {}
@@ -386,6 +742,10 @@ def setup_queue(
                     "service": body.get("service") or default_svc,
                     "model": body.get("model") or "",
                     "cwd": body.get("cwd") or "",
+                    "project_id": body.get("projectId")
+                    or body.get("project_id")
+                    or default_proj["id"],
+                    "mode": body.get("mode") or "single",
                 }
             )
             return jsonify(
@@ -408,12 +768,13 @@ def setup_queue(
                 service=body.get("service"),
                 model=body.get("model"),
                 cwd=body.get("cwd"),
+                project_id=body.get("projectId") or body.get("project_id"),
+                mode=body.get("mode"),
             )
             if sess is None:
                 return jsonify({"ok": False, "error": "session not found"}), 404
             return jsonify({"ok": True, "sessionKey": sess["key"], "entry": sess})
 
-        # DELETE
         ident = (
             request.args.get("sessionKey") or request.args.get("friendlyId") or ""
         ).strip()
@@ -433,7 +794,9 @@ def setup_queue(
         ident = raw_key or friendly_id or "main"
         sess = store.get_chat_session(ident)
         if sess is None and ident == "main":
-            sess = store.get_or_create_main_chat_session(default_service=default_svc)
+            sess = store.get_or_create_main_chat_session(
+                default_service=default_svc, default_project_id=default_proj["id"]
+            )
         if sess is None:
             return jsonify({"error": "session not found"}), 404
         return jsonify(
@@ -442,6 +805,8 @@ def setup_queue(
                 "sessionId": sess["friendlyId"],
                 "service": sess["service"],
                 "model": sess["model"],
+                "projectId": sess.get("projectId") or default_proj["id"],
+                "mode": sess.get("mode") or "single",
                 "messages": store.list_chat_messages(sess["key"], limit=limit),
             }
         )
@@ -459,25 +824,85 @@ def setup_queue(
         ident = raw_key or friendly_id or "main"
         sess = store.get_chat_session(ident)
         if sess is None and ident == "main":
-            sess = store.get_or_create_main_chat_session(default_service=default_svc)
+            sess = store.get_or_create_main_chat_session(
+                default_service=default_svc, default_project_id=default_proj["id"]
+            )
         if sess is None:
             sess = store.create_chat_session(
-                {"friendly_id": friendly_id or ident, "service": body.get("service") or default_svc}
+                {
+                    "friendly_id": friendly_id or ident,
+                    "service": body.get("service") or default_svc,
+                    "project_id": body.get("projectId") or default_proj["id"],
+                    "mode": body.get("mode") or "single",
+                }
             )
 
-        requested_service = str(body.get("service") or sess["service"] or default_svc).strip()
+        requested_service = str(
+            body.get("service") or sess["service"] or default_svc
+        ).strip()
         requested_model = str(body.get("model") or sess["model"] or "").strip()
-        if requested_service != sess["service"] or (requested_model and requested_model != sess["model"]):
-            sess = store.update_chat_session(
-                sess["key"], service=requested_service, model=requested_model
-            ) or sess
+        requested_mode = str(body.get("mode") or sess.get("mode") or "single").strip()
+        requested_project = str(
+            body.get("projectId") or sess.get("projectId") or default_proj["id"]
+        ).strip()
+
+        sess = (
+            store.update_chat_session(
+                sess["key"],
+                service=requested_service,
+                model=requested_model,
+                mode=requested_mode,
+                project_id=requested_project,
+            )
+            or sess
+        )
 
         store.add_chat_message(
             session_key=sess["key"],
             role="user",
             text=message,
-            details={"service": requested_service, "model": requested_model},
+            details={
+                "service": requested_service,
+                "model": requested_model,
+                "mode": requested_mode,
+                "projectId": requested_project,
+            },
         )
+
+        if requested_mode == "team":
+            try:
+                wf = teamwork_orchestrator.start_teamwork_async(
+                    goal=message,
+                    project_id=requested_project,
+                    preferred_services=[requested_service] if requested_service else [],
+                    session_key=sess["key"],
+                )
+            except (PermissionError, ValueError) as exc:
+                err_msg = store.add_chat_message(
+                    session_key=sess["key"],
+                    role="assistant",
+                    text=f"Cannot launch PlanAI Team Graph: {exc}",
+                    details={"mode": "team"},
+                    is_error=True,
+                )
+                broadcast_sse(
+                    "chat",
+                    {
+                        "runId": "rejected",
+                        "sessionKey": sess["key"],
+                        "state": "error",
+                        "message": err_msg,
+                    },
+                )
+                return jsonify({"ok": False, "error": str(exc)}), 409
+            return jsonify(
+                {
+                    "ok": True,
+                    "runId": wf["id"],
+                    "workflowId": wf["id"],
+                    "sessionKey": sess["key"],
+                }
+            )
 
         try:
             run = agent_manager.dispatch_async(
@@ -485,6 +910,7 @@ def setup_queue(
                 prompt=message,
                 model=requested_model,
                 webclaw_session_key=sess["key"],
+                project_id=requested_project,
                 submit_to_queue=bool(body.get("submitToQueue", True)),
                 queue_title=f"[{requested_service}] {message[:60]}",
                 is_demo_repo=bool(body.get("isDemoRepo", False)),
@@ -528,7 +954,9 @@ def setup_queue(
                             "event": "chat.history",
                             "payload": {
                                 "sessionKey": sess["key"],
-                                "messages": store.list_chat_messages(sess["key"], limit=200),
+                                "messages": store.list_chat_messages(
+                                    sess["key"], limit=200
+                                ),
                             },
                             "seq": 0,
                             "stateVersion": 0,
@@ -555,7 +983,9 @@ def setup_queue(
         )
 
     if start_chief:
-        thread = threading.Thread(target=chief.run_forever, daemon=True, name="chief-of-staff")
+        thread = threading.Thread(
+            target=chief.run_forever, daemon=True, name="chief-of-staff"
+        )
         thread.start()
         print(f"[chief] Chief-of-staff agent started. LLM: {chief.llm_status}")
 

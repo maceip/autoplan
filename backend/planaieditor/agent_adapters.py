@@ -1074,6 +1074,7 @@ class AgentRunManager:
         branch: str = "",
         model: str = "",
         webclaw_session_key: str = "",
+        project_id: str = "",
         submit_to_queue: bool = False,
         queue_title: str = "",
         is_demo_repo: bool = False,
@@ -1085,23 +1086,66 @@ class AgentRunManager:
             raise PermissionError(probe.get("auth_status") or f"{service} is observe-only")
 
         run_id = f"run_{uuid.uuid4().hex[:10]}"
+        resolved_project_id = project_id
+        if not resolved_project_id and cwd:
+            matched_proj = self.store.get_project(str(cwd))
+            if matched_proj:
+                resolved_project_id = matched_proj["id"]
+
+        project_worktree_repo: Optional[Path] = None
+        project_target_branch = "main"
+        project_test_command = ""
         if is_demo_repo:
             workspace_dir, branch_name = self._init_demo_repo(run_id, service)
-        else:
-            workspace_dir = (
-                Path(cwd).resolve()
-                if cwd
-                else (self.demo_workspaces_root / run_id).resolve()
-            )
+        elif cwd:
+            workspace_dir = Path(cwd).resolve()
             workspace_dir.mkdir(parents=True, exist_ok=True)
             branch_name = branch or "workspace"
+        else:
+            workspace_dir = (self.demo_workspaces_root / run_id).resolve()
+            branch_name = branch or "workspace"
+            proj_row = (
+                self.store.get_project(resolved_project_id)
+                if resolved_project_id
+                else None
+            )
+            if proj_row and proj_row.get("repo_path"):
+                cand_repo = Path(proj_row["repo_path"]).resolve()
+                if (
+                    (cand_repo / ".git").exists()
+                    and self._git(cand_repo, "rev-parse", "--verify", "HEAD").returncode == 0
+                ):
+                    wt_branch = branch or f"agent/{service}-{run_id[-6:]}"
+                    base_ref = str(proj_row.get("default_branch") or "HEAD")
+                    if self._git(cand_repo, "rev-parse", "--verify", base_ref).returncode != 0:
+                        base_ref = "HEAD"
+                    workspace_dir.parent.mkdir(parents=True, exist_ok=True)
+                    wt_res = self._git(
+                        cand_repo,
+                        "worktree",
+                        "add",
+                        "-b",
+                        wt_branch,
+                        str(workspace_dir),
+                        base_ref,
+                    )
+                    if wt_res.returncode == 0:
+                        project_worktree_repo = cand_repo
+                        project_target_branch = str(
+                            proj_row.get("default_branch") or "main"
+                        )
+                        project_test_command = str(proj_row.get("test_command") or "")
+                        branch_name = wt_branch
+            if project_worktree_repo is None:
+                workspace_dir.mkdir(parents=True, exist_ok=True)
 
         self.store.claim_ownership(
-            repo=str(workspace_dir),
+            repo=str(project_worktree_repo or workspace_dir),
             worktree=str(workspace_dir),
             branch=branch_name,
             service=service,
             run_id=run_id,
+            project_id=resolved_project_id,
         )
 
         effective_prompt = prompt.replace("{WORKSPACE_DIR}", str(workspace_dir))
@@ -1115,6 +1159,7 @@ class AgentRunManager:
                 "cwd": str(workspace_dir),
                 "branch": branch_name,
                 "webclaw_session_key": webclaw_session_key,
+                "project_id": resolved_project_id,
                 "state": "running",
                 "metadata": {"is_demo_repo": is_demo_repo},
             }
@@ -1195,6 +1240,87 @@ class AgentRunManager:
                             "target_branch": "main",
                             "test_command": f"git grep -q {SIMPLE_DEMO_TASK_TOKEN} {final_branch} -- task_result.txt",
                             "priority": 25,
+                            "project_id": resolved_project_id,
+                        }
+                    )
+                    queue_item_id = q_item["id"]
+                    self._on_event("queue_item_created", {"item": q_item})
+            elif project_worktree_repo is not None:
+                try:
+                    if result.passed and workspace_dir.exists():
+                        self._git(workspace_dir, "config", "user.email", "autoplan@local.invalid")
+                        self._git(workspace_dir, "config", "user.name", "AutoPlan Agent")
+                        self._git(workspace_dir, "add", "-A")
+                        diff_cached = self._git(workspace_dir, "diff", "--cached", "--name-only")
+                        changed_files = [
+                            f.strip()
+                            for f in diff_cached.stdout.splitlines()
+                            if f.strip() and not f.strip().startswith(".mimocode")
+                        ]
+                        if changed_files:
+                            self._git(
+                                workspace_dir,
+                                "commit",
+                                "-m",
+                                f"feat({service}): {prompt[:56].splitlines()[0]}",
+                            )
+                        ahead_raw = self._git(
+                            project_worktree_repo,
+                            "rev-list",
+                            "--count",
+                            f"{project_target_branch}..{branch_name}",
+                        ).stdout.strip()
+                        ahead_n = int(ahead_raw or "0") if ahead_raw.isdigit() else 0
+                        if ahead_n > 0:
+                            committed = True
+                            commit_sha = self._git(
+                                project_worktree_repo, "rev-parse", branch_name
+                            ).stdout.strip()
+                finally:
+                    self._git(
+                        project_worktree_repo,
+                        "worktree",
+                        "remove",
+                        "--force",
+                        str(workspace_dir),
+                    )
+                    if not committed:
+                        self._git(project_worktree_repo, "branch", "-D", branch_name)
+
+                if committed and submit_to_queue and result.passed:
+                    q_item = self.store.create_item(
+                        {
+                            "source_agent": service,
+                            "kind": "code_change",
+                            "title": queue_title or f"[{service}] {prompt[:64]}",
+                            "body": (
+                                f"Agent `{service}` (`{result.model}`) completed run `{run_id}` "
+                                f"in project `{resolved_project_id}` (`{project_worktree_repo}`) "
+                                f"on branch `{final_branch}` (commit `{commit_sha[:10]}`).\n\n"
+                                f"{result.response_text}"
+                            ),
+                            "repo_path": str(project_worktree_repo),
+                            "branch": final_branch,
+                            "target_branch": project_target_branch,
+                            "test_command": project_test_command,
+                            "priority": 30,
+                            "project_id": resolved_project_id,
+                        }
+                    )
+                    queue_item_id = q_item["id"]
+                    self._on_event("queue_item_created", {"item": q_item})
+                elif submit_to_queue and result.passed:
+                    q_item = self.store.create_item(
+                        {
+                            "source_agent": service,
+                            "kind": "task",
+                            "title": queue_title or f"[{service}] {prompt[:64]}",
+                            "body": (
+                                f"Run `{run_id}` (`{service}` / `{result.model}`)\n\n"
+                                f"{result.response_text}"
+                            ),
+                            "priority": 15,
+                            "project_id": resolved_project_id,
                         }
                     )
                     queue_item_id = q_item["id"]
@@ -1210,6 +1336,7 @@ class AgentRunManager:
                             f"{result.response_text}"
                         ),
                         "priority": 15,
+                        "project_id": resolved_project_id,
                     }
                 )
                 queue_item_id = q_item["id"]
@@ -1304,7 +1431,7 @@ class AgentRunManager:
             self.store.add_chat_message(
                 session_key=resolved_session_key,
                 role="user",
-                text=f"[Simple Task → {chosen_service}] {prompt}",
+                text=f"[Start Demo → {chosen_service}] {prompt}",
                 details={"service": chosen_service, "kind": "demo_task"},
             )
         return self.dispatch_async(

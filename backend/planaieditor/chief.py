@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from planaieditor.planai_llm_core import PlanAILLMManager
 from planaieditor.queue_store import QueueStore
 
 _KIND_BASE_PRIORITY = {
@@ -46,16 +47,30 @@ class ChiefOfStaff:
         store: QueueStore,
         root_path: Path,
         emit: Optional[Callable[[Dict[str, Any]], None]] = None,
+        llm_manager: Optional[PlanAILLMManager] = None,
     ):
         self.store = store
         self.root_path = Path(root_path).resolve()
         self.evidence_root = self.root_path / ".planai-queue" / "evidence"
         self._emit = emit or (lambda item: None)
+        self._llm_manager = llm_manager
         self._llm = None
-        self.llm_status = "not configured (set CHIEF_LLM_PROVIDER and CHIEF_LLM_MODEL)"
+        self._base_llm_status = "not configured (set CHIEF_LLM_PROVIDER and CHIEF_LLM_MODEL)"
         self._init_llm()
         self.last_tick_at: float = 0.0
         self._recover_interrupted()
+
+    @property
+    def llm_status(self) -> str:
+        if self._llm is not None:
+            return self._base_llm_status
+        if self._llm_manager is not None and self._llm_manager.is_configured:
+            return self._llm_manager.status_label
+        return self._base_llm_status
+
+    @llm_status.setter
+    def llm_status(self, value: str) -> None:
+        self._base_llm_status = value
 
     def _recover_interrupted(self) -> None:
         """Requeue work interrupted by a previous chief process exit."""
@@ -86,11 +101,26 @@ class ChiefOfStaff:
 
     @property
     def llm_configured(self) -> bool:
-        return self._llm is not None
+        if self._llm is not None:
+            return True
+        if self._llm_manager is not None:
+            return self._llm_manager.is_configured
+        return False
+
+    def _active_llm(self):
+        if self._llm is not None:
+            return self._llm
+        if self._llm_manager is not None:
+            return self._llm_manager.get_llm()
+        return None
 
     def _llm_triage(self, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Run a one-step PlanAI graph: QueueTask -> LLMTaskWorker -> sink."""
         from planai import Graph, LLMTaskWorker, Task, TaskWorker
+
+        llm = self._active_llm()
+        if llm is None:
+            return None
 
         class QueueTask(Task):
             item_id: str
@@ -110,16 +140,27 @@ class ChiefOfStaff:
             def consume_work(self, task: TriageResult):
                 results.append(task)
 
-        worker = LLMTaskWorker(
-            llm=self._llm,
-            llm_input_type=QueueTask,
-            output_types=[TriageResult],
-            prompt=(
+        evolved_pv = self.store.get_active_prompt("chief_triage")
+        rules = self.store.list_evolution_rules(
+            project_id=item.get("project_id") or "*", active_only=True
+        )[:6]
+        rules_text = "\n".join(f"- {r['rule_text']}" for r in rules) or "- Standard review gates."
+        prompt_text = (
+            str(evolved_pv["prompt_template"]).replace("{active_rules_block}", rules_text)
+            if evolved_pv
+            else (
                 "You are the chief of staff triaging work for one human operator. "
                 "Score priority from 0 (ignore for now) to 100 (blocks everything). "
                 "Recommendation: one or two sentences telling the operator what "
                 "approving this item will cause and any risk to check first."
-            ),
+            )
+        )
+
+        worker = LLMTaskWorker(
+            llm=llm,
+            llm_input_type=QueueTask,
+            output_types=[TriageResult],
+            prompt=prompt_text,
         )
         sink = Sink(output_types=[])
         graph = Graph(name="ChiefTriage")
@@ -167,10 +208,29 @@ class ChiefOfStaff:
 
     def _run_command(self, command: str, cwd: Path, timeout: int = 900) -> Dict[str, Any]:
         started = time.time()
+        tokens = shlex.split(command)
+        env = dict(os.environ)
+        while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):
+            k, v = tokens[0].split("=", 1)
+            if k.isidentifier():
+                env[k] = v
+                tokens.pop(0)
+            else:
+                break
+        if not tokens:
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": "",
+                "stderr_tail": "Empty test command",
+                "duration_s": 0.0,
+            }
         try:
             proc = subprocess.run(
-                shlex.split(command),
+                tokens,
                 cwd=str(cwd),
+                env=env,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -192,6 +252,24 @@ class ChiefOfStaff:
                 "stderr_tail": f"Timed out after {timeout}s",
                 "duration_s": round(time.time() - started, 2),
             }
+
+    def _run_branch_test_command(
+        self, command: str, repo: Path, branch: str, item_id: str
+    ) -> Dict[str, Any]:
+        if (
+            branch
+            and (repo / ".git").exists()
+            and self._git(repo, "rev-parse", "--verify", branch).returncode == 0
+        ):
+            wt_dir = (self.root_path / ".planai-queue" / "chief-test-wt" / f"{item_id}_{ int(time.time() * 1000) }").resolve()
+            wt_dir.parent.mkdir(parents=True, exist_ok=True)
+            add_wt = self._git(repo, "worktree", "add", "--detach", str(wt_dir), branch)
+            if add_wt.returncode == 0:
+                try:
+                    return self._run_command(command, wt_dir)
+                finally:
+                    self._git(repo, "worktree", "remove", "--force", str(wt_dir))
+        return self._run_command(command, repo)
 
     def _capture_evidence(self, item: Dict[str, Any]) -> Dict[str, Any]:
         """Real Playwright capture in a subprocess (eventlet-safe)."""
@@ -225,9 +303,7 @@ class ChiefOfStaff:
         if not repo_path:
             return None
         repo = Path(repo_path).resolve()
-        try:
-            repo.relative_to(self.root_path)
-        except ValueError:
+        if not self.store.is_repo_allowed(repo, self.root_path):
             return None
         return repo if (repo / ".git").exists() else None
 
@@ -253,7 +329,13 @@ class ChiefOfStaff:
         self.store.update_item(item["id"], status="landing")
         self._emit(self.store.get_item(item["id"]))
         if item.get("test_command"):
-            test_result = self._run_command(item["test_command"], repo)
+            test_result = (
+                self._run_branch_test_command(
+                    item["test_command"], repo, str(item.get("branch") or ""), item["id"]
+                )
+                if item.get("project_id")
+                else self._run_command(item["test_command"], repo)
+            )
             result = dict(item.get("result") or {})
             result["landing_test"] = test_result
             self.store.update_item(item["id"], result=result)
@@ -329,7 +411,13 @@ class ChiefOfStaff:
             if item["kind"] == "code_change" and item.get("test_command") and item.get("repo_path"):
                 repo = Path(item["repo_path"]).resolve()
                 if repo.exists():
-                    result["test"] = self._run_command(item["test_command"], repo)
+                    result["test"] = (
+                        self._run_branch_test_command(
+                            item["test_command"], repo, str(item.get("branch") or ""), item["id"]
+                        )
+                        if item.get("project_id")
+                        else self._run_command(item["test_command"], repo)
+                    )
                     self.store.add_event(
                         item["id"],
                         "tests_ran",

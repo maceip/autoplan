@@ -5,5 +5,7 @@ webclaw/**/dist/
 webclaw/**/.tanstack/
 webclaw/**/.nitro/
 webclaw/**/.output/
+nucleus/node_modules/
+nucleus/dist/
 
 .build/
