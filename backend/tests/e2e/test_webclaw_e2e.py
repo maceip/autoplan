@@ -192,12 +192,7 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
     expect(page.locator('[data-testid="planai-python-panel"]')).to_contain_text(
         "JoinedTaskWorker"
     )
-    page.locator('[data-testid="planai-subtab-canvas"]').click()
-
-    page.locator('[data-testid="view-mode-split"]').click()
-    expect(page.locator('[data-testid="planai-graph-view"]')).to_be_visible()
-    expect(page.locator('[data-testid="composer-mode-toggle"]')).to_be_visible()
-    _maybe_screenshot(page, "web_split_view.png")
+    page.locator('[data-testid="planai-subtab-dag"]').click()
 
     page.locator('[data-testid="view-mode-workbench"]').click()
 

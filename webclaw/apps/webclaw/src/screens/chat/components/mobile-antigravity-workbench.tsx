@@ -1076,8 +1076,8 @@ export function MobileAntigravityWorkbench({
               }}
               placeholder={
                 sessionMode === 'team'
-                  ? `Launch Team Graph in ${activeProject?.name || 'project'}…`
-                  : `Ask anything in ${activeProject?.name || 'project'}…`
+                  ? 'Describe a goal to split across parallel agents…'
+                  : 'Ask anything, or assign a task…'
               }
               className="min-h-[26px] max-h-28 w-full resize-none bg-transparent text-[15px] leading-[22px] text-[#c9d8db] placeholder:text-[#586e75] outline-none"
             />
@@ -1136,7 +1136,7 @@ export function MobileAntigravityWorkbench({
                   </select>
                 ) : (
                   <span className="truncate text-xs text-[#839496]">
-                    PlanAI Multi-Agent DAG
+                    Parallel agents
                   </span>
                 )}
               </div>
@@ -1385,7 +1385,7 @@ export function MobileAntigravityWorkbench({
               }}
               placeholder={
                 sessionMode === 'team'
-                  ? 'Describe multi-agent Team Graph goal…'
+                  ? 'Describe a goal to split across parallel agents…'
                   : 'Ask anything…'
               }
               className="min-h-[26px] max-h-32 w-full resize-none bg-transparent text-[15px] leading-[22px] text-[#c9d8db] placeholder:text-[#586e75] outline-none"
@@ -1455,7 +1455,7 @@ export function MobileAntigravityWorkbench({
                   </select>
                 ) : (
                   <span className="truncate text-xs text-[#839496]">
-                    Team Graph
+                    Parallel agents
                   </span>
                 )}
               </div>
@@ -1604,7 +1604,7 @@ export function MobileAntigravityWorkbench({
                 <button
                   type="button"
                   data-testid="mobile-detail-tab-graph"
-                  aria-label="PlanAI Graph Visualization"
+                  aria-label="Plan"
                   onClick={() => setDetailTab('graph')}
                   className={cn(
                     'flex h-8 items-center gap-1 rounded-lg border px-2 text-xs font-medium transition-colors',
@@ -1613,7 +1613,7 @@ export function MobileAntigravityWorkbench({
                       : 'border-transparent text-[#6b8184] active:bg-[#0c3540]',
                   )}
                 >
-                  <span>PlanAI DAG</span>
+                  <span>Plan</span>
                 </button>
               </div>
 

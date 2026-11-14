@@ -121,16 +121,8 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                 expect(
                     window.locator('[data-testid="nucleus-titlebar"]')
                 ).to_contain_text("Nucleus")
-                expect(
-                    window.locator('[data-testid="nucleus-project-rail"]')
-                ).to_be_visible()
 
-                # Verify Left Project Rail populated from live AutoPlan backend
-                expect(
-                    window.locator('[data-testid^="nucleus-rail-project-"]').first
-                ).to_be_visible(timeout=20000)
-
-                # Verify 3-Column Workbench frame loads cleanly
+                # Verify 3-Column Workbench frame loads cleanly without duplicate outer sidebar
                 wb_frame = window.frame_locator(
                     '[data-testid="nucleus-workbench-frame"]'
                 )
@@ -142,24 +134,14 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                 ).to_be_visible(timeout=20000)
                 _save_shot(window, "nucleus_macos_workbench_3col.png")
 
-                # Switch Nucleus to PlanAI Graph mode and verify DAG canvas renders inside frame
+                # Switch Nucleus to Plan mode and verify pipeline canvas renders inside frame
                 window.locator('[data-testid="nucleus-mode-graph"]').click()
                 expect(
                     wb_frame.locator('[data-testid="planai-dag-canvas"]')
                 ).to_be_visible(timeout=25000)
                 _save_shot(window, "nucleus_macos_planai_graph.png")
 
-                # Switch Nucleus to Split View mode and verify both chat + graph render side by side
-                window.locator('[data-testid="nucleus-mode-split"]').click()
-                expect(
-                    wb_frame.locator('[data-testid="planai-dag-canvas"]')
-                ).to_be_visible(timeout=20000)
-                expect(
-                    wb_frame.locator('[data-testid="composer-mode-toggle"]')
-                ).to_be_visible(timeout=20000)
-                _save_shot(window, "nucleus_macos_split_view.png")
-
-                # Switch Nucleus to SvelteFlow Editor mode and verify SvelteFlow loads
+                # Switch Nucleus to Visual Editor mode and verify SvelteFlow loads
                 window.locator('[data-testid="nucleus-mode-editor"]').click()
                 ed_frame = window.frame_locator('[data-testid="nucleus-editor-frame"]')
                 expect(
@@ -196,7 +178,7 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                 prompt_out = window.locator('[data-testid="nucleus-prompt-output"]')
                 expect(prompt_out).not_to_have_text("Ready.", timeout=45000)
                 expect(prompt_out).not_to_contain_text(
-                    "Creating Chromium window.LanguageModel", timeout=45000
+                    "Running local prompt", timeout=45000
                 )
                 direct_text = prompt_out.inner_text().strip()
                 assert len(direct_text) > 12 and not direct_text.startswith(
@@ -211,7 +193,7 @@ def test_nucleus_macos_electron_app_chromium_prompt_api_and_planai_views():
                 window.locator('[data-testid="nucleus-run-backend-roundtrip"]').click()
                 rt_out = window.locator('[data-testid="nucleus-roundtrip-output"]')
                 expect(rt_out).not_to_have_text("Ready.", timeout=45000)
-                expect(rt_out).not_to_contain_text("Dispatching POST", timeout=45000)
+                expect(rt_out).not_to_contain_text("Dispatching round-trip", timeout=45000)
                 rt_text = rt_out.inner_text().strip()
                 assert len(rt_text) > 8 and not rt_text.startswith("Error:"), (
                     f"Unexpected Python->Chromium bridge reply: {rt_text}"

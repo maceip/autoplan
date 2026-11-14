@@ -119,7 +119,7 @@ function ChatComposerComponent({
 
   return (
     <div
-      className="mx-auto w-full max-w-full px-4 sm:px-5 sm:max-w-[780px] min-w-0 relative pb-3"
+      className="mx-auto w-full max-w-full px-4 sm:px-5 sm:max-w-[760px] min-w-0 relative pb-3"
       ref={wrapperRef}
     >
       <TooltipProvider>
@@ -137,49 +137,42 @@ function ChatComposerComponent({
           <PromptInputTextarea
             placeholder={
               sessionMode === 'team'
-                ? `Describe multi-agent team goal for ${activeProjectName || 'project'} (PlanAI SubGraph + parallel git worktrees)…`
-                : `Ask anything or dispatch work in ${activeProjectName || 'project'}…`
+                ? 'Describe a goal to split across parallel agents…'
+                : 'Ask anything, or assign a task…'
             }
             inputRef={promptRef}
           />
-          <PromptInputActions className="justify-between gap-2 px-3">
-            {/* In-Composer Agent/Model Picker & Single/Team Execution Mode */}
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              {activeProjectName ? (
-                <span
-                  data-testid="composer-project-pill"
-                  title={`Target project: ${activeProjectName}`}
-                  className="hidden sm:inline-flex h-7 items-center gap-1 rounded-full border border-primary-200 bg-primary-100/80 px-2.5 text-[11px] font-medium text-primary-700"
-                >
-                  <svg
-                    viewBox="0 0 16 16"
-                    className="size-3 shrink-0 text-primary-600"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={1.5}
-                    aria-hidden="true"
-                  >
-                    <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.3 1.5h4.9A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7Z" />
-                  </svg>
-                  <span className="max-w-[110px] truncate">{activeProjectName}</span>
-                </span>
-              ) : null}
+          <PromptInputActions className="justify-between gap-2 px-2.5">
+            <div className="flex min-w-0 items-center gap-2">
+              <PromptInputAction
+                tooltip="Attach file"
+                render={(triggerProps) => (
+                  <AttachmentButton
+                    onFileSelect={handleFileSelect}
+                    disabled={disabled}
+                    buttonProps={{
+                      ...triggerProps,
+                      className: cn('rounded-full', triggerProps.className),
+                    }}
+                  />
+                )}
+              />
 
               {services.length > 0 && onSelectService ? (
-                <div className="relative flex h-7 items-center rounded-full border border-primary-300 bg-primary-100 pl-2.5 pr-6 hover:border-primary-400 transition-colors">
+                <div className="relative flex h-7 items-center rounded-md px-1.5 hover:bg-primary-100 transition-colors">
                   <span
                     className={cn(
-                      'size-2 shrink-0 rounded-full',
+                      'size-1.5 shrink-0 rounded-full',
                       canDispatchSelected ? 'bg-[#7aae66]' : 'bg-primary-500',
                     )}
                     aria-hidden="true"
                   />
                   <select
-                    aria-label="Composer agent model"
+                    aria-label="Model"
                     data-testid="agent-service-selector"
                     value={selectedService}
                     onChange={(e) => onSelectService(e.target.value)}
-                    className="h-full max-w-[180px] cursor-pointer truncate appearance-none bg-transparent pl-1.5 text-xs font-medium text-primary-950 outline-none"
+                    className="h-full max-w-[168px] cursor-pointer truncate appearance-none bg-transparent pl-1.5 pr-4 text-xs font-medium text-primary-800 hover:text-primary-950 outline-none"
                   >
                     {services.map((svc) => (
                       <option
@@ -188,13 +181,13 @@ function ChatComposerComponent({
                         className="bg-surface text-primary-900"
                       >
                         {svc.display_name}
-                        {svc.mode === 'observe_only' ? ' (observe)' : ''}
+                        {svc.mode === 'observe_only' ? ' (read-only)' : ''}
                       </option>
                     ))}
                   </select>
                   <svg
                     viewBox="0 0 16 16"
-                    className="pointer-events-none absolute right-2 size-3 text-primary-600"
+                    className="pointer-events-none absolute right-1 size-3 text-primary-500"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth={1.75}
@@ -210,7 +203,7 @@ function ChatComposerComponent({
                   data-testid="composer-mode-toggle"
                   role="group"
                   aria-label="Execution mode"
-                  className="flex h-7 items-center rounded-full border border-primary-300 bg-primary-100 p-0.5 text-[11px]"
+                  className="flex h-6 items-center rounded-md bg-primary-100 p-0.5 text-[11px]"
                 >
                   <button
                     type="button"
@@ -218,9 +211,9 @@ function ChatComposerComponent({
                     aria-pressed={sessionMode === 'single'}
                     onClick={() => onSelectMode('single')}
                     className={cn(
-                      'rounded-full px-2.5 py-0.5 font-medium transition-colors',
+                      'rounded px-2 py-0.5 font-medium transition-colors',
                       sessionMode === 'single'
-                        ? 'bg-surface text-primary-950 shadow-xs'
+                        ? 'bg-surface text-primary-950 shadow-2xs'
                         : 'text-primary-600 hover:text-primary-900',
                     )}
                   >
@@ -231,40 +224,31 @@ function ChatComposerComponent({
                     data-testid="mode-team-btn"
                     aria-pressed={sessionMode === 'team'}
                     onClick={() => onSelectMode('team')}
-                    title="PlanAI MultiAgentTeamworkGraph: LeadPlanner SubGraph + parallel git worktrees + JoinedTaskWorker synthesis"
                     className={cn(
-                      'rounded-full px-2.5 py-0.5 font-medium transition-colors',
+                      'rounded px-2 py-0.5 font-medium transition-colors',
                       sessionMode === 'team'
-                        ? 'bg-[#268bd2]/25 text-primary-950 shadow-xs'
+                        ? 'bg-surface text-primary-950 shadow-2xs'
                         : 'text-primary-600 hover:text-primary-900',
                     )}
                   >
-                    Team Graph
+                    Team
                   </button>
                 </div>
               ) : null}
+
+              {activeProjectName ? (
+                <span
+                  data-testid="composer-project-pill"
+                  className="hidden md:inline truncate text-[11px] text-primary-500"
+                >
+                  {activeProjectName}
+                </span>
+              ) : null}
             </div>
 
-            <div className="flex items-center gap-2 min-h-8 flex-nowrap shrink-0">
+            <div className="flex items-center shrink-0">
               <PromptInputAction
-                tooltip="Attach image"
-                render={(triggerProps) => (
-                  <AttachmentButton
-                    onFileSelect={handleFileSelect}
-                    disabled={disabled}
-                    buttonProps={{
-                      ...triggerProps,
-                      className: cn('rounded-full', triggerProps.className),
-                    }}
-                  />
-                )}
-              />
-              <PromptInputAction
-                tooltip={
-                  sessionMode === 'team'
-                    ? 'Launch PlanAI Team Graph'
-                    : 'Send message'
-                }
+                tooltip="Send"
                 render={(triggerProps) => (
                   <Button
                     {...triggerProps}
@@ -280,8 +264,8 @@ function ChatComposerComponent({
                   >
                     <HugeiconsIcon
                       icon={ArrowUp02Icon}
-                      size={20}
-                      strokeWidth={1.5}
+                      size={18}
+                      strokeWidth={1.6}
                     />
                   </Button>
                 )}

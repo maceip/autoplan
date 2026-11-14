@@ -38,13 +38,13 @@ function PanelToggleGlyph({ active }: { active?: boolean }) {
   return (
     <svg
       viewBox="0 0 18 18"
-      className="size-3.5 shrink-0"
+      className="size-4 shrink-0"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.6}
+      strokeWidth={1.5}
       aria-hidden="true"
     >
-      <rect x="2.25" y="3" width="13.5" height="12" rx="2.25" />
+      <rect x="2.25" y="3" width="13.5" height="12" rx="2" />
       <path d="M11.25 3v12" />
       {active ? (
         <rect
@@ -76,37 +76,35 @@ function ChatHeaderComponent({
   exportDisabled = false,
   showExport = true,
   needsReviewCount = 0,
-  chiefLlmConfigured = false,
-  chiefLlmStatus = '',
-  onFocusOrchestratorQueue,
   workspaceView = 'workbench',
   onChangeWorkspaceView,
   inspectorOpen = true,
   onToggleInspector,
 }: ChatHeaderProps) {
+  const isPlanActive = workspaceView === 'graph' || workspaceView === 'split'
+
   return (
     <header
       ref={wrapperRef}
       data-testid="desktop-top-app-bar"
-      className="flex h-11 shrink-0 items-stretch border-b border-primary-200 bg-surface text-xs text-primary-900 select-none"
+      className="flex h-10 shrink-0 items-stretch border-b border-primary-200 bg-surface text-xs text-primary-900 select-none"
     >
-      {/* Segment 1: Brand & Projects/Sessions Sidebar Rail */}
       {onToggleSidebarCollapse ? (
         <div
           className={cn(
-            'flex shrink-0 items-center border-r border-primary-200 bg-primary-100 transition-[width] duration-150',
+            'flex shrink-0 items-center border-r border-primary-200 bg-primary-100',
             isSidebarCollapsed
               ? 'w-12 justify-center px-1'
-              : 'w-[300px] justify-between px-2.5',
+              : 'w-[272px] justify-between px-2.5',
           )}
         >
           {!isSidebarCollapsed ? (
             <Link
               to="/new"
               data-testid="desktop-brand-link"
-              className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-sm font-semibold tracking-tight text-primary-950 hover:bg-primary-200/70 transition-colors"
+              className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm font-semibold text-primary-950 hover:bg-primary-200/60 transition-colors"
             >
-              <WebClawIconBig className="size-6" />
+              <WebClawIconBig className="size-5" />
               <span>autobot</span>
             </Link>
           ) : null}
@@ -114,18 +112,16 @@ function ChatHeaderComponent({
             size="icon-sm"
             variant="ghost"
             onClick={onToggleSidebarCollapse}
-            aria-label={isSidebarCollapsed ? 'Open Sidebar' : 'Close Sidebar'}
-            title={isSidebarCollapsed ? 'Open Sidebar' : 'Close Sidebar'}
-            className="text-primary-700 hover:bg-primary-200/70 hover:text-primary-950"
+            aria-label={isSidebarCollapsed ? 'Open sidebar' : 'Collapse sidebar'}
+            className="text-primary-700 hover:bg-primary-200/60 hover:text-primary-950"
           >
-            <HugeiconsIcon icon={SidebarLeft01Icon} size={18} strokeWidth={1.6} />
+            <HugeiconsIcon icon={SidebarLeft01Icon} size={17} strokeWidth={1.6} />
           </Button>
         </div>
       ) : null}
 
-      {/* Segment 2: Active Project + Session Title + PlanAI View Switcher */}
-      <div className="flex min-w-0 flex-1 items-center justify-between gap-2 px-3.5">
-        <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center justify-between gap-3 px-3.5">
+        <div className="flex min-w-0 items-center gap-1.5">
           {showSidebarButton ? (
             <Button
               size="icon-sm"
@@ -142,115 +138,103 @@ function ChatHeaderComponent({
               to="/new"
               data-testid="desktop-brand-link"
               aria-label="autobot"
-              className="flex shrink-0 items-center gap-1.5 rounded-lg px-1.5 py-1 text-sm font-semibold tracking-tight text-primary-950 hover:bg-primary-100"
+              className="flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-sm font-semibold text-primary-950 hover:bg-primary-100"
             >
               <WebClawIconBig className="size-5" />
               <span>autobot</span>
             </Link>
           ) : null}
           {activeProjectName ? (
-            <span
-              data-testid="header-active-project"
-              className="shrink-0 rounded-md border border-primary-200 bg-primary-100 px-2 py-0.5 font-mono text-[11px] text-primary-700"
-            >
-              {activeProjectName}
-            </span>
+            <>
+              <span
+                data-testid="header-active-project"
+                className="shrink-0 text-[13px] text-primary-600"
+              >
+                {activeProjectName}
+              </span>
+              <span className="text-primary-400" aria-hidden="true">
+                /
+              </span>
+            </>
           ) : null}
           <span
             data-testid="desktop-session-title"
-            className="truncate text-[13px] font-medium text-primary-900"
+            className="truncate text-[13px] font-medium text-primary-950"
           >
             {activeTitle}
           </span>
         </div>
 
-        {onChangeWorkspaceView ? (
-          <div
-            data-testid="workspace-view-switcher"
-            role="group"
-            aria-label="Workspace view mode"
-            className="flex shrink-0 items-center rounded-lg border border-primary-200 bg-primary-100 p-0.5"
-          >
-            {(
-              [
-                ['workbench', 'Workbench'],
-                ['graph', 'PlanAI Graph'],
-                ['split', 'Split View'],
-              ] as const
-            ).map(([mode, label]) => (
+        <div className="flex shrink-0 items-center gap-2">
+          {onChangeWorkspaceView ? (
+            <div
+              data-testid="workspace-view-switcher"
+              role="group"
+              aria-label="View"
+              className="flex items-center rounded-md bg-primary-100 p-0.5"
+            >
               <button
-                key={mode}
                 type="button"
-                data-testid={`view-mode-${mode}`}
-                aria-pressed={workspaceView === mode}
-                onClick={() => onChangeWorkspaceView(mode)}
+                data-testid="view-mode-workbench"
+                aria-pressed={!isPlanActive}
+                onClick={() => onChangeWorkspaceView('workbench')}
                 className={cn(
-                  'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
-                  workspaceView === mode
-                    ? 'border border-primary-300 bg-surface text-primary-950'
-                    : 'border border-transparent text-primary-700 hover:text-primary-950',
+                  'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                  !isPlanActive
+                    ? 'bg-surface text-primary-950 shadow-2xs'
+                    : 'text-primary-600 hover:text-primary-900',
                 )}
               >
-                {label}
+                Chat
               </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-
-      {/* Segment 3: Chief Status Chip, Session Telemetry, Export & Inspector Toggle */}
-      <div className="flex shrink-0 items-center gap-1.5 border-l border-primary-200 px-2.5">
-        {onFocusOrchestratorQueue ? (
-          <button
-            type="button"
-            data-testid="orchestrator-role-chip"
-            onClick={onFocusOrchestratorQueue}
-            title={`Chief of Staff (${chiefLlmStatus || 'deterministic triage'}) — open review queue`}
-            className="flex h-7 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-100 px-2.5 text-xs font-medium text-primary-900 hover:bg-primary-200/80 transition-colors"
-          >
-            <span
-              className={cn(
-                'size-2 shrink-0 rounded-full',
-                chiefLlmConfigured ? 'bg-[#268bd2]' : 'bg-[#7aae66]',
-              )}
-              aria-hidden="true"
-            />
-            <span>Chief</span>
-            {needsReviewCount > 0 ? (
-              <span
-                data-testid="orchestrator-review-badge"
-                className="rounded-full bg-[#268bd2]/20 px-1.5 py-px font-mono text-[10px] font-semibold text-primary-950 tabular-nums"
+              <button
+                type="button"
+                data-testid="view-mode-graph"
+                aria-pressed={isPlanActive}
+                onClick={() => onChangeWorkspaceView('graph')}
+                className={cn(
+                  'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                  isPlanActive
+                    ? 'bg-surface text-primary-950 shadow-2xs'
+                    : 'text-primary-600 hover:text-primary-900',
+                )}
               >
-                {needsReviewCount}
-              </span>
-            ) : null}
-          </button>
-        ) : null}
+                Plan
+              </button>
+            </div>
+          ) : null}
 
-        <ContextMeter usedTokens={usedTokens} maxTokens={maxTokens} />
-        {showExport ? (
-          <ExportMenu onExport={onExport} disabled={exportDisabled} />
-        ) : null}
-        {onToggleInspector ? (
-          <button
-            type="button"
-            data-testid="toggle-inspector"
-            aria-pressed={inspectorOpen}
-            onClick={onToggleInspector}
-            className={cn(
-              'relative flex h-7 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors',
-              inspectorOpen
-                ? 'border-primary-300 bg-primary-100 text-primary-950'
-                : 'border-transparent text-primary-700 hover:bg-primary-100 hover:text-primary-950',
-            )}
-          >
-            <PanelToggleGlyph active={inspectorOpen} />
-            <span>Inspector</span>
-            {!inspectorOpen && needsReviewCount > 0 ? (
-              <span className="size-1.5 rounded-full bg-[#268bd2]" />
-            ) : null}
-          </button>
-        ) : null}
+          <ContextMeter usedTokens={usedTokens} maxTokens={maxTokens} />
+          {showExport ? (
+            <ExportMenu onExport={onExport} disabled={exportDisabled} />
+          ) : null}
+
+          {onToggleInspector ? (
+            <button
+              type="button"
+              data-testid="toggle-inspector"
+              aria-label={inspectorOpen ? 'Hide review panel' : 'Show review panel'}
+              aria-pressed={inspectorOpen}
+              onClick={onToggleInspector}
+              className={cn(
+                'flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors',
+                inspectorOpen
+                  ? 'bg-primary-100 text-primary-950'
+                  : 'text-primary-600 hover:bg-primary-100 hover:text-primary-950',
+              )}
+            >
+              <PanelToggleGlyph active={inspectorOpen} />
+              {needsReviewCount > 0 ? (
+                <span
+                  data-testid="orchestrator-review-badge"
+                  className="rounded-full bg-[#268bd2]/20 px-1.5 py-px text-[10px] font-semibold text-primary-950 tabular-nums"
+                >
+                  {needsReviewCount}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
+        </div>
       </div>
     </header>
   )

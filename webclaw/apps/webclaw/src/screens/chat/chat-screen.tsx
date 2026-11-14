@@ -560,9 +560,6 @@ export function ChatScreen({
         ) {
           startRun(payload.runId.trim())
         }
-        if (effectiveMode === 'team' && workspaceView === 'workbench') {
-          handleChangeWorkspaceView('split')
-        }
         refreshHistory()
         window.dispatchEvent(new CustomEvent('autoplan:event'))
       })

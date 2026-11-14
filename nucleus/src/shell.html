@@ -1,25 +1,22 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Nucleus · PlanAI Multi-Project & Multi-Agent Workbench</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nucleus</title>
     <style>
       :root {
-        --bg-deep: #002028;
+        --bg-window: #002028;
         --bg-surface: #002b36;
-        --bg-elevated: #073642;
         --bg-card: #0c3540;
         --border-subtle: #133b45;
-        --border-strong: #1e444e;
+        --border-strong: #1e4b56;
         --fg-primary: #e6f0f2;
         --fg-body: #c9d8db;
-        --fg-muted: #839496;
-        --fg-dim: #586e75;
-        --accent-blue: #268bd2;
-        --accent-green: #7aae66;
-        --accent-amber: #b58900;
-        --accent-red: #dc322f;
+        --fg-muted: #8ca3a8;
+        --accent: #268bd2;
+        --ok: #7aae66;
+        --danger: #e05a5a;
       }
 
       * {
@@ -31,242 +28,100 @@
         margin: 0;
         padding: 0;
         width: 100%;
-        height: 100%;
+        height: 100dvh;
         overflow: hidden;
-        background: var(--bg-deep);
+        background: var(--bg-window);
         color: var(--fg-body);
-        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter',
-          system-ui, sans-serif;
-        font-size: 12px;
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
+          sans-serif;
+        font-size: 13px;
+        -webkit-font-smoothing: antialiased;
         user-select: none;
       }
 
       .app-root {
         display: flex;
         flex-direction: column;
-        width: 100vw;
-        height: 100vh;
+        width: 100%;
+        height: 100dvh;
       }
 
-      /* Native macOS hiddenInset Titlebar */
+      /* Single 36px native macOS titlebar (76px left inset for traffic lights) */
       .titlebar {
+        height: 36px;
+        min-height: 36px;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        height: 40px;
-        padding-left: 78px;
+        padding-left: 76px;
         padding-right: 12px;
-        background: var(--bg-deep);
+        background: var(--bg-window);
         border-bottom: 1px solid var(--border-subtle);
         -webkit-app-region: drag;
-        flex-shrink: 0;
-        gap: 12px;
-      }
-
-      .no-drag {
-        -webkit-app-region: no-drag;
-      }
-
-      .brand-cluster {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-width: 0;
-      }
-
-      .brand-icon {
-        width: 20px;
-        height: 20px;
-        object-fit: contain;
       }
 
       .brand-title {
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--fg-primary);
-        letter-spacing: -0.01em;
-      }
-
-      .brand-pill {
-        padding: 2px 6px;
-        border-radius: 5px;
-        background: var(--bg-card);
-        border: 1px solid var(--border-strong);
-        color: var(--fg-muted);
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 10px;
-      }
-
-      .mode-switcher {
         display: flex;
         align-items: center;
-        gap: 2px;
-        padding: 2px;
-        border-radius: 8px;
-        background: var(--bg-surface);
-        border: 1px solid var(--border-strong);
-      }
-
-      .mode-btn {
-        appearance: none;
-        border: 1px solid transparent;
-        background: transparent;
-        color: var(--fg-muted);
-        font-size: 11px;
-        font-weight: 500;
-        padding: 4px 10px;
-        border-radius: 6px;
-        cursor: pointer;
-        transition: all 0.12s ease;
-        white-space: nowrap;
-      }
-
-      .mode-btn:hover {
-        color: var(--fg-primary);
-      }
-
-      .mode-btn.active {
-        background: var(--bg-card);
-        border-color: #27535e;
-        color: var(--fg-primary);
-      }
-
-      .titlebar-right {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-
-      .chip-btn {
-        appearance: none;
-        border: 1px solid var(--border-strong);
-        background: var(--bg-surface);
-        color: var(--fg-body);
-        font-size: 11px;
-        padding: 4px 8px;
-        border-radius: 6px;
-        cursor: pointer;
-      }
-
-      .chip-btn:hover {
-        background: var(--bg-card);
-        color: var(--fg-primary);
-      }
-
-      /* Workspace Body: Left Project Activity Rail + Main Viewport */
-      .workspace {
-        display: flex;
-        flex: 1;
-        min-height: 0;
-        overflow: hidden;
-      }
-
-      .project-rail {
-        width: 196px;
-        background: var(--bg-deep);
-        border-right: 1px solid var(--border-subtle);
-        display: flex;
-        flex-direction: column;
-        flex-shrink: 0;
-        overflow: hidden;
-      }
-
-      .rail-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 8px 10px 6px;
-        font-size: 10px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: var(--fg-dim);
-      }
-
-      .rail-list {
-        flex: 1;
-        overflow-y: auto;
-        padding: 4px 6px;
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-      }
-
-      .proj-item {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        padding: 7px 8px;
-        border-radius: 8px;
-        border: 1px solid transparent;
-        background: transparent;
-        color: var(--fg-muted);
-        text-align: left;
-        cursor: pointer;
-      }
-
-      .proj-item:hover {
-        background: var(--bg-surface);
-        color: var(--fg-body);
-      }
-
-      .proj-item.active {
-        background: var(--bg-card);
-        border-color: var(--border-strong);
-        color: var(--fg-primary);
-      }
-
-      .proj-item-top {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 6px;
-      }
-
-      .proj-name {
+        gap: 7px;
         font-size: 12px;
         font-weight: 600;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        color: var(--fg-primary);
       }
 
-      .proj-badges {
+      .brand-title img {
+        width: 16px;
+        height: 16px;
+      }
+
+      .titlebar-actions {
         display: flex;
         align-items: center;
         gap: 4px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 10px;
+        -webkit-app-region: no-drag;
       }
 
-      .proj-meta {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 10px;
-        color: var(--fg-dim);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+      .nav-btn {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: var(--fg-muted);
+        border-radius: 6px;
+        padding: 4px 9px;
+        font-size: 11.5px;
+        font-weight: 500;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
       }
 
-      .rail-footer {
-        border-top: 1px solid var(--border-subtle);
-        padding: 8px;
-        display: flex;
-        flex-direction: column;
-        gap: 5px;
-        font-size: 10px;
-        color: var(--fg-dim);
+      .nav-btn:hover {
+        color: var(--fg-primary);
+        background: rgba(255, 255, 255, 0.05);
       }
 
-      /* Main Content Area */
+      .nav-btn.active {
+        background: var(--bg-card);
+        color: var(--fg-primary);
+      }
+
+      .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--fg-muted);
+      }
+      .dot.ok {
+        background: var(--ok);
+      }
+
       .viewport {
         flex: 1;
-        min-width: 0;
         min-height: 0;
-        position: relative;
-        background: var(--bg-surface);
+        min-width: 0;
         display: flex;
-        flex-direction: column;
+        background: var(--bg-surface);
       }
 
       .frame-view {
@@ -280,32 +135,31 @@
         display: none !important;
       }
 
-      /* Chromium Prompt API Console View */
-      .prompt-console {
+      /* Clean Local AI Diagnostic Panel (shown only when Local AI is clicked) */
+      .local-ai-panel {
         flex: 1;
         overflow-y: auto;
-        padding: 20px 24px;
+        padding: 28px 32px;
         user-select: text;
+      }
+
+      .local-ai-inner {
+        max-width: 680px;
+        margin: 0 auto;
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: 18px;
       }
 
-      .grid-2 {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 14px;
-      }
-
-      .card {
+      .section-card {
         background: var(--bg-card);
-        border: 1px solid var(--border-strong);
-        border-radius: 12px;
-        padding: 14px 16px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 10px;
+        padding: 16px 18px;
       }
 
-      .card h3 {
-        margin: 0 0 8px;
+      .section-card h3 {
+        margin: 0 0 10px;
         font-size: 13px;
         font-weight: 600;
         color: var(--fg-primary);
@@ -315,59 +169,56 @@
         display: flex;
         justify-content: space-between;
         gap: 12px;
-        padding: 4px 0;
-        border-bottom: 1px solid rgba(30, 68, 78, 0.5);
-        font-size: 11px;
+        padding: 5px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        font-size: 12px;
       }
 
       .kv-row:last-child {
         border-bottom: 0;
       }
 
-      .kv-key {
-        color: var(--fg-muted);
-      }
-
       .kv-val {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
         color: var(--fg-primary);
-        text-align: right;
+        font-variant-numeric: tabular-nums;
       }
 
       .prompt-textarea {
         width: 100%;
-        min-height: 74px;
+        min-height: 60px;
         border-radius: 8px;
         border: 1px solid var(--border-strong);
-        background: var(--bg-deep);
+        background: var(--bg-window);
         color: var(--fg-primary);
-        padding: 10px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 12px;
-        resize: vertical;
+        padding: 8px 10px;
+        font-family: inherit;
+        font-size: 12.5px;
         outline: none;
+        resize: vertical;
       }
 
-      .action-row {
+      .btn-row {
         display: flex;
         align-items: center;
         gap: 10px;
         margin-top: 10px;
       }
 
-      .primary-btn {
+      .btn-primary {
         appearance: none;
-        border: 1px solid #359be0;
-        background: var(--accent-blue);
-        color: #002028;
-        font-weight: 600;
+        border: 0;
+        background: var(--accent);
+        color: #ffffff;
+        border-radius: 6px;
+        padding: 6px 12px;
         font-size: 12px;
-        padding: 7px 14px;
-        border-radius: 8px;
+        font-weight: 500;
         cursor: pointer;
       }
 
-      .primary-btn:disabled {
+      .btn-primary:disabled {
         opacity: 0.45;
         cursor: not-allowed;
       }
@@ -376,251 +227,126 @@
         margin-top: 10px;
         padding: 10px 12px;
         border-radius: 8px;
-        background: var(--bg-deep);
-        border: 1px solid var(--border-subtle);
+        background: var(--bg-window);
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 11px;
+        font-size: 11.5px;
         line-height: 1.5;
+        color: var(--fg-primary);
         white-space: pre-wrap;
-        color: var(--fg-body);
-        min-height: 44px;
-      }
-
-      /* Bottom Status Bar */
-      .statusbar {
-        height: 25px;
-        background: var(--bg-deep);
-        border-top: 1px solid var(--border-subtle);
-        padding: 0 12px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 10.5px;
-        color: var(--fg-muted);
-        flex-shrink: 0;
-      }
-
-      .status-group {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        min-width: 0;
-      }
-
-      .dot {
-        display: inline-block;
-        width: 7px;
-        height: 7px;
-        border-radius: 999px;
-        margin-right: 5px;
-      }
-
-      .dot.ok {
-        background: var(--accent-green);
-      }
-
-      .dot.warn {
-        background: var(--accent-amber);
-      }
-
-      .dot.err {
-        background: var(--accent-red);
       }
     </style>
   </head>
   <body>
     <div class="app-root" data-testid="nucleus-app-root">
       <header class="titlebar" data-testid="nucleus-titlebar">
-        <div class="brand-cluster">
-          <img class="brand-icon" src="/icon.png" alt="" />
-          <span class="brand-title">Nucleus</span>
-          <span class="brand-pill" id="chrome-version-pill">Chromium</span>
+        <div class="brand-title">
+          <img src="/icon.png" alt="" />
+          <span>Nucleus</span>
         </div>
 
-        <nav class="mode-switcher no-drag" data-testid="nucleus-view-switcher">
+        <nav class="titlebar-actions" aria-label="Nucleus navigation">
           <button
             type="button"
-            class="mode-btn active"
+            class="nav-btn active"
             data-mode="workbench"
             data-testid="nucleus-mode-workbench"
           >
-            Workbench (3-Col)
+            Workbench
           </button>
           <button
             type="button"
-            class="mode-btn"
+            class="nav-btn"
             data-mode="graph"
             data-testid="nucleus-mode-graph"
           >
-            PlanAI Graph
+            Plan
           </button>
           <button
             type="button"
-            class="mode-btn"
-            data-mode="split"
-            data-testid="nucleus-mode-split"
-          >
-            Split View
-          </button>
-          <button
-            type="button"
-            class="mode-btn"
+            class="nav-btn"
             data-mode="editor"
             data-testid="nucleus-mode-editor"
           >
-            SvelteFlow Editor
+            Visual Editor
           </button>
           <button
             type="button"
-            class="mode-btn"
+            class="nav-btn"
             data-mode="prompt-api"
             data-testid="nucleus-mode-prompt-api"
           >
-            Chromium Prompt API
+            <span class="dot" id="local-ai-dot"></span>
+            <span>Local AI</span>
           </button>
         </nav>
-
-        <div class="titlebar-right no-drag">
-          <button
-            type="button"
-            class="chip-btn"
-            id="reload-frame-btn"
-            data-testid="nucleus-reload-button"
-          >
-            Reload View
-          </button>
-        </div>
       </header>
 
-      <div class="workspace">
-        <aside class="project-rail" data-testid="nucleus-project-rail">
-          <div class="rail-header">
-            <span>Projects</span>
-            <button
-              type="button"
-              class="chip-btn"
-              id="refresh-projects-btn"
-              style="padding: 1px 6px; font-size: 10px"
-            >
-              ↻
-            </button>
-          </div>
-          <div class="rail-list" id="project-rail-list"></div>
-          <div class="rail-footer" id="rail-brain-summary">
-            <div>PlanAI Evolution: loading…</div>
-          </div>
-        </aside>
+      <main class="viewport">
+        <iframe
+          id="workbench-frame"
+          data-testid="nucleus-workbench-frame"
+          class="frame-view"
+          title="Workbench"
+        ></iframe>
 
-        <main class="viewport">
-          <iframe
-            id="workbench-frame"
-            data-testid="nucleus-workbench-frame"
-            class="frame-view"
-            title="AutoPlan 3-Column Workbench & PlanAI Graph"
-          ></iframe>
+        <iframe
+          id="editor-frame"
+          data-testid="nucleus-editor-frame"
+          class="frame-view hidden"
+          title="Visual Editor"
+        ></iframe>
 
-          <iframe
-            id="editor-frame"
-            data-testid="nucleus-editor-frame"
-            class="frame-view hidden"
-            title="PlanAI SvelteFlow Graph Editor"
-          ></iframe>
-
-          <section
-            id="prompt-api-view"
-            data-testid="nucleus-prompt-api-view"
-            class="prompt-console hidden"
-          >
-            <div class="grid-2">
-              <div class="card">
-                <h3>Chromium Blink window.LanguageModel Runtime</h3>
-                <div class="kv-row">
-                  <span class="kv-key">Electron / Chromium</span>
-                  <span class="kv-val" id="diag-versions">—</span>
-                </div>
-                <div class="kv-row">
-                  <span class="kv-key">Secure Origin Context</span>
-                  <span class="kv-val" id="diag-secure">—</span>
-                </div>
-                <div class="kv-row">
-                  <span class="kv-key">window.LanguageModel API</span>
-                  <span class="kv-val" id="diag-lm-present">—</span>
-                </div>
-                <div class="kv-row">
-                  <span class="kv-key"
-                    >LanguageModel.availability()</span
-                  >
-                  <span
-                    class="kv-val"
-                    id="diag-lm-availability"
-                    data-testid="nucleus-lm-availability"
-                    >probing…</span
-                  >
-                </div>
-                <div class="kv-row">
-                  <span class="kv-key">Local AI Utility Backend</span>
-                  <span class="kv-val" id="diag-mlx-model">—</span>
-                </div>
+        <section
+          id="prompt-api-view"
+          data-testid="nucleus-prompt-api-view"
+          class="local-ai-panel hidden"
+        >
+          <div class="local-ai-inner">
+            <div class="section-card">
+              <h3>On-Device LanguageModel Runtime</h3>
+              <div class="kv-row">
+                <span>Runtime</span>
+                <span class="kv-val" id="diag-electron-chrome">—</span>
               </div>
-
-              <div class="card">
-                <h3>Gemini Nano Investigation & PlanAI Bridge</h3>
-                <div class="kv-row">
-                  <span class="kv-key">OptGuide Gemini Nano Weights</span>
-                  <span class="kv-val" id="diag-nano-weights">checking…</span>
-                </div>
-                <div class="kv-row">
-                  <span class="kv-key">Unbranded Chromium Auto-Download</span>
-                  <span class="kv-val"
-                    >Unavailable (Google API keys omitted)</span
-                  >
-                </div>
-                <div class="kv-row">
-                  <span class="kv-key">AutoPlan Python Bridge Client</span>
-                  <span
-                    class="kv-val"
-                    id="diag-bridge-client"
-                    data-testid="nucleus-bridge-client"
-                    >connecting…</span
-                  >
-                </div>
-                <div class="kv-row">
-                  <span class="kv-key">Bridged PlanAI Worker Calls</span>
-                  <span
-                    class="kv-val"
-                    id="diag-bridged-count"
-                    data-testid="nucleus-bridged-count"
-                    >0</span
-                  >
-                </div>
-                <div class="kv-row">
-                  <span class="kv-key">Last Inference Latency</span>
-                  <span class="kv-val" id="diag-last-latency">—</span>
-                </div>
+              <div class="kv-row">
+                <span>window.LanguageModel</span>
+                <span class="kv-val" data-testid="nucleus-lm-availability" id="diag-lm-availability">checking…</span>
+              </div>
+              <div class="kv-row">
+                <span>Local Metal Model</span>
+                <span class="kv-val" id="diag-mlx-model">—</span>
+              </div>
+              <div class="kv-row">
+                <span>Chrome Gemini Nano Weights</span>
+                <span class="kv-val" id="diag-nano-weights">checking…</span>
+              </div>
+              <div class="kv-row">
+                <span>Backend Bridge</span>
+                <span class="kv-val" data-testid="nucleus-bridge-client" id="diag-bridge-client">connecting…</span>
+              </div>
+              <div class="kv-row">
+                <span>Bridged Calls</span>
+                <span class="kv-val" data-testid="nucleus-bridged-count" id="diag-bridged-count">0</span>
               </div>
             </div>
 
-            <div class="card">
-              <h3>
-                1. Direct Renderer Test —
-                <code>await (await window.LanguageModel.create()).prompt(...)</code>
-              </h3>
+            <div class="section-card">
+              <h3>Test On-Device Prompt</h3>
               <textarea
                 id="direct-prompt-input"
                 data-testid="nucleus-prompt-input"
                 class="prompt-textarea"
-              >Summarize in one sentence how PlanAI JoinedTaskWorker joins parallel sub-agent branches.</textarea>
-              <div class="action-row">
+              >Summarize in one sentence how isolated git worktrees prevent multi-agent file conflicts.</textarea>
+              <div class="btn-row">
                 <button
                   type="button"
                   id="run-direct-prompt-btn"
                   data-testid="nucleus-run-prompt-test"
-                  class="primary-btn"
+                  class="btn-primary"
                 >
-                  Run window.LanguageModel.prompt()
+                  Run Local Prompt
                 </button>
-                <span id="direct-prompt-meta" style="color: var(--fg-muted)"></span>
+                <span id="direct-prompt-meta" style="color: var(--fg-muted); font-size: 11.5px"></span>
               </div>
               <div
                 id="direct-prompt-output"
@@ -629,25 +355,18 @@
               >Ready.</div>
             </div>
 
-            <div class="card">
-              <h3>
-                2. Full Python PlanAI LLM Core Round-Trip —
-                <code>POST /api/llm/test-prompt</code> → Chromium
-                <code>window.LanguageModel</code> → Metal MLX → PlanAI
-              </h3>
-              <div class="action-row" style="margin-top: 0">
+            <div class="section-card">
+              <h3>Test Backend Bridge Round-Trip</h3>
+              <div class="btn-row" style="margin-top: 0">
                 <button
                   type="button"
-                  id="run-backend-roundtrip-btn"
+                  id="run-roundtrip-btn"
                   data-testid="nucleus-run-backend-roundtrip"
-                  class="primary-btn"
+                  class="btn-primary"
                 >
-                  Test PlanAI Python → Chromium Prompt API Bridge
+                  Verify Backend → Chromium Bridge
                 </button>
-                <span
-                  id="roundtrip-meta"
-                  style="color: var(--fg-muted)"
-                ></span>
+                <span id="roundtrip-meta" style="color: var(--fg-muted); font-size: 11.5px"></span>
               </div>
               <div
                 id="roundtrip-output"
@@ -655,26 +374,9 @@
                 class="output-box"
               >Ready.</div>
             </div>
-          </section>
-        </main>
-      </div>
-
-      <footer class="statusbar" data-testid="nucleus-status-bar">
-        <div class="status-group">
-          <span id="status-lm">
-            <span class="dot warn"></span>window.LanguageModel: probing…
-          </span>
-          <span id="status-bridge">
-            <span class="dot warn"></span>PlanAI Bridge: connecting…
-          </span>
-          <span id="status-nano">
-            OptGuide Gemini Nano: unbranded Chromium (using registerLocalAIHandler + Metal MLX)
-          </span>
-        </div>
-        <div class="status-group">
-          <span id="status-telemetry">Calls: 0</span>
-        </div>
-      </footer>
+          </div>
+        </section>
+      </main>
     </div>
 
     <script>
@@ -683,17 +385,8 @@
         const backendUrl = runtime.backendUrl;
         const webclawUrl = runtime.webclawUrl;
 
-        document.getElementById('chrome-version-pill').textContent =
-          `Electron ${runtime.electronVersion} · Chrome ${runtime.chromeVersion.split('.')[0]}`;
-        document.getElementById('diag-versions').textContent =
-          `Electron ${runtime.electronVersion} / Chromium ${runtime.chromeVersion}`;
-        document.getElementById('diag-secure').textContent = String(
-          window.isSecureContext
-        );
-        document.getElementById('diag-lm-present').textContent =
-          typeof window.LanguageModel !== 'undefined'
-            ? 'present (Blink AIPromptAPI)'
-            : 'missing';
+        document.getElementById('diag-electron-chrome').textContent =
+          `Electron ${runtime.electronVersion} · Chromium ${runtime.chromeVersion}`;
         document.getElementById('diag-mlx-model').textContent =
           `${runtime.mlxModel} (127.0.0.1:${runtime.mlxPort})`;
 
@@ -702,7 +395,6 @@
         const promptApiView = document.getElementById('prompt-api-view');
 
         let currentMode = 'workbench';
-        let activeProjectId = '';
         let bridgedCalls = 0;
         let bridgeClientId = '';
         let lmAvailability = 'unavailable';
@@ -733,12 +425,10 @@
           } else {
             workbenchFrame.dataset.mode = currentMode;
             try {
-              if (workbenchFrame.contentWindow) {
-                workbenchFrame.contentWindow.postMessage(
-                  { type: 'nucleus:set-view', view: currentMode },
-                  '*'
-                );
-              }
+              workbenchFrame.contentWindow?.postMessage(
+                { type: 'nucleus:set-view', view: currentMode },
+                '*'
+              );
             } catch {
               workbenchFrame.src = target;
             }
@@ -746,11 +436,7 @@
         }
 
         workbenchFrame.addEventListener('load', () => {
-          if (
-            currentMode === 'workbench' ||
-            currentMode === 'graph' ||
-            currentMode === 'split'
-          ) {
+          if (currentMode === 'workbench' || currentMode === 'graph') {
             try {
               workbenchFrame.contentWindow?.postMessage(
                 { type: 'nucleus:set-view', view: currentMode },
@@ -762,10 +448,10 @@
           }
         });
 
-        document.querySelectorAll('.mode-btn').forEach((btn) => {
+        document.querySelectorAll('.nav-btn').forEach((btn) => {
           btn.addEventListener('click', () => {
             document
-              .querySelectorAll('.mode-btn')
+              .querySelectorAll('.nav-btn')
               .forEach((b) => b.classList.remove('active'));
             btn.classList.add('active');
             currentMode = btn.dataset.mode || 'workbench';
@@ -773,13 +459,8 @@
           });
         });
 
-        document
-          .getElementById('reload-frame-btn')
-          .addEventListener('click', () => updateFrames(true));
-
         updateFrames(true);
 
-        // Check Chromium window.LanguageModel availability
         async function refreshLanguageModelAvailability() {
           if (typeof window.LanguageModel === 'undefined') {
             lmAvailability = 'unavailable';
@@ -792,94 +473,34 @@
           }
           document.getElementById('diag-lm-availability').textContent =
             lmAvailability;
-          const ok = lmAvailability === 'available';
-          document.getElementById('status-lm').innerHTML =
-            `<span class="dot ${ok ? 'ok' : 'err'}"></span>window.LanguageModel: ${lmAvailability}`;
+          const dot = document.getElementById('local-ai-dot');
+          if (lmAvailability === 'available') {
+            dot.classList.add('ok');
+          } else {
+            dot.classList.remove('ok');
+          }
           return lmAvailability;
         }
 
         await refreshLanguageModelAvailability();
 
-        // Load Projects & Evolution Summary into Left Rail
-        async function loadProjectsAndBrain() {
+        async function loadBackendDiagnostics() {
           try {
-            const [pRes, eRes, lRes] = await Promise.all([
-              fetch(`${backendUrl}/api/projects`),
-              fetch(`${backendUrl}/api/evolution/status`),
-              fetch(`${backendUrl}/api/llm/status`),
-            ]);
-            if (pRes.ok) {
-              const pData = await pRes.json();
-              const projects = pData.projects || [];
-              if (!activeProjectId && projects[0]) {
-                activeProjectId = projects[0].id;
-              }
-              const listEl = document.getElementById('project-rail-list');
-              listEl.innerHTML = '';
-              projects.forEach((proj) => {
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.dataset.testid = `nucleus-rail-project-${proj.id}`;
-                btn.className =
-                  'proj-item' + (proj.id === activeProjectId ? ' active' : '');
-                const reviews = proj.open_review_count || 0;
-                const runs = proj.active_run_count || 0;
-                btn.innerHTML = `
-                  <div class="proj-item-top">
-                    <span class="proj-name">📁 ${proj.name}</span>
-                    <span class="proj-badges">${runs > 0 ? `⚡${runs}` : ''} ${reviews > 0 ? `⚑${reviews}` : ''}</span>
-                  </div>
-                  <div class="proj-meta">${proj.default_branch || 'main'} · ${proj.session_count || 0} sess</div>
-                `;
-                btn.addEventListener('click', () => {
-                  activeProjectId = proj.id;
-                  try {
-                    workbenchFrame.contentWindow?.postMessage(
-                      { type: 'nucleus:select-project', projectId: proj.id },
-                      '*'
-                    );
-                  } catch {
-                    // ignore frame timing
-                  }
-                  loadProjectsAndBrain();
-                });
-                listEl.appendChild(btn);
-              });
-            }
-            if (eRes.ok) {
-              const eData = await eRes.json();
-              document.getElementById('rail-brain-summary').innerHTML = `
-                <div style="color: var(--fg-body); font-weight: 600">Brain Gen v${eData.active_generation || 1}</div>
-                <div>${eData.rules_count || 0} active guardrail rules</div>
-              `;
-            }
+            const lRes = await fetch(`${backendUrl}/api/llm/status`);
             if (lRes.ok) {
               const lData = await lRes.json();
               const nano = lData.gemini_nano_investigation || {};
               document.getElementById('diag-nano-weights').textContent =
                 nano.weights_present
-                  ? `Found (${nano.weights_path})`
-                  : '0 bytes in Chrome OptGuideOnDeviceModel';
+                  ? `Installed (${nano.weights_path})`
+                  : '0 bytes (unbranded Chromium uses Metal MLX)';
             }
           } catch {
-            // Backend may still be starting
+            // ignore transient startup
           }
         }
+        await loadBackendDiagnostics();
 
-        document
-          .getElementById('refresh-projects-btn')
-          .addEventListener('click', () => void loadProjectsAndBrain());
-        await loadProjectsAndBrain();
-        setInterval(loadProjectsAndBrain, 6000);
-
-        window.nucleusDesktop.onTelemetry((payload) => {
-          if (payload && payload.type === 'prompt_completed') {
-            document.getElementById('diag-last-latency').textContent =
-              `${payload.latencyMs}ms (${payload.tokens} tok)`;
-          }
-        });
-
-        // Direct Renderer window.LanguageModel.prompt() button
         document
           .getElementById('run-direct-prompt-btn')
           .addEventListener('click', async () => {
@@ -891,16 +512,15 @@
               .value.trim();
             if (!text) return;
             btn.disabled = true;
-            outEl.textContent =
-              'Creating Chromium window.LanguageModel session & prompting local Metal MLX…';
+            outEl.textContent = 'Running local prompt…';
             const t0 = performance.now();
             try {
               const session = await window.LanguageModel.create();
               try {
                 const reply = await session.prompt(text);
-                const ms = Math.round(performance.now() - t0);
+                const elapsed = Math.round(performance.now() - t0);
                 outEl.textContent = reply;
-                metaEl.textContent = `${ms}ms · contextUsage ${session.contextUsage}/${session.contextWindow}`;
+                metaEl.textContent = `${elapsed}ms`;
               } finally {
                 session.destroy();
               }
@@ -911,16 +531,14 @@
             }
           });
 
-        // Full Python PlanAI LLM Core -> Chromium Bridge Round-Trip button
         document
-          .getElementById('run-backend-roundtrip-btn')
+          .getElementById('run-roundtrip-btn')
           .addEventListener('click', async () => {
-            const btn = document.getElementById('run-backend-roundtrip-btn');
+            const btn = document.getElementById('run-roundtrip-btn');
             const outEl = document.getElementById('roundtrip-output');
             const metaEl = document.getElementById('roundtrip-meta');
             btn.disabled = true;
-            outEl.textContent =
-              'Dispatching POST /api/llm/test-prompt to Python PlanAI LLM Core…';
+            outEl.textContent = 'Dispatching round-trip…';
             const t0 = performance.now();
             try {
               const res = await fetch(`${backendUrl}/api/llm/test-prompt`, {
@@ -928,16 +546,16 @@
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({
                   prompt:
-                    'Confirm in one concise sentence that Python PlanAI LLM Core routed through Nucleus Chromium window.LanguageModel.',
+                    'Reply in one short sentence confirming the backend bridged through Chromium LanguageModel.',
                 }),
               });
               const data = await res.json();
-              const ms = Math.round(performance.now() - t0);
               if (!res.ok || data.success === false) {
                 throw new Error(data.error || `HTTP ${res.status}`);
               }
-              outEl.textContent = data.reply;
-              metaEl.textContent = `Provider: ${data.provider_used} · ${ms}ms`;
+              const elapsed = Math.round(performance.now() - t0);
+              outEl.textContent = data.response;
+              metaEl.textContent = `Provider: ${data.provider_used} · ${elapsed}ms`;
             } catch (err) {
               outEl.textContent = `Error: ${err.message || err}`;
             } finally {
@@ -945,81 +563,44 @@
             }
           });
 
-        // Continuous Chromium -> Python PlanAI LLM Bridge Worker Loop
-        async function executeBridgedRequest(reqItem) {
-          const started = performance.now();
+        async function executeBridgedPrompt(req) {
+          const messages = Array.isArray(req.messages) ? req.messages : [];
+          const systemMsg = messages.find((m) => m.role === 'system');
+          const nonSystem = messages.filter((m) => m.role !== 'system');
+          const createOpts = {};
+          if (systemMsg && systemMsg.content) {
+            createOpts.initialPrompts = [
+              { role: 'system', content: String(systemMsg.content) },
+            ];
+          }
+          if (typeof req.temperature === 'number') {
+            createOpts.temperature = req.temperature;
+          }
+          const session = await window.LanguageModel.create(createOpts);
           try {
-            const msgs = Array.isArray(reqItem.messages)
-              ? reqItem.messages
-              : [];
-            const initialPrompts = [];
-            let finalUserPrompt = '';
-            for (let i = 0; i < msgs.length; i++) {
-              const m = msgs[i];
-              const role =
-                m.role === 'system' ||
-                m.role === 'assistant' ||
-                m.role === 'user'
-                  ? m.role
-                  : 'user';
-              const contentText = String(m.content || '');
-              if (i === msgs.length - 1 && role === 'user') {
-                finalUserPrompt = contentText;
-              } else if (contentText.trim()) {
-                initialPrompts.push({ role, content: contentText });
-              }
+            const promptInput =
+              nonSystem.length === 1 && nonSystem[0].role === 'user'
+                ? String(nonSystem[0].content)
+                : nonSystem.map((m) => ({
+                    role: m.role === 'assistant' ? 'assistant' : 'user',
+                    content: String(m.content || ''),
+                  }));
+            const promptOpts = {};
+            if (req.response_constraint) {
+              promptOpts.responseConstraint = req.response_constraint;
             }
-            if (!finalUserPrompt && initialPrompts.length > 0) {
-              const popped = initialPrompts.pop();
-              finalUserPrompt = popped.content;
-            }
-
-            const session = await window.LanguageModel.create(
-              initialPrompts.length > 0 ? { initialPrompts } : undefined
-            );
-            try {
-              const promptOpts = {};
-              if (reqItem.response_constraint) {
-                promptOpts.responseConstraint = reqItem.response_constraint;
-              }
-              const content = await session.prompt(finalUserPrompt, promptOpts);
-              const latencyMs = Math.round(performance.now() - started);
-              bridgedCalls += 1;
-              document.getElementById('diag-bridged-count').textContent =
-                String(bridgedCalls);
-              document.getElementById('diag-last-latency').textContent =
-                `${latencyMs}ms`;
-              document.getElementById('status-telemetry').textContent =
-                `Calls: ${bridgedCalls} · Last: ${latencyMs}ms`;
-
-              await fetch(`${backendUrl}/api/llm/chromium-bridge/respond`, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({
-                  request_id: reqItem.request_id,
-                  content,
-                  metrics: {
-                    latency_ms: latencyMs,
-                    context_usage: session.contextUsage,
-                  },
-                }),
-              });
-            } finally {
-              session.destroy();
-            }
-          } catch (err) {
-            await fetch(`${backendUrl}/api/llm/chromium-bridge/respond`, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                request_id: reqItem.request_id,
-                error: err.message || String(err),
-              }),
-            }).catch(() => {});
+            const reply = await session.prompt(promptInput, promptOpts);
+            return {
+              content: String(reply || ''),
+              contextUsage: session.contextUsage,
+              contextWindow: session.contextWindow,
+            };
+          } finally {
+            session.destroy();
           }
         }
 
-        async function runBridgeLoop() {
+        async function startBridgeWorkerLoop() {
           while (true) {
             try {
               const avail = await refreshLanguageModelAvailability();
@@ -1031,8 +612,8 @@
                     headers: { 'content-type': 'application/json' },
                     body: JSON.stringify({
                       app_name: 'Nucleus',
-                      chrome_version: runtime.chromeVersion,
                       electron_version: runtime.electronVersion,
+                      chrome_version: runtime.chromeVersion,
                       language_model_availability: avail,
                       local_backend_model: runtime.mlxModel,
                     }),
@@ -1040,58 +621,65 @@
                 );
                 if (regRes.ok) {
                   const regData = await regRes.json();
-                  bridgeClientId = regData?.client?.client_id || '';
+                  bridgeClientId = regData.client?.client_id || '';
                   document.getElementById('diag-bridge-client').textContent =
-                    bridgeClientId || 'connected';
-                  document.getElementById('status-bridge').innerHTML =
-                    `<span class="dot ok"></span>PlanAI Bridge: ${bridgeClientId}`;
+                    bridgeClientId;
+                } else {
+                  await new Promise((r) => setTimeout(r, 2500));
+                  continue;
                 }
               }
 
-              if (bridgeClientId) {
-                const pollRes = await fetch(
-                  `${backendUrl}/api/llm/chromium-bridge/poll?client_id=${encodeURIComponent(
-                    bridgeClientId
-                  )}&timeout=6`
-                );
-                if (pollRes.ok) {
-                  const pollData = await pollRes.json();
-                  if (pollData.request && pollData.request.request_id) {
-                    await executeBridgedRequest(pollData.request);
-                  }
-                } else if (pollRes.status === 404) {
-                  bridgeClientId = '';
-                }
-              } else {
+              const pollRes = await fetch(
+                `${backendUrl}/api/llm/chromium-bridge/poll?client_id=${encodeURIComponent(bridgeClientId)}&timeout=6`
+              );
+              if (!pollRes.ok) {
+                bridgeClientId = '';
                 await new Promise((r) => setTimeout(r, 2000));
+                continue;
+              }
+              const pollData = await pollRes.json();
+              const job = pollData.request;
+              if (!job || !job.request_id) {
+                continue;
+              }
+
+              try {
+                const result = await executeBridgedPrompt(job);
+                bridgedCalls += 1;
+                document.getElementById('diag-bridged-count').textContent =
+                  String(bridgedCalls);
+                await fetch(`${backendUrl}/api/llm/chromium-bridge/respond`, {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({
+                    request_id: job.request_id,
+                    content: result.content,
+                    metrics: {
+                      usage: {
+                        total_tokens: result.contextUsage || 0,
+                      },
+                    },
+                  }),
+                });
+              } catch (jobErr) {
+                await fetch(`${backendUrl}/api/llm/chromium-bridge/respond`, {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({
+                    request_id: job.request_id,
+                    error: String(jobErr.message || jobErr),
+                  }),
+                });
               }
             } catch {
-              document.getElementById('status-bridge').innerHTML =
-                `<span class="dot err"></span>PlanAI Bridge: reconnecting…`;
               bridgeClientId = '';
               await new Promise((r) => setTimeout(r, 2500));
             }
           }
         }
 
-        // Periodic heartbeat so bridge stays active during idle periods
-        setInterval(async () => {
-          if (!bridgeClientId) return;
-          try {
-            await fetch(`${backendUrl}/api/llm/chromium-bridge/heartbeat`, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                client_id: bridgeClientId,
-                language_model_availability: lmAvailability,
-              }),
-            });
-          } catch {
-            // handled by poll loop
-          }
-        }, 12000);
-
-        void runBridgeLoop();
+        void startBridgeWorkerLoop();
       })();
     </script>
   </body>

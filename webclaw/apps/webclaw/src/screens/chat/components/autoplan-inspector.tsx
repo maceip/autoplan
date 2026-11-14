@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { cn } from '@/lib/utils'
 
 export type AgentServiceInfo = {
   service: string
@@ -77,17 +78,6 @@ type QueueItem = {
   created_at: number
 }
 
-type PromptVersionInfo = {
-  id: string
-  worker_role: string
-  generation: number
-  prompt_template: string
-  rationale: string
-  pass_count: number
-  fail_count: number
-  active: boolean
-}
-
 type EvolutionRuleInfo = {
   id: string
   category: string
@@ -98,54 +88,10 @@ type EvolutionRuleInfo = {
   evidence_count: number
 }
 
-type ServiceFitnessEntry = {
-  service?: string
-  total_runs: number
-  succeeded_runs: number
-  failed_runs: number
-  pass_rate: number | null
-}
-
 type EvolutionStatusPayload = {
-  bootstrap?: {
-    corpus_loaded?: boolean
-    corpus_total_prompts?: number
-    corpus_total_sessions?: number
-  }
   active_generation?: number
-  active_prompts?: {
-    lead_planner?: PromptVersionInfo | null
-    chief_triage?: PromptVersionInfo | null
-  }
   rules?: Array<EvolutionRuleInfo>
   rules_count?: number
-  service_fitness?: Record<string, ServiceFitnessEntry> | Array<ServiceFitnessEntry>
-}
-
-type LlmDiagnosticsPayload = {
-  configured?: boolean
-  status_label?: string
-  last_provider_used?: string
-  total_hybrid_calls?: number
-  chromium_prompt_bridge?: {
-    connected?: boolean
-    total_bridged_calls?: number
-    last_call_latency_ms?: number | null
-    active_client?: {
-      app_name?: string
-      chrome_version?: string
-      local_backend_model?: string
-    } | null
-  }
-  gemini_nano_investigation?: {
-    weights_present?: boolean
-    summary?: string
-  }
-  local_mlx?: {
-    available?: boolean
-    listening?: boolean
-    model_id?: string
-  }
 }
 
 export type InspectorTab = 'queue' | 'agents' | 'runs' | 'evolution'
@@ -163,9 +109,9 @@ type AutoplanInspectorProps = {
   onTabChange?: (tab: InspectorTab) => void
 }
 
-const DEFAULT_WIDTH = 392
-const MIN_WIDTH = 290
-const MAX_WIDTH = 560
+const DEFAULT_WIDTH = 360
+const MIN_WIDTH = 280
+const MAX_WIDTH = 520
 
 const DECISION_ALLOWED: Record<string, Array<string>> = {
   approve: ['needs_review'],
@@ -174,9 +120,12 @@ const DECISION_ALLOWED: Record<string, Array<string>> = {
   snooze: ['needs_review', 'queued', 'triaged'],
 }
 
+function cleanRecommendation(raw: string): string {
+  return raw.replace(/^\[[^\]]+\]\s*/, '').trim()
+}
+
 export function AutoplanInspector({
   services,
-  chiefLlmStatus,
   activeProjectId = '',
   onRunSimpleTask,
   busyDemoService,
@@ -209,7 +158,6 @@ export function AutoplanInspector({
   >({})
   const [evolutionStatus, setEvolutionStatus] =
     useState<EvolutionStatusPayload | null>(null)
-  const [llmStatus, setLlmStatus] = useState<LlmDiagnosticsPayload | null>(null)
   const [evolving, setEvolving] = useState(false)
   const [newRuleText, setNewRuleText] = useState('')
   const [addingRule, setAddingRule] = useState(false)
@@ -217,31 +165,26 @@ export function AutoplanInspector({
   const dragStartRef = useRef<{ x: number; w: number } | null>(null)
   const prevRunStatesRef = useRef<Record<string, string> | null>(null)
 
-  const refreshEvolutionAndLlm = useCallback(async () => {
+  const refreshEvolution = useCallback(async () => {
     try {
       const projParam = activeProjectId
         ? `?project_id=${encodeURIComponent(activeProjectId)}`
         : ''
-      const [eRes, lRes] = await Promise.all([
-        fetch(`/api/autoplan/evolution/status${projParam}`),
-        fetch('/api/autoplan/llm/status'),
-      ])
+      const eRes = await fetch(`/api/autoplan/evolution/status${projParam}`)
       if (eRes.ok) {
         const eData = (await eRes.json()) as EvolutionStatusPayload
         setEvolutionStatus(eData)
       }
-      if (lRes.ok) {
-        const lData = (await lRes.json()) as LlmDiagnosticsPayload
-        setLlmStatus(lData)
-      }
     } catch {
-      // Handled via main inspectorError when explicit action runs
+      // ignore background poll errors
     }
   }, [activeProjectId])
 
   const refreshQueueAndRuns = useCallback(async () => {
     try {
-      const qQuery = queueFilter ? `?status=${encodeURIComponent(queueFilter)}` : ''
+      const qQuery = queueFilter
+        ? `?status=${encodeURIComponent(queueFilter)}`
+        : ''
       const [qRes, rRes] = await Promise.all([
         fetch(`/api/autoplan/queue/items${qQuery}`),
         fetch('/api/autoplan/agents/runs?limit=30'),
@@ -264,6 +207,7 @@ export function AutoplanInspector({
       }
       const nextItems = qData.items || []
       const nextRuns = rData.runs || []
+
       const prevStates = prevRunStatesRef.current
       const nextStates: Record<string, string> = {}
       let shouldRefreshChat = false
@@ -284,6 +228,7 @@ export function AutoplanInspector({
       if (shouldRefreshChat) {
         onRefreshHistory?.()
       }
+
       setItems(nextItems)
       setRuns(nextRuns)
       setSelectedItemId((prev) => {
@@ -298,24 +243,20 @@ export function AutoplanInspector({
 
   useEffect(() => {
     void refreshQueueAndRuns()
-    void refreshEvolutionAndLlm()
+    void refreshEvolution()
     const interval = window.setInterval(() => {
       void refreshQueueAndRuns()
-      if (tab === 'evolution') {
-        void refreshEvolutionAndLlm()
-      }
-    }, 3000)
+    }, 2500)
     const onLiveEvent = () => {
       void refreshQueueAndRuns()
-      void refreshEvolutionAndLlm()
-      onRefreshAgents()
+      void refreshEvolution()
     }
     window.addEventListener('autoplan:event', onLiveEvent)
     return () => {
       window.clearInterval(interval)
       window.removeEventListener('autoplan:event', onLiveEvent)
     }
-  }, [onRefreshAgents, refreshEvolutionAndLlm, refreshQueueAndRuns, tab])
+  }, [refreshEvolution, refreshQueueAndRuns])
 
   useEffect(() => {
     function onMouseMove(e: MouseEvent) {
@@ -357,7 +298,7 @@ export function AutoplanInspector({
       }
       setDecisionNote('')
       await refreshQueueAndRuns()
-      await refreshEvolutionAndLlm()
+      await refreshEvolution()
     } catch (err) {
       setInspectorError(err instanceof Error ? err.message : String(err))
     }
@@ -441,7 +382,7 @@ export function AutoplanInspector({
       if (!res.ok || payload.success === false) {
         throw new Error(payload.error || `Evolution HTTP ${res.status}`)
       }
-      await refreshEvolutionAndLlm()
+      await refreshEvolution()
       window.dispatchEvent(new CustomEvent('autoplan:event'))
     } catch (err) {
       setInspectorError(err instanceof Error ? err.message : String(err))
@@ -471,7 +412,7 @@ export function AutoplanInspector({
         throw new Error(payload.error || `Rule HTTP ${res.status}`)
       }
       setNewRuleText('')
-      await refreshEvolutionAndLlm()
+      await refreshEvolution()
     } catch (err) {
       setInspectorError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -480,17 +421,8 @@ export function AutoplanInspector({
   }
 
   const selectedItem = items.find((it) => it.id === selectedItemId) ?? null
+  const needsReviewCount = items.filter((i) => i.status === 'needs_review').length
   const activeRunsCount = runs.filter((r) => r.state === 'running').length
-  const activeGen = evolutionStatus?.active_generation ?? 1
-
-  const fitnessRows: Array<{ service: string } & ServiceFitnessEntry> = (() => {
-    const raw = evolutionStatus?.service_fitness
-    if (!raw) return []
-    if (Array.isArray(raw)) {
-      return raw.map((r) => ({ ...r, service: r.service || 'unknown' }))
-    }
-    return Object.entries(raw).map(([svc, val]) => ({ ...val, service: svc }))
-  })()
 
   return (
     <aside
@@ -501,7 +433,7 @@ export function AutoplanInspector({
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize inspector pane"
+        aria-label="Resize panel"
         data-testid="inspector-resizer"
         onDoubleClick={() => setWidth(DEFAULT_WIDTH)}
         onMouseDown={(e) => {
@@ -513,64 +445,46 @@ export function AutoplanInspector({
       />
 
       <div className="flex min-w-0 flex-1 flex-col h-full overflow-hidden">
-        <div className="flex h-10 shrink-0 items-center border-b border-primary-200 px-2">
-          <div className="grid w-full grid-cols-4 gap-0.5 rounded-lg border border-primary-200 bg-primary-100 p-0.5 text-[11px]">
+        {/* Clean flat underline tabs — zero nested pill boxes */}
+        <div className="flex h-10 shrink-0 items-stretch border-b border-primary-200 px-3 gap-4">
+          {(
+            [
+              [
+                'queue',
+                'inspector-tab-queue',
+                needsReviewCount > 0 ? `Review (${needsReviewCount})` : 'Review',
+              ],
+              ['agents', 'inspector-tab-agents', 'Agents'],
+              [
+                'runs',
+                'inspector-tab-runs',
+                activeRunsCount > 0 ? `Runs (${activeRunsCount})` : 'Runs',
+              ],
+              ['evolution', 'inspector-tab-evolution', 'Rules'],
+            ] as const
+          ).map(([id, testId, label]) => (
             <button
+              key={id}
               type="button"
-              data-testid="inspector-tab-queue"
-              onClick={() => setTab('queue')}
-              className={`rounded-md px-1.5 py-1 text-center font-medium transition-colors truncate ${
-                tab === 'queue'
-                  ? 'border border-primary-300 bg-surface text-primary-950'
-                  : 'border border-transparent text-primary-700 hover:text-primary-900'
-              }`}
+              data-testid={testId}
+              onClick={() => setTab(id)}
+              className={cn(
+                'flex items-center border-b-2 text-xs font-medium transition-colors tabular-nums',
+                tab === id
+                  ? 'border-primary-950 text-primary-950'
+                  : 'border-transparent text-primary-600 hover:text-primary-900',
+              )}
             >
-              Queue ({items.length})
+              {label}
             </button>
-            <button
-              type="button"
-              data-testid="inspector-tab-agents"
-              onClick={() => setTab('agents')}
-              className={`rounded-md px-1.5 py-1 text-center font-medium transition-colors truncate ${
-                tab === 'agents'
-                  ? 'border border-primary-300 bg-surface text-primary-950'
-                  : 'border border-transparent text-primary-700 hover:text-primary-900'
-              }`}
-            >
-              Agents ({services.length})
-            </button>
-            <button
-              type="button"
-              data-testid="inspector-tab-runs"
-              onClick={() => setTab('runs')}
-              className={`rounded-md px-1.5 py-1 text-center font-medium transition-colors truncate ${
-                tab === 'runs'
-                  ? 'border border-primary-300 bg-surface text-primary-950'
-                  : 'border border-transparent text-primary-700 hover:text-primary-900'
-              }`}
-            >
-              Runs ({activeRunsCount > 0 ? `${activeRunsCount} live` : runs.length})
-            </button>
-            <button
-              type="button"
-              data-testid="inspector-tab-evolution"
-              onClick={() => setTab('evolution')}
-              className={`rounded-md px-1.5 py-1 text-center font-medium transition-colors truncate ${
-                tab === 'evolution'
-                  ? 'border border-primary-300 bg-surface text-primary-950'
-                  : 'border border-transparent text-primary-700 hover:text-primary-900'
-              }`}
-            >
-              Brain (v{activeGen})
-            </button>
-          </div>
+          ))}
         </div>
 
         {inspectorError ? (
           <div
             data-testid="inspector-error"
             role="alert"
-            className="border-b border-red-500/40 bg-red-500/10 px-3 py-1.5 text-red-600"
+            className="border-b border-red-500/40 bg-red-500/10 px-3 py-1.5 text-red-500"
           >
             {inspectorError}
           </div>
@@ -578,35 +492,30 @@ export function AutoplanInspector({
 
         {tab === 'queue' ? (
           <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
-            <div className="flex items-center justify-between border-b border-primary-200 px-3 py-1.5 text-[11px] text-primary-600">
-              <span data-testid="webclaw-chief-status" className="truncate">
-                Chief: {chiefLlmStatus || 'deterministic'}
-              </span>
+            <div className="flex items-center justify-between border-b border-primary-200 px-3 py-1.5 text-xs text-primary-600">
+              <span className="tabular-nums">{items.length} items</span>
               <select
-                aria-label="Filter queue status"
+                aria-label="Filter status"
                 data-testid="webclaw-queue-filter"
                 value={queueFilter}
                 onChange={(e) => setQueueFilter(e.target.value)}
-                className="border border-primary-200 bg-surface px-1.5 py-0.5 text-[11px]"
+                className="rounded bg-primary-100 px-2 py-0.5 text-xs text-primary-800 outline-none"
               >
-                <option value="">all</option>
-                <option value="needs_review">needs_review</option>
-                <option value="queued">queued</option>
-                <option value="in_progress">in_progress</option>
-                <option value="landed">landed</option>
-                <option value="done">done</option>
-                <option value="snoozed">snoozed</option>
-                <option value="rejected">rejected</option>
+                <option value="">All</option>
+                <option value="needs_review">Needs review</option>
+                <option value="landed">Landed</option>
+                <option value="done">Done</option>
+                <option value="snoozed">Snoozed</option>
               </select>
             </div>
 
             <div
               data-testid="webclaw-queue-list"
-              className="max-h-52 shrink-0 overflow-y-auto border-b border-primary-200"
+              className="max-h-56 shrink-0 overflow-y-auto border-b border-primary-200 divide-y divide-primary-200"
             >
               {items.length === 0 ? (
-                <div className="px-3 py-4 text-primary-500">
-                  No queue items match filter.
+                <div className="px-3 py-6 text-center text-primary-500">
+                  Nothing waiting for review.
                 </div>
               ) : (
                 items.map((item) => (
@@ -615,20 +524,24 @@ export function AutoplanInspector({
                     type="button"
                     data-testid={`webclaw-queue-item-${item.id}`}
                     onClick={() => setSelectedItemId(item.id)}
-                    className={`block w-full border-b border-primary-200 px-3 py-2 text-left ${
+                    className={cn(
+                      'block w-full px-3 py-2 text-left transition-colors',
                       selectedItemId === item.id
                         ? 'bg-primary-100'
-                        : 'hover:bg-primary-50'
-                    }`}
+                        : 'hover:bg-primary-100/50',
+                    )}
                   >
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="font-medium truncate">{item.title}</span>
-                      <span className="shrink-0 font-mono text-[11px] border border-primary-300 px-1">
+                      <span className="font-medium text-primary-950 truncate">
+                        {item.title}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-primary-600">
                         {item.status}
                       </span>
                     </div>
-                    <div className="mt-0.5 font-mono text-[11px] text-primary-600 truncate">
-                      P{item.priority} · {item.kind} · {item.source_agent}
+                    <div className="mt-0.5 text-[11px] text-primary-500 truncate">
+                      {item.source_agent}
+                      {item.branch ? ` · ${item.branch}` : ''}
                     </div>
                   </button>
                 ))
@@ -637,19 +550,20 @@ export function AutoplanInspector({
 
             <div
               data-testid="webclaw-queue-detail"
-              className="flex-1 overflow-y-auto px-3 py-2.5 space-y-2.5"
+              className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5"
             >
               {selectedItem ? (
                 <>
                   <div>
-                    <div className="font-semibold text-sm">
+                    <div className="font-medium text-sm text-primary-950 text-pretty">
                       {selectedItem.title}
                     </div>
-                    <div className="mt-0.5 font-mono text-[11px] text-primary-600">
+                    <div className="mt-0.5 text-[11px] text-primary-600">
                       <span data-testid="webclaw-detail-status">
                         {selectedItem.status}
                       </span>
-                      {' · '}P{selectedItem.priority} · {selectedItem.source_agent}
+                      {' · '}
+                      {selectedItem.source_agent}
                       {selectedItem.branch
                         ? ` · ${selectedItem.branch} → ${selectedItem.target_branch}`
                         : ''}
@@ -657,33 +571,32 @@ export function AutoplanInspector({
                   </div>
 
                   {selectedItem.recommendation ? (
-                    <div className="border border-primary-200 p-2 text-[11px]">
-                      {selectedItem.recommendation}
-                    </div>
+                    <p className="text-xs text-primary-800 text-pretty">
+                      {cleanRecommendation(selectedItem.recommendation)}
+                    </p>
                   ) : null}
 
                   {selectedItem.result?.test ? (
                     <div
                       data-testid="webclaw-detail-test"
-                      className="border border-primary-200 p-2 font-mono text-[11px]"
+                      className="rounded-md bg-primary-100 px-2.5 py-1.5 font-mono text-[11px] text-primary-800"
                     >
                       Test exit {String(selectedItem.result.test.exit_code)} (
-                      {selectedItem.result.test.passed ? 'passed' : 'failed'}) ·{' '}
-                      {selectedItem.result.test.command}
+                      {selectedItem.result.test.passed ? 'passed' : 'failed'})
                     </div>
                   ) : null}
 
                   {selectedItem.result?.merged_commit ? (
                     <div
                       data-testid="webclaw-merged-commit"
-                      className="border border-primary-200 p-2 font-mono text-[11px]"
+                      className="font-mono text-[11px] text-primary-600"
                     >
-                      Landed commit: {selectedItem.result.merged_commit.slice(0, 12)}
+                      Landed {selectedItem.result.merged_commit.slice(0, 10)}
                     </div>
                   ) : null}
 
                   {selectedItem.body ? (
-                    <pre className="max-h-36 overflow-auto border border-primary-200 p-2 font-mono text-[11px] whitespace-pre-wrap">
+                    <pre className="max-h-32 overflow-auto rounded-md bg-primary-100 p-2 font-mono text-[11px] text-primary-800 whitespace-pre-wrap">
                       {selectedItem.body}
                     </pre>
                   ) : null}
@@ -693,11 +606,11 @@ export function AutoplanInspector({
                     data-testid="webclaw-decision-note-input"
                     value={decisionNote}
                     onChange={(e) => setDecisionNote(e.target.value)}
-                    placeholder="Feedback note (learns into Brain on changes/reject)…"
-                    className="w-full rounded border border-primary-200 bg-primary-50 px-2 py-1 text-[11px] text-primary-900 placeholder:text-primary-500 outline-none"
+                    placeholder="Add feedback note (optional)…"
+                    className="h-7 w-full rounded-md border border-primary-200 bg-primary-100 px-2 text-xs text-primary-950 placeholder:text-primary-500 outline-none"
                   />
 
-                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                     <button
                       type="button"
                       data-testid="webclaw-approve-button"
@@ -705,7 +618,7 @@ export function AutoplanInspector({
                         !DECISION_ALLOWED.approve.includes(selectedItem.status)
                       }
                       onClick={() => void decideItem(selectedItem.id, 'approve')}
-                      className="rounded border border-primary-800 bg-primary-900 px-2.5 py-1 font-medium text-surface disabled:cursor-not-allowed disabled:border-primary-200 disabled:bg-primary-100 disabled:text-primary-400 disabled:opacity-60"
+                      className="h-7 rounded-md bg-primary-900 px-3 text-xs font-medium text-surface disabled:cursor-not-allowed disabled:bg-primary-200 disabled:text-primary-500 disabled:opacity-40"
                     >
                       Approve
                     </button>
@@ -720,9 +633,9 @@ export function AutoplanInspector({
                       onClick={() =>
                         void decideItem(selectedItem.id, 'request_changes')
                       }
-                      className="rounded border border-primary-300 px-2.5 py-1 font-medium disabled:cursor-not-allowed disabled:opacity-35"
+                      className="h-7 rounded-md border border-primary-200 px-2.5 text-xs text-primary-800 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-35"
                     >
-                      Changes
+                      Request changes
                     </button>
                     <button
                       type="button"
@@ -731,7 +644,7 @@ export function AutoplanInspector({
                         !DECISION_ALLOWED.reject.includes(selectedItem.status)
                       }
                       onClick={() => void decideItem(selectedItem.id, 'reject')}
-                      className="rounded border border-primary-300 px-2.5 py-1 font-medium disabled:cursor-not-allowed disabled:opacity-35"
+                      className="h-7 rounded-md px-2 text-xs text-primary-600 hover:bg-primary-100 hover:text-primary-950 disabled:cursor-not-allowed disabled:opacity-35"
                     >
                       Reject
                     </button>
@@ -742,7 +655,7 @@ export function AutoplanInspector({
                         !DECISION_ALLOWED.snooze.includes(selectedItem.status)
                       }
                       onClick={() => void decideItem(selectedItem.id, 'snooze')}
-                      className="rounded border border-primary-300 px-2.5 py-1 font-medium disabled:cursor-not-allowed disabled:opacity-35"
+                      className="h-7 rounded-md px-2 text-xs text-primary-600 hover:bg-primary-100 hover:text-primary-950 disabled:cursor-not-allowed disabled:opacity-35"
                     >
                       Snooze
                     </button>
@@ -752,7 +665,7 @@ export function AutoplanInspector({
                         type="button"
                         data-testid="webclaw-wake-button"
                         onClick={() => void wakeItem(selectedItem.id)}
-                        className="rounded border border-primary-800 px-2.5 py-1 font-medium"
+                        className="h-7 rounded-md border border-primary-300 px-2.5 text-xs font-medium"
                       >
                         Wake
                       </button>
@@ -760,8 +673,8 @@ export function AutoplanInspector({
                   </div>
                 </>
               ) : (
-                <div className="text-primary-500">
-                  Select a queue item or dispatch work to populate the queue.
+                <div className="py-4 text-primary-500">
+                  Select an item above to review.
                 </div>
               )}
             </div>
@@ -780,27 +693,23 @@ export function AutoplanInspector({
                 className="p-3 space-y-1.5"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-sm">
+                  <span className="font-medium text-sm text-primary-950">
                     {svc.display_name}
                   </span>
                   <span
                     data-testid={`agent-mode-${svc.service}`}
-                    className="border border-primary-300 px-1.5 py-0.5 font-mono text-[11px]"
+                    className="text-[11px] text-primary-600"
                   >
                     {svc.mode}
                   </span>
                 </div>
-                <div className="font-mono text-[11px] text-primary-600">
-                  {svc.version || 'local store'} ·{' '}
-                  {svc.default_model || 'no model'} ·{' '}
+                <div className="text-[11px] text-primary-600">
+                  {svc.default_model || 'default'} ·{' '}
                   <span data-testid={`agent-sessions-count-${svc.service}`}>
                     {svc.observed_sessions_count} sessions
                   </span>
                 </div>
-                <div className="text-[11px] text-primary-600 break-words">
-                  {svc.auth_status}
-                </div>
-                <div className="flex items-center gap-1.5 pt-1">
+                <div className="flex items-center gap-2 pt-1">
                   <button
                     type="button"
                     data-testid={`agent-demo-btn-${svc.service}`}
@@ -808,7 +717,7 @@ export function AutoplanInspector({
                       !svc.dispatch_ready || busyDemoService === svc.service
                     }
                     onClick={() => void onRunSimpleTask(svc.service)}
-                    className="rounded border border-primary-300 bg-primary-100 px-2.5 py-1 font-medium text-primary-900 hover:bg-primary-200 disabled:cursor-not-allowed disabled:opacity-35"
+                    className="h-7 rounded-md border border-primary-200 bg-primary-100 px-2.5 text-xs font-medium text-primary-900 hover:bg-primary-200 disabled:cursor-not-allowed disabled:opacity-35"
                   >
                     {busyDemoService === svc.service
                       ? 'Starting…'
@@ -818,34 +727,31 @@ export function AutoplanInspector({
                     type="button"
                     data-testid={`agent-scan-btn-${svc.service}`}
                     onClick={() => void toggleScannedSessions(svc.service)}
-                    className="rounded border border-primary-300 px-2 py-1"
+                    className="h-7 rounded-md px-2 text-xs text-primary-600 hover:bg-primary-100 hover:text-primary-950"
                   >
                     {expandedSessionsSvc === svc.service
                       ? 'Hide sessions'
-                      : 'Inspect sessions'}
+                      : 'Recent sessions'}
                   </button>
                 </div>
 
                 {expandedSessionsSvc === svc.service ? (
                   <div
                     data-testid={`agent-scanned-list-${svc.service}`}
-                    className="mt-2 border-t border-primary-200 pt-2 space-y-1 font-mono text-[11px]"
+                    className="mt-2 border-t border-primary-200 pt-2 space-y-1 text-[11px]"
                   >
                     {(scannedSessions[svc.service] || []).length === 0 ? (
                       <div className="text-primary-500">
-                        No sessions found in local store.
+                        No sessions found locally.
                       </div>
                     ) : (
                       (scannedSessions[svc.service] || []).map((s) => (
-                        <div
-                          key={s.session_id}
-                          className="border border-primary-200 px-2 py-1"
-                        >
-                          <div className="truncate font-semibold">
+                        <div key={s.session_id} className="py-1">
+                          <div className="truncate font-mono text-primary-800">
                             {s.session_id}
                           </div>
                           {s.preview ? (
-                            <div className="truncate text-primary-600">
+                            <div className="truncate text-primary-500">
                               {s.preview}
                             </div>
                           ) : null}
@@ -865,7 +771,7 @@ export function AutoplanInspector({
             className="flex-1 overflow-y-auto divide-y divide-primary-200"
           >
             {runs.length === 0 ? (
-              <div className="p-3 text-primary-500">No agent runs yet.</div>
+              <div className="p-4 text-primary-500">No runs yet.</div>
             ) : (
               runs.map((run) => (
                 <div
@@ -874,27 +780,22 @@ export function AutoplanInspector({
                   className="p-3 space-y-1"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono font-semibold">{run.id}</span>
+                    <span className="font-medium text-primary-950">
+                      {run.service}
+                      {run.role ? ` · ${run.role}` : ''}
+                    </span>
                     <span
                       data-testid={`webclaw-run-state-${run.id}`}
-                      className="border border-primary-300 px-1.5 py-0.5 font-mono text-[11px]"
+                      className="text-[11px] text-primary-600 tabular-nums"
                     >
                       {run.state}
                     </span>
                   </div>
-                  <div className="font-mono text-[11px] text-primary-600">
-                    {run.service} · {run.model || 'default'}
-                    {run.role ? ` · ${run.role}` : ''}
-                    {run.metadata?.duration_s !== undefined
-                      ? ` · ${run.metadata.duration_s}s`
-                      : ''}
-                    {run.session_id ? ` · ${run.session_id.slice(0, 14)}` : ''}
-                  </div>
-                  <div className="truncate text-[11px] text-primary-700">
+                  <div className="truncate text-xs text-primary-600">
                     {run.prompt}
                   </div>
                   {run.response_text ? (
-                    <pre className="max-h-24 overflow-auto border border-primary-200 p-1.5 font-mono text-[11px] whitespace-pre-wrap">
+                    <pre className="max-h-20 overflow-auto rounded bg-primary-100 p-2 font-mono text-[11px] text-primary-800 whitespace-pre-wrap">
                       {run.response_text}
                     </pre>
                   ) : null}
@@ -903,9 +804,9 @@ export function AutoplanInspector({
                       type="button"
                       data-testid={`webclaw-stop-run-${run.id}`}
                       onClick={() => void stopRun(run.id)}
-                      className="border border-red-500 px-2 py-0.5 text-red-600"
+                      className="rounded border border-red-500/50 px-2 py-0.5 text-xs text-red-500"
                     >
-                      Stop run
+                      Stop
                     </button>
                   ) : null}
                 </div>
@@ -919,165 +820,53 @@ export function AutoplanInspector({
             data-testid="webclaw-evolution-panel"
             className="flex-1 overflow-y-auto p-3 space-y-3"
           >
-            {/* Header + Evolve Action */}
-            <div className="flex items-center justify-between gap-2 rounded-lg border border-primary-200 bg-primary-100 p-2.5">
-              <div className="min-w-0">
-                <div className="font-semibold text-primary-950">
-                  PlanAI Evolution Engine · Gen v{activeGen}
-                </div>
-                <div className="text-[11px] text-primary-600">
-                  {evolutionStatus?.bootstrap?.corpus_loaded
-                    ? `Bootstrapped from ${evolutionStatus.bootstrap.corpus_total_prompts?.toLocaleString() ?? 0} prompts (${evolutionStatus.bootstrap.corpus_total_sessions ?? 0} sessions)`
-                    : 'Learning live from Chief decisions & verification gates'}
-                </div>
-              </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium text-primary-950">
+                Project Guardrails
+              </span>
               <button
                 type="button"
                 data-testid="inspector-evolve-button"
                 disabled={evolving}
                 onClick={() => void handleRunEvolution()}
-                className="shrink-0 rounded-md border border-primary-800 bg-primary-900 px-2.5 py-1.5 font-medium text-surface hover:bg-primary-800 disabled:opacity-40"
+                className="h-7 rounded-md border border-primary-200 bg-primary-100 px-2.5 text-xs font-medium text-primary-900 hover:bg-primary-200 disabled:opacity-40"
               >
-                {evolving ? 'Evolving…' : 'Evolve Prompts'}
+                {evolving ? 'Updating…' : 'Update from feedback'}
               </button>
             </div>
 
-            {/* PlanAI LLM Core & Chromium Prompt API Diagnostics */}
-            <div
-              data-testid="inspector-llm-diagnostics"
-              className="rounded-lg border border-primary-200 p-2.5 space-y-1"
+            <form
+              data-testid="inspector-add-rule-form"
+              onSubmit={(e) => void handleAddRule(e)}
+              className="flex gap-1.5"
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-primary-900">
-                  PlanAI LLM Core
-                </span>
-                <span className="rounded border border-primary-300 px-1.5 py-0.5 font-mono text-[10px]">
-                  {llmStatus?.chromium_prompt_bridge?.connected
-                    ? 'Chromium Prompt API live'
-                    : llmStatus?.local_mlx?.available
-                      ? 'Local Metal MLX'
-                      : 'Deterministic / Env'}
-                </span>
-              </div>
-              <div className="font-mono text-[11px] text-primary-600 break-words">
-                {llmStatus?.status_label || chiefLlmStatus || 'deterministic'}
-              </div>
-              {llmStatus?.chromium_prompt_bridge ? (
-                <div className="text-[11px] text-primary-600">
-                  Bridge calls:{' '}
-                  {llmStatus.chromium_prompt_bridge.total_bridged_calls ?? 0}
-                  {llmStatus.chromium_prompt_bridge.last_call_latency_ms
-                    ? ` · last ${llmStatus.chromium_prompt_bridge.last_call_latency_ms}ms`
-                    : ''}
-                </div>
-              ) : null}
-            </div>
+              <input
+                type="text"
+                data-testid="inspector-add-rule-input"
+                value={newRuleText}
+                onChange={(e) => setNewRuleText(e.target.value)}
+                placeholder="Add guardrail rule…"
+                className="h-7 min-w-0 flex-1 rounded-md border border-primary-200 bg-primary-100 px-2 text-xs text-primary-950 outline-none"
+              />
+              <button
+                type="submit"
+                disabled={addingRule || !newRuleText.trim()}
+                className="h-7 shrink-0 rounded-md bg-primary-900 px-2.5 text-xs font-medium text-surface disabled:opacity-40"
+              >
+                Add
+              </button>
+            </form>
 
-            {/* Active Prompt Generations */}
-            <div className="space-y-1.5">
-              <div className="font-semibold text-primary-900">
-                Active Prompt Generations
-              </div>
-              {(
-                [
-                  evolutionStatus?.active_prompts?.lead_planner,
-                  evolutionStatus?.active_prompts?.chief_triage,
-                ].filter(Boolean) as Array<PromptVersionInfo>
-              ).map((pv) => (
+            <div className="divide-y divide-primary-200">
+              {(evolutionStatus?.rules ?? []).map((rule) => (
                 <div
-                  key={pv.id}
-                  data-testid={`prompt-version-${pv.worker_role}`}
-                  className="rounded-lg border border-primary-200 p-2 space-y-1"
+                  key={rule.id}
+                  data-testid={`evolution-rule-${rule.id}`}
+                  className="py-2 text-xs text-primary-800 text-pretty"
                 >
-                  <div className="flex items-center justify-between font-mono text-[11px]">
-                    <span className="font-semibold text-primary-950">
-                      {pv.worker_role} · v{pv.generation}
-                    </span>
-                    <span className="text-primary-600">
-                      pass {pv.pass_count} / fail {pv.fail_count}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-primary-600">
-                    {pv.rationale}
-                  </div>
+                  {rule.rule_text}
                 </div>
               ))}
-            </div>
-
-            {/* Service Empirical Fitness */}
-            {fitnessRows.length > 0 ? (
-              <div className="space-y-1">
-                <div className="font-semibold text-primary-900">
-                  Measured Agent Fitness
-                </div>
-                <div className="divide-y divide-primary-200 rounded-lg border border-primary-200">
-                  {fitnessRows.map((row) => (
-                    <div
-                      key={row.service}
-                      className="flex items-center justify-between px-2.5 py-1.5 font-mono text-[11px]"
-                    >
-                      <span>{row.service}</span>
-                      <span className="text-primary-600">
-                        {row.succeeded_runs}/{row.total_runs} ok
-                        {row.pass_rate !== null
-                          ? ` (${Math.round(row.pass_rate * 100)}%)`
-                          : ''}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {/* Learned Guardrail Rules + Add Rule */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-primary-900">
-                  Learned Guardrail Rules ({evolutionStatus?.rules?.length ?? 0})
-                </span>
-              </div>
-
-              <form
-                data-testid="inspector-add-rule-form"
-                onSubmit={(e) => void handleAddRule(e)}
-                className="flex gap-1.5"
-              >
-                <input
-                  type="text"
-                  data-testid="inspector-add-rule-input"
-                  value={newRuleText}
-                  onChange={(e) => setNewRuleText(e.target.value)}
-                  placeholder="Add persistent planning rule…"
-                  className="min-w-0 flex-1 rounded border border-primary-200 bg-primary-50 px-2 py-1 text-[11px] outline-none"
-                />
-                <button
-                  type="submit"
-                  disabled={addingRule || !newRuleText.trim()}
-                  className="shrink-0 rounded border border-primary-300 bg-primary-100 px-2 py-1 font-medium disabled:opacity-40"
-                >
-                  + Rule
-                </button>
-              </form>
-
-              <div className="space-y-1.5 max-h-60 overflow-y-auto">
-                {(evolutionStatus?.rules ?? []).map((rule) => (
-                  <div
-                    key={rule.id}
-                    data-testid={`evolution-rule-${rule.id}`}
-                    className="rounded border border-primary-200 p-2 text-[11px]"
-                  >
-                    <div className="flex items-center justify-between font-mono text-[10px] text-primary-600">
-                      <span>
-                        {rule.category} · {rule.source_type}
-                      </span>
-                      <span>×{rule.evidence_count}</span>
-                    </div>
-                    <div className="mt-0.5 text-primary-900">
-                      {rule.rule_text}
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
           </div>
         ) : null}
