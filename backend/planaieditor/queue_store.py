@@ -1229,20 +1229,31 @@ class QueueStore:
     def _row_to_chat_session(self, row: sqlite3.Row) -> Dict[str, Any]:
         sess = dict(row)
         last_msg = None
+        first_user_msg = None
         with self._lock:
             msg_row = self._conn.execute(
                 "SELECT * FROM chat_messages WHERE session_key = ? ORDER BY created_at DESC LIMIT 1",
                 (sess["key"],),
             ).fetchone()
+            first_user_row = self._conn.execute(
+                "SELECT * FROM chat_messages WHERE session_key = ? AND role = 'user' ORDER BY created_at ASC LIMIT 1",
+                (sess["key"],),
+            ).fetchone()
         if msg_row:
             last_msg = self._row_to_chat_message(msg_row)
-        derived_title = sess["label"] or ""
-        if not derived_title and last_msg:
-            parts = last_msg.get("content") or []
+        if first_user_row:
+            first_user_msg = self._row_to_chat_message(first_user_row)
+        derived_title = (sess["label"] or "").strip()
+        if not derived_title and first_user_msg:
+            parts = first_user_msg.get("content") or []
             if parts and isinstance(parts[0], dict):
-                derived_title = str(parts[0].get("text") or "").strip()[:60]
+                raw_text = str(parts[0].get("text") or "").strip()
+                first_line = next(
+                    (ln.strip() for ln in raw_text.splitlines() if ln.strip()), ""
+                )
+                derived_title = first_line[:48]
         if not derived_title:
-            derived_title = f"{sess['service']} session"
+            derived_title = "New session"
         return {
             "key": sess["key"],
             "friendlyId": sess["friendly_id"],

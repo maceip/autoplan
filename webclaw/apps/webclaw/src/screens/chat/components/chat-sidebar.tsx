@@ -86,9 +86,6 @@ function ChatSidebarComponent({
   onSelectSession,
   onActiveSessionDelete,
   hideBrandHeader = false,
-  onStartDemo,
-  startingDemo = false,
-  canDispatchDemo = true,
 }: ChatSidebarProps) {
   const {
     settingsOpen,
@@ -583,18 +580,6 @@ function ChatSidebarComponent({
           />
           {!isCollapsed ? <span>Settings</span> : null}
         </Button>
-
-        {!isCollapsed && onStartDemo ? (
-          <button
-            type="button"
-            data-testid="start-demo-button"
-            disabled={!canDispatchDemo || startingDemo}
-            onClick={onStartDemo}
-            className="rounded-md px-2 py-1 text-xs text-primary-600 hover:bg-primary-200/60 hover:text-primary-950 disabled:opacity-35 disabled:pointer-events-none"
-          >
-            {startingDemo ? 'Starting…' : 'Start Demo'}
-          </button>
-        ) : null}
       </div>
 
       <SettingsDialog

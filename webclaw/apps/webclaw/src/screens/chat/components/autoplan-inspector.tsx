@@ -120,8 +120,14 @@ const DECISION_ALLOWED: Record<string, Array<string>> = {
   snooze: ['needs_review', 'queued', 'triaged'],
 }
 
+const ARCHIVED_STATUSES = new Set(['landed', 'done', 'rejected', 'snoozed'])
+
 function cleanRecommendation(raw: string): string {
   return raw.replace(/^\[[^\]]+\]\s*/, '').trim()
+}
+
+function cleanItemTitle(raw: string): string {
+  return raw.replace(/^\[[^\]]+\]\s*/, '').trim() || raw
 }
 
 export function AutoplanInspector({
@@ -147,7 +153,7 @@ export function AutoplanInspector({
   const [width, setWidth] = useState<number>(DEFAULT_WIDTH)
   const [items, setItems] = useState<Array<QueueItem>>([])
   const [runs, setRuns] = useState<Array<AgentRun>>([])
-  const [queueFilter, setQueueFilter] = useState<string>('')
+  const [showCompleted, setShowCompleted] = useState<boolean>(false)
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const [decisionNote, setDecisionNote] = useState<string>('')
   const [expandedSessionsSvc, setExpandedSessionsSvc] = useState<string | null>(
@@ -182,11 +188,8 @@ export function AutoplanInspector({
 
   const refreshQueueAndRuns = useCallback(async () => {
     try {
-      const qQuery = queueFilter
-        ? `?status=${encodeURIComponent(queueFilter)}`
-        : ''
       const [qRes, rRes] = await Promise.all([
-        fetch(`/api/autoplan/queue/items${qQuery}`),
+        fetch('/api/autoplan/queue/items'),
         fetch('/api/autoplan/agents/runs?limit=30'),
       ])
       const qData = (await qRes.json()) as {
@@ -231,15 +234,14 @@ export function AutoplanInspector({
 
       setItems(nextItems)
       setRuns(nextRuns)
-      setSelectedItemId((prev) => {
-        if (prev && nextItems.some((it) => it.id === prev)) return prev
-        return nextItems.length > 0 ? nextItems[0].id : null
-      })
+      setSelectedItemId((prev) =>
+        prev && nextItems.some((it) => it.id === prev) ? prev : null,
+      )
       setInspectorError('')
     } catch (err) {
       setInspectorError(err instanceof Error ? err.message : String(err))
     }
-  }, [onRefreshHistory, onRunFinished, queueFilter])
+  }, [onRefreshHistory, onRunFinished])
 
   useEffect(() => {
     void refreshQueueAndRuns()
@@ -421,6 +423,9 @@ export function AutoplanInspector({
   }
 
   const selectedItem = items.find((it) => it.id === selectedItemId) ?? null
+  const actionableItems = items.filter((i) => !ARCHIVED_STATUSES.has(i.status))
+  const completedItems = items.filter((i) => ARCHIVED_STATUSES.has(i.status))
+  const visibleItems = showCompleted ? items : actionableItems
   const needsReviewCount = items.filter((i) => i.status === 'needs_review').length
   const activeRunsCount = runs.filter((r) => r.state === 'running').length
 
@@ -495,205 +500,201 @@ export function AutoplanInspector({
 
         {tab === 'queue' ? (
           <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
-            <div className="flex items-center justify-between border-b border-primary-200 px-3 py-1.5 text-xs text-primary-600">
-              <span className="tabular-nums">{items.length} items</span>
-              <select
-                aria-label="Filter status"
-                data-testid="webclaw-queue-filter"
-                value={queueFilter}
-                onChange={(e) => setQueueFilter(e.target.value)}
-                className="rounded bg-primary-100 px-2 py-0.5 text-xs text-primary-800 outline-none"
+            {selectedItem ? (
+              <div
+                data-testid="webclaw-queue-detail"
+                className="flex-1 overflow-y-auto px-3 py-3 space-y-3"
               >
-                <option value="">All</option>
-                <option value="needs_review">Needs review</option>
-                <option value="landed">Landed</option>
-                <option value="done">Done</option>
-                <option value="snoozed">Snoozed</option>
-              </select>
-            </div>
-
-            <div
-              data-testid="webclaw-queue-list"
-              className="max-h-56 shrink-0 overflow-y-auto border-b border-primary-200 divide-y divide-primary-200"
-            >
-              {items.length === 0 ? (
-                <div className="px-3 py-6 text-center text-primary-500">
-                  Nothing waiting for review.
-                </div>
-              ) : (
-                items.map((item) => (
+                <div className="flex items-center justify-between gap-2">
                   <button
-                    key={item.id}
                     type="button"
-                    data-testid={`webclaw-queue-item-${item.id}`}
-                    onClick={() => setSelectedItemId(item.id)}
-                    className={cn(
-                      'block w-full px-3 py-2 text-left transition-colors',
-                      selectedItemId === item.id
-                        ? 'bg-primary-100'
-                        : 'hover:bg-primary-100/50',
-                    )}
+                    data-testid="webclaw-detail-back"
+                    onClick={() => setSelectedItemId(null)}
+                    className="rounded px-1.5 py-0.5 -ml-1.5 text-xs font-medium text-primary-600 hover:bg-primary-100 hover:text-primary-950"
                   >
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="font-medium text-primary-950 truncate">
-                        {item.title}
-                      </span>
-                      <span className="shrink-0 text-[11px] text-primary-600">
-                        {item.status}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 text-[11px] text-primary-500 truncate">
-                      {item.source_agent}
-                      {item.branch ? ` · ${item.branch}` : ''}
-                    </div>
+                    ← Back
                   </button>
-                ))
-              )}
-            </div>
-
-            <div
-              data-testid="webclaw-queue-detail"
-              className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5"
-            >
-              {selectedItem ? (
-                <>
-                  <div>
-                    <div className="font-medium text-sm text-primary-950 text-pretty">
-                      {selectedItem.title}
-                    </div>
-                    <div className="mt-0.5 text-[11px] text-primary-600">
-                      <span data-testid="webclaw-detail-status">
-                        {selectedItem.status}
-                      </span>
-                      {selectedItem.branch
-                        ? ` · ${selectedItem.branch}`
-                        : ` · ${selectedItem.source_agent}`}
-                    </div>
-                  </div>
-
-                  {selectedItem.recommendation ? (
-                    <p className="text-xs text-primary-800 text-pretty">
-                      {cleanRecommendation(selectedItem.recommendation)}
-                    </p>
-                  ) : null}
-
-                  {selectedItem.result?.test ? (
-                    <div
-                      data-testid="webclaw-detail-test"
-                      className="rounded-md bg-primary-100 px-2.5 py-1.5 font-mono text-[11px] text-primary-800"
-                    >
-                      Test exit {String(selectedItem.result.test.exit_code)} (
-                      {selectedItem.result.test.passed ? 'passed' : 'failed'})
-                    </div>
-                  ) : null}
-
-                  {selectedItem.result?.merged_commit ? (
-                    <div
-                      data-testid="webclaw-merged-commit"
-                      className="font-mono text-[11px] text-primary-600"
-                    >
-                      Landed {selectedItem.result.merged_commit.slice(0, 10)}
-                    </div>
-                  ) : null}
-
-                  {selectedItem.body ? (
-                    <pre className="max-h-32 overflow-auto rounded-md bg-primary-100 p-2 font-mono text-[11px] text-primary-800 whitespace-pre-wrap">
-                      {selectedItem.body}
-                    </pre>
-                  ) : null}
-
-                  <input
-                    type="text"
-                    data-testid="webclaw-decision-note-input"
-                    value={decisionNote}
-                    onChange={(e) => setDecisionNote(e.target.value)}
-                    placeholder="Add feedback note (optional)…"
-                    className="h-7 w-full rounded-md border border-primary-200 bg-primary-100 px-2 text-xs text-primary-950 placeholder:text-primary-500 outline-none"
-                  />
-
-                  <div className="flex items-center gap-1.5 pt-0.5">
-                    <button
-                      type="button"
-                      data-testid="webclaw-approve-button"
-                      disabled={
-                        !DECISION_ALLOWED.approve.includes(selectedItem.status)
-                      }
-                      onClick={() => void decideItem(selectedItem.id, 'approve')}
-                      className="h-7 rounded-md bg-primary-900 px-3 text-xs font-medium text-surface disabled:cursor-not-allowed disabled:bg-primary-200 disabled:text-primary-500 disabled:opacity-40"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="webclaw-request-changes-button"
-                      disabled={
-                        !DECISION_ALLOWED.request_changes.includes(
-                          selectedItem.status,
-                        )
-                      }
-                      onClick={() =>
-                        void decideItem(selectedItem.id, 'request_changes')
-                      }
-                      className="h-7 rounded-md border border-primary-200 px-2.5 text-xs text-primary-800 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-35"
-                    >
-                      Request changes
-                    </button>
-                    <details className="relative">
-                      <summary className="flex h-7 cursor-pointer list-none items-center rounded-md px-2 text-xs text-primary-600 hover:bg-primary-100 hover:text-primary-950">
-                        More
-                      </summary>
-                      <div className="absolute right-0 bottom-8 z-20 flex w-28 flex-col rounded-md border border-primary-200 bg-surface p-1 shadow-md">
-                        <button
-                          type="button"
-                          data-testid="webclaw-reject-button"
-                          disabled={
-                            !DECISION_ALLOWED.reject.includes(
-                              selectedItem.status,
-                            )
-                          }
-                          onClick={() =>
-                            void decideItem(selectedItem.id, 'reject')
-                          }
-                          className="rounded px-2 py-1 text-left text-xs text-primary-800 hover:bg-primary-100 disabled:opacity-35"
-                        >
-                          Reject
-                        </button>
-                        <button
-                          type="button"
-                          data-testid="webclaw-snooze-button"
-                          disabled={
-                            !DECISION_ALLOWED.snooze.includes(
-                              selectedItem.status,
-                            )
-                          }
-                          onClick={() =>
-                            void decideItem(selectedItem.id, 'snooze')
-                          }
-                          className="rounded px-2 py-1 text-left text-xs text-primary-800 hover:bg-primary-100 disabled:opacity-35"
-                        >
-                          Snooze
-                        </button>
-                        {selectedItem.status === 'snoozed' ||
-                        selectedItem.status === 'failed' ? (
-                          <button
-                            type="button"
-                            data-testid="webclaw-wake-button"
-                            onClick={() => void wakeItem(selectedItem.id)}
-                            className="rounded px-2 py-1 text-left text-xs font-medium text-primary-900 hover:bg-primary-100"
-                          >
-                            Wake
-                          </button>
-                        ) : null}
-                      </div>
-                    </details>
-                  </div>
-                </>
-              ) : (
-                <div className="py-4 text-primary-500">
-                  Select an item above to review.
+                  <span
+                    data-testid="webclaw-detail-status"
+                    className="text-[11px] text-primary-600"
+                  >
+                    {selectedItem.status}
+                  </span>
                 </div>
-              )}
-            </div>
+
+                <div>
+                  <div className="font-medium text-sm text-primary-950 text-pretty">
+                    {cleanItemTitle(selectedItem.title)}
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-primary-600 truncate">
+                    {selectedItem.source_agent}
+                    {selectedItem.branch ? ` · ${selectedItem.branch}` : ''}
+                  </div>
+                </div>
+
+                {selectedItem.recommendation ? (
+                  <p className="text-xs text-primary-800 text-pretty">
+                    {cleanRecommendation(selectedItem.recommendation)}
+                  </p>
+                ) : null}
+
+                {selectedItem.result?.test ? (
+                  <div
+                    data-testid="webclaw-detail-test"
+                    className="rounded-md bg-primary-100 px-2.5 py-1.5 font-mono text-[11px] text-primary-800"
+                  >
+                    Test exit {String(selectedItem.result.test.exit_code)} (
+                    {selectedItem.result.test.passed ? 'passed' : 'failed'})
+                  </div>
+                ) : null}
+
+                {selectedItem.result?.merged_commit ? (
+                  <div
+                    data-testid="webclaw-merged-commit"
+                    className="font-mono text-[11px] text-primary-600"
+                  >
+                    Landed {selectedItem.result.merged_commit.slice(0, 10)}
+                  </div>
+                ) : null}
+
+                {selectedItem.body ? (
+                  <pre className="max-h-60 overflow-auto rounded-md bg-primary-100 p-2.5 font-mono text-[11px] text-primary-800 whitespace-pre-wrap">
+                    {selectedItem.body}
+                  </pre>
+                ) : null}
+
+                <input
+                  type="text"
+                  data-testid="webclaw-decision-note-input"
+                  value={decisionNote}
+                  onChange={(e) => setDecisionNote(e.target.value)}
+                  placeholder="Add feedback note (optional)…"
+                  className="h-7 w-full rounded-md border border-primary-200 bg-primary-100 px-2 text-xs text-primary-950 placeholder:text-primary-500 outline-none"
+                />
+
+                <div className="flex items-center gap-1.5 pt-0.5">
+                  <button
+                    type="button"
+                    data-testid="webclaw-approve-button"
+                    disabled={
+                      !DECISION_ALLOWED.approve.includes(selectedItem.status)
+                    }
+                    onClick={() => void decideItem(selectedItem.id, 'approve')}
+                    className="h-7 rounded-md bg-primary-900 px-3 text-xs font-medium text-surface disabled:cursor-not-allowed disabled:bg-primary-200 disabled:text-primary-500 disabled:opacity-40"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="webclaw-request-changes-button"
+                    disabled={
+                      !DECISION_ALLOWED.request_changes.includes(
+                        selectedItem.status,
+                      )
+                    }
+                    onClick={() =>
+                      void decideItem(selectedItem.id, 'request_changes')
+                    }
+                    className="h-7 rounded-md border border-primary-200 px-2.5 text-xs text-primary-800 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-35"
+                  >
+                    Request changes
+                  </button>
+                  <details className="relative">
+                    <summary className="flex h-7 cursor-pointer list-none items-center rounded-md px-2 text-xs text-primary-600 hover:bg-primary-100 hover:text-primary-950">
+                      More
+                    </summary>
+                    <div className="absolute right-0 bottom-8 z-20 flex w-28 flex-col rounded-md border border-primary-200 bg-surface p-1 shadow-md">
+                      <button
+                        type="button"
+                        data-testid="webclaw-reject-button"
+                        disabled={
+                          !DECISION_ALLOWED.reject.includes(selectedItem.status)
+                        }
+                        onClick={() =>
+                          void decideItem(selectedItem.id, 'reject')
+                        }
+                        className="rounded px-2 py-1 text-left text-xs text-primary-800 hover:bg-primary-100 disabled:opacity-35"
+                      >
+                        Reject
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="webclaw-snooze-button"
+                        disabled={
+                          !DECISION_ALLOWED.snooze.includes(selectedItem.status)
+                        }
+                        onClick={() =>
+                          void decideItem(selectedItem.id, 'snooze')
+                        }
+                        className="rounded px-2 py-1 text-left text-xs text-primary-800 hover:bg-primary-100 disabled:opacity-35"
+                      >
+                        Snooze
+                      </button>
+                      {selectedItem.status === 'snoozed' ||
+                      selectedItem.status === 'failed' ? (
+                        <button
+                          type="button"
+                          data-testid="webclaw-wake-button"
+                          onClick={() => void wakeItem(selectedItem.id)}
+                          className="rounded px-2 py-1 text-left text-xs font-medium text-primary-900 hover:bg-primary-100"
+                        >
+                          Wake
+                        </button>
+                      ) : null}
+                    </div>
+                  </details>
+                </div>
+              </div>
+            ) : (
+              <div
+                data-testid="webclaw-queue-list"
+                className="flex-1 overflow-y-auto divide-y divide-primary-200"
+              >
+                {visibleItems.length === 0 ? (
+                  <div className="px-3 py-8 text-center text-primary-500">
+                    Nothing waiting for review.
+                  </div>
+                ) : (
+                  visibleItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      data-testid={`webclaw-queue-item-${item.id}`}
+                      onClick={() => setSelectedItemId(item.id)}
+                      className="block w-full px-3 py-2.5 text-left transition-colors hover:bg-primary-100/60"
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="font-medium text-primary-950 truncate">
+                          {cleanItemTitle(item.title)}
+                        </span>
+                        <span className="shrink-0 text-[11px] text-primary-600">
+                          {item.status}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-primary-500 truncate">
+                        {item.source_agent}
+                        {item.branch ? ` · ${item.branch}` : ''}
+                      </div>
+                    </button>
+                  ))
+                )}
+
+                {completedItems.length > 0 ? (
+                  <div className="px-3 py-2">
+                    <button
+                      type="button"
+                      data-testid="webclaw-toggle-completed"
+                      onClick={() => setShowCompleted((prev) => !prev)}
+                      className="text-[11px] text-primary-600 hover:text-primary-950"
+                    >
+                      {showCompleted
+                        ? 'Hide landed'
+                        : `Show landed (${completedItems.length})`}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            )}
           </div>
         ) : null}
 

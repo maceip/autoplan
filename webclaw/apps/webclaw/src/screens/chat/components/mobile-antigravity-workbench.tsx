@@ -3,7 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { useChatSettings as useSidebarSettings } from '../hooks/use-chat-settings'
 import { SettingsDialog } from './settings-dialog'
 import { ChatMessageList } from './chat-message-list'
-import { PlanAIGraphView } from './planai-graph-view'
+import { InlinePlanAIDag } from './inline-planai-dag'
 import type { AgentServiceInfo } from './autoplan-inspector'
 import type { ChatComposerHelpers } from './chat-composer'
 import type {
@@ -1348,19 +1348,42 @@ export function MobileAntigravityWorkbench({
       {/* Full-Screen Session Message Stream */}
       <main className="flex flex-1 min-h-0 flex-col overflow-hidden">
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-          <ChatMessageList
-            messages={displayMessages}
-            loading={historyLoading}
-            empty={historyEmpty}
-            notice={gatewayNotice}
-            noticePosition="end"
-            waitingForResponse={waitingForResponse}
-            sessionKey={activeCanonicalKey}
-            pinToTop={pinToTop}
-            pinGroupMinHeight={pinGroupMinHeight}
-            headerHeight={headerHeight}
-            contentStyle={stableContentStyle}
-          />
+          {!historyLoading &&
+          displayMessages.length === 0 &&
+          !waitingForResponse ? (
+            <InlinePlanAIDag
+              empty
+              activeProjectId={activeProjectId}
+              activeProjectName={activeProject?.name || ''}
+              sessionKey={activeCanonicalKey}
+              sessionMode={sessionMode}
+              services={services}
+            />
+          ) : (
+            <>
+              <InlinePlanAIDag
+                empty={false}
+                activeProjectId={activeProjectId}
+                activeProjectName={activeProject?.name || ''}
+                sessionKey={activeCanonicalKey}
+                sessionMode={sessionMode}
+                services={services}
+              />
+              <ChatMessageList
+                messages={displayMessages}
+                loading={historyLoading}
+                empty={historyEmpty}
+                notice={gatewayNotice}
+                noticePosition="end"
+                waitingForResponse={waitingForResponse}
+                sessionKey={activeCanonicalKey}
+                pinToTop={pinToTop}
+                pinGroupMinHeight={pinGroupMinHeight}
+                headerHeight={headerHeight}
+                contentStyle={stableContentStyle}
+              />
+            </>
+          )}
         </div>
 
         {/* Bottom Antigravity Session Composer — Agent/Model + Single/Team Inside Input Box */}
@@ -1629,12 +1652,14 @@ export function MobileAntigravityWorkbench({
             ) : null}
 
             {detailTab === 'graph' ? (
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <PlanAIGraphView
+              <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                <InlinePlanAIDag
+                  empty
                   activeProjectId={activeProjectId}
-                  projects={effectiveProjects}
+                  activeProjectName={activeProject?.name || ''}
                   sessionKey={activeCanonicalKey}
-                  compact
+                  sessionMode={sessionMode}
+                  services={services}
                 />
               </div>
             ) : (

@@ -23,13 +23,12 @@ import {
   getChatUiState,
   setChatUiState,
 } from './chat-ui'
-import type { WorkspaceViewMode } from './chat-ui'
 import type { ProjectInfo } from './types'
 import { ChatSidebar } from './components/chat-sidebar'
 import { ChatHeader } from './components/chat-header'
 import { ChatMessageList } from './components/chat-message-list'
 import { ChatComposer } from './components/chat-composer'
-import { PlanAIGraphView } from './components/planai-graph-view'
+import { InlinePlanAIDag } from './components/inline-planai-dag'
 import { GatewayStatusMessage } from './components/gateway-status-message'
 import { AutoplanInspector } from './components/autoplan-inspector'
 import type {
@@ -247,7 +246,6 @@ export function ChatScreen({
   }, [gatewayStatusQuery])
   const isSidebarCollapsed = uiQuery.data.isSidebarCollapsed
   const isInspectorOpen = uiQuery.data.isInspectorOpen
-  const workspaceView = uiQuery.data.workspaceView
   const mobileView = uiQuery.data.mobileView
   const mobileDetailOpen = uiQuery.data.mobileDetailOpen
 
@@ -481,15 +479,6 @@ export function ChatScreen({
     setNewChatProjectId(projectId)
   }, [])
 
-  const handleChangeWorkspaceView = useCallback(
-    (nextMode: WorkspaceViewMode) => {
-      setChatUiState(queryClient, function updateView(state) {
-        return { ...state, workspaceView: nextMode }
-      })
-    },
-    [queryClient],
-  )
-
   function sendMessage(
     sessionKey: string,
     friendlyId: string,
@@ -596,6 +585,7 @@ export function ChatScreen({
       serviceOverride?: string
       projectIdOverride?: string
       modeOverride?: 'single' | 'team'
+      labelOverride?: string
     }) => {
       setCreatingSession(true)
       try {
@@ -606,6 +596,7 @@ export function ChatScreen({
             service: opts?.serviceOverride || selectedService,
             projectId: opts?.projectIdOverride || activeProjectId,
             mode: opts?.modeOverride || sessionMode,
+            label: opts?.labelOverride || '',
           }),
         })
         if (!res.ok) throw new Error(await readError(res))
@@ -778,9 +769,16 @@ export function ChatScreen({
 
         const targetMode = sessionMode
         const targetProject = activeProjectId
+        const autoLabel = (
+          body
+            .split('\n')
+            .map((line) => line.trim())
+            .find(Boolean) ?? ''
+        ).slice(0, 48)
         createSessionForMessage({
           projectIdOverride: targetProject,
           modeOverride: targetMode,
+          labelOverride: autoLabel,
         })
           .then(({ sessionKey, friendlyId }) => {
             setRecentSession(friendlyId)
@@ -861,13 +859,6 @@ export function ChatScreen({
   const handleToggleInspector = useCallback(() => {
     setChatUiState(queryClient, function toggle(state) {
       return { ...state, isInspectorOpen: !state.isInspectorOpen }
-    })
-  }, [queryClient])
-
-  const handleFocusOrchestratorQueue = useCallback(() => {
-    setInspectorTab('queue')
-    setChatUiState(queryClient, function ensureInspectorOpen(state) {
-      return { ...state, isInspectorOpen: true }
     })
   }, [queryClient])
 
@@ -1102,11 +1093,6 @@ export function ChatScreen({
         usedTokens={activeSession?.totalTokens}
         maxTokens={activeSession?.contextTokens}
         needsReviewCount={needsReviewCount}
-        chiefLlmConfigured={chiefLlmConfigured}
-        chiefLlmStatus={chiefLlmStatus}
-        onFocusOrchestratorQueue={handleFocusOrchestratorQueue}
-        workspaceView={workspaceView}
-        onChangeWorkspaceView={handleChangeWorkspaceView}
         inspectorOpen={isInspectorOpen}
         onToggleInspector={handleToggleInspector}
       />
@@ -1139,52 +1125,45 @@ export function ChatScreen({
             </div>
           ) : null}
 
-          {hideUi ? null : workspaceView === 'graph' ? (
-            <PlanAIGraphView
-              activeProjectId={activeProjectId}
-              projects={projects}
-              sessionKey={activeCanonicalKey}
-            />
-          ) : workspaceView === 'split' ? (
-            <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-              <div className="h-[46%] min-h-[250px] shrink-0 border-b border-primary-200 overflow-hidden">
-                <PlanAIGraphView
-                  activeProjectId={activeProjectId}
-                  projects={projects}
-                  sessionKey={activeCanonicalKey}
-                  compact
-                />
-              </div>
-              <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-                <ChatMessageList
-                  messages={displayMessages}
-                  loading={historyLoading}
-                  empty={historyEmpty}
-                  notice={gatewayNotice}
-                  noticePosition="end"
-                  waitingForResponse={waitingForResponse}
-                  sessionKey={activeCanonicalKey}
-                  pinToTop={pinToTop}
-                  pinGroupMinHeight={pinGroupMinHeight}
-                  headerHeight={headerHeight}
-                  contentStyle={stableContentStyle}
-                />
-                <ChatComposer
-                  onSubmit={send}
-                  isLoading={sending}
-                  disabled={sending}
-                  wrapperRef={composerRef}
-                  services={services}
-                  selectedService={selectedService}
-                  onSelectService={(svc) => void handleSelectService(svc)}
-                  sessionMode={sessionMode}
-                  onSelectMode={(m) => void handleSelectMode(m)}
-                  activeProjectName={activeProjectName}
-                />
-              </div>
-            </div>
+          {hideUi ? null : !historyLoading &&
+            displayMessages.length === 0 &&
+            !waitingForResponse ? (
+            <>
+              <InlinePlanAIDag
+                empty
+                activeProjectId={activeProjectId}
+                activeProjectName={activeProjectName}
+                sessionKey={activeCanonicalKey}
+                sessionMode={sessionMode}
+                services={services}
+                showOnboardingDemo
+                onStartDemo={() => void handleRunSimpleTask()}
+                startingDemo={busyDemoService !== null}
+                canDispatchDemo={canDispatchSelected}
+              />
+              <ChatComposer
+                onSubmit={send}
+                isLoading={sending}
+                disabled={sending}
+                wrapperRef={composerRef}
+                services={services}
+                selectedService={selectedService}
+                onSelectService={(svc) => void handleSelectService(svc)}
+                sessionMode={sessionMode}
+                onSelectMode={(m) => void handleSelectMode(m)}
+                activeProjectName={activeProjectName}
+              />
+            </>
           ) : (
             <>
+              <InlinePlanAIDag
+                empty={false}
+                activeProjectId={activeProjectId}
+                activeProjectName={activeProjectName}
+                sessionKey={activeCanonicalKey}
+                sessionMode={sessionMode}
+                services={services}
+              />
               <ChatMessageList
                 messages={displayMessages}
                 loading={historyLoading}

@@ -2,7 +2,6 @@ import { memo } from 'react'
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Menu01Icon, SidebarLeft01Icon } from '@hugeicons/core-free-icons'
-import type { WorkspaceViewMode } from '../chat-ui'
 import { ContextMeter } from './context-meter'
 import { Button } from '@/components/ui/button'
 import { ExportMenu } from '@/components/export-menu'
@@ -25,11 +24,6 @@ type ChatHeaderProps = {
   exportDisabled?: boolean
   showExport?: boolean
   needsReviewCount?: number
-  chiefLlmConfigured?: boolean
-  chiefLlmStatus?: string
-  onFocusOrchestratorQueue?: () => void
-  workspaceView?: WorkspaceViewMode
-  onChangeWorkspaceView?: (mode: WorkspaceViewMode) => void
   inspectorOpen?: boolean
   onToggleInspector?: () => void
 }
@@ -76,13 +70,9 @@ function ChatHeaderComponent({
   exportDisabled = false,
   showExport = true,
   needsReviewCount = 0,
-  workspaceView = 'workbench',
-  onChangeWorkspaceView,
   inspectorOpen = true,
   onToggleInspector,
 }: ChatHeaderProps) {
-  const isPlanActive = workspaceView === 'graph' || workspaceView === 'split'
-
   return (
     <header
       ref={wrapperRef}
@@ -166,44 +156,6 @@ function ChatHeaderComponent({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          {onChangeWorkspaceView ? (
-            <div
-              data-testid="workspace-view-switcher"
-              role="group"
-              aria-label="View"
-              className="flex items-center rounded-md bg-primary-100 p-0.5"
-            >
-              <button
-                type="button"
-                data-testid="view-mode-workbench"
-                aria-pressed={!isPlanActive}
-                onClick={() => onChangeWorkspaceView('workbench')}
-                className={cn(
-                  'rounded px-2.5 py-1 text-xs font-medium transition-colors',
-                  !isPlanActive
-                    ? 'bg-surface text-primary-950 shadow-2xs'
-                    : 'text-primary-600 hover:text-primary-900',
-                )}
-              >
-                Chat
-              </button>
-              <button
-                type="button"
-                data-testid="view-mode-graph"
-                aria-pressed={isPlanActive}
-                onClick={() => onChangeWorkspaceView('graph')}
-                className={cn(
-                  'rounded px-2.5 py-1 text-xs font-medium transition-colors',
-                  isPlanActive
-                    ? 'bg-surface text-primary-950 shadow-2xs'
-                    : 'text-primary-600 hover:text-primary-900',
-                )}
-              >
-                Plan
-              </button>
-            </div>
-          ) : null}
-
           <ContextMeter usedTokens={usedTokens} maxTokens={maxTokens} />
           {showExport ? (
             <ExportMenu onExport={onExport} disabled={exportDisabled} />
