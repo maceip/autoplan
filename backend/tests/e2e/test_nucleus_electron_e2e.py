@@ -77,10 +77,12 @@ def test_nucleus_macos_shell_and_in_process_apple_foundation_models():
     )
 
     cdp_port = _free_port()
+    webclaw_port = _free_port()
     env = {
         **os.environ,
         "AUTOPLAN_ROOT": str(REPO_ROOT),
         "NUCLEUS_HEADLESS_TEST": "1",
+        "NUCLEUS_WEBCLAW_PORT": str(webclaw_port),
     }
 
     proc = subprocess.Popen(
@@ -164,6 +166,27 @@ def test_nucleus_macos_shell_and_in_process_apple_foundation_models():
                     )
                 ).to_be_visible(timeout=20000)
                 _save_shot(window, "nucleus_macos_workbench_3col.png")
+
+                # Verify Phase 2 Guardrails / Memories / Skills sub-tabs inside packaged Nucleus.app
+                wb_frame.locator('[data-testid="inspector-tab-evolution"]').click()
+                expect(
+                    wb_frame.locator('[data-testid="evolution-subtab-rules"]')
+                ).to_be_visible(timeout=15000)
+                expect(
+                    wb_frame.locator('[data-testid="evolution-subtab-memories"]')
+                ).to_be_visible(timeout=15000)
+                expect(
+                    wb_frame.locator('[data-testid="evolution-subtab-skills"]')
+                ).to_be_visible(timeout=15000)
+                wb_frame.locator('[data-testid="evolution-subtab-memories"]').click()
+                expect(
+                    wb_frame.locator('[data-testid="inspector-add-memory-form"]')
+                ).to_be_visible(timeout=10000)
+                wb_frame.locator('[data-testid="evolution-subtab-skills"]').click()
+                expect(
+                    wb_frame.locator('[data-testid="evolution-skills-list"]')
+                ).to_be_visible(timeout=10000)
+                _save_shot(window, "nucleus_phase2_workbench.png")
 
                 # 2. Verify backend `/api/llm/test-prompt` executes via Apple FoundationModels in-process
                 runtime_info = window.evaluate(

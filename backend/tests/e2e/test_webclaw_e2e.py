@@ -309,6 +309,62 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
     assert int(after_evo["active_generation"]) >= before_gen + 1
     _maybe_screenshot(page, "web_brain_evolution_tab.png")
 
+    # 4. Phase 2 Dual-Track Cascade Memories (`CONTENT_DIFF`) CRUD in Inspector
+    expect(page.locator('[data-testid="evolution-subtab-rules"]')).to_be_visible()
+    expect(page.locator('[data-testid="evolution-subtab-memories"]')).to_be_visible()
+    expect(page.locator('[data-testid="evolution-subtab-skills"]')).to_be_visible()
+
+    page.locator('[data-testid="evolution-subtab-memories"]').click()
+    mem_key = f"e2e-mem-{os.getpid()}"
+    page.locator('[data-testid="inspector-memory-key-input"]').fill(mem_key)
+    page.locator('[data-testid="inspector-memory-content-input"]').fill(
+        "Line 1: isolate worktrees per project"
+    )
+    with page.expect_response(
+        lambda r: "/api/autoplan/evolution/memories" in r.url
+        and r.request.method == "POST",
+        timeout=15000,
+    ) as create_mem_resp:
+        page.locator('[data-testid="inspector-memory-save-button"]').click()
+    assert create_mem_resp.value.ok, create_mem_resp.value.text()
+    created_mem = create_mem_resp.value.json()["memory"]
+    mem_id = created_mem["id"]
+
+    mem_card = page.locator(f'[data-testid="evolution-memory-{mem_id}"]')
+    expect(mem_card).to_be_visible(timeout=10000)
+    expect(mem_card).to_contain_text("MANUAL · r1")
+
+    # Edit & save -> revision r2 + unified CONTENT_DIFF
+    page.locator(f'[data-testid="memory-edit-{mem_id}"]').click()
+    page.locator('[data-testid="inspector-memory-content-input"]').fill(
+        "Line 1: isolate worktrees per project\nLine 2: verify PolicyGuardian before gate"
+    )
+    with page.expect_response(
+        lambda r: "/api/autoplan/evolution/memories" in r.url
+        and r.request.method == "POST",
+        timeout=15000,
+    ) as update_mem_resp:
+        page.locator('[data-testid="inspector-memory-save-button"]').click()
+    assert update_mem_resp.value.ok, update_mem_resp.value.text()
+    expect(mem_card).to_contain_text("MANUAL · r2", timeout=10000)
+
+    page.locator(f'[data-testid="memory-diff-toggle-{mem_id}"]').click()
+    diff_pre = page.locator(f'[data-testid="memory-diff-{mem_id}"]')
+    expect(diff_pre).to_be_visible()
+    expect(diff_pre).to_contain_text("+Line 2: verify PolicyGuardian before gate")
+    _maybe_screenshot(page, "web_phase2_memories_content_diff.png")
+
+    with page.expect_response(
+        lambda r: f"/api/autoplan/evolution/memories/{mem_id}" in r.url
+        and r.request.method == "DELETE",
+        timeout=15000,
+    ) as del_mem_resp:
+        page.locator(f'[data-testid="memory-delete-{mem_id}"]').click()
+    assert del_mem_resp.value.ok, del_mem_resp.value.text()
+    expect(mem_card).to_have_count(0, timeout=10000)
+    active_mem_ids = {m["id"] for m in _api_get("/api/evolution/memories")["memories"]}
+    assert mem_id not in active_mem_ids
+
 
 def test_webclaw_agents_registry_and_observe_only_minimax(page: Page):
     open_webclaw(page)
@@ -437,6 +493,13 @@ def test_webclaw_live_start_demo_through_chief_approval(page: Page):
         expect(page.locator('[data-testid="gate-checks-body"]')).to_contain_text(
             "Law-2 Reality Scan", timeout=10000
         )
+        expect(page.locator('[data-testid="gate-policy-guardian"]')).to_contain_text(
+            "Allowed · severity 0", timeout=10000
+        )
+        expect(page.locator('[data-testid="gate-trajectory-summary"]')).to_contain_text(
+            "recorded steps", timeout=10000
+        )
+        _maybe_screenshot(page, "web_phase2_gate_policy_guardian.png")
         page.locator('[data-testid="gate-tab-diff"]').click()
         _maybe_screenshot(page, "web_ironcurtain_gate_review_panel.png")
 
@@ -492,6 +555,30 @@ def test_webclaw_live_start_demo_through_chief_approval(page: Page):
         # Click <- Back to return cleanly to master review list
         page.locator('[data-testid="webclaw-detail-back"]').click()
         expect(page.locator('[data-testid="webclaw-queue-list"]')).to_be_visible()
+
+        # Verify Phase 2 AUTO_CASCADE memory + .agents/skills accumulation after Round 2 resolution
+        page.locator('[data-testid="inspector-tab-evolution"]').click()
+        page.locator('[data-testid="evolution-subtab-memories"]').click()
+        expect(page.locator('[data-testid="evolution-memories-list"]')).to_contain_text(
+            "AUTO_CASCADE", timeout=15000
+        )
+        expect(page.locator('[data-testid="evolution-memories-list"]')).to_contain_text(
+            "revision-playbook-", timeout=15000
+        )
+
+        page.locator('[data-testid="evolution-subtab-skills"]').click()
+        skills_list = page.locator('[data-testid="evolution-skills-list"]')
+        expect(skills_list).to_contain_text("-verified-revision", timeout=15000)
+        first_skill_toggle = page.locator('[data-testid^="skill-md-toggle-"]').first
+        expect(first_skill_toggle).to_be_visible()
+        first_skill_toggle.click()
+        expect(page.locator('[data-testid^="skill-md-"]').first).to_contain_text(
+            "## Pre-Flight Checklist"
+        )
+        skills_api = _api_get("/api/evolution/skills")["skills"]
+        assert len(skills_api) >= 1
+        assert Path(skills_api[0]["skill_path"]).is_file()
+        _maybe_screenshot(page, "web_phase2_accumulated_skills.png")
     finally:
         if temp_fid:
             try:
