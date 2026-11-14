@@ -190,10 +190,19 @@ class ChromiumPromptBridge:
         try:
             req = q.get(timeout=timeout_s)
             self.heartbeat(client_id)
+            with self._lock:
+                slot = self._waiters.get(str(req.get("request_id") or ""))
+                if slot is not None and "picked_up" in slot:
+                    slot["picked_up"].set()
             return req
         except queue.Empty:
             self.heartbeat(client_id)
             return None
+
+    def unregister_client(self, client_id: str) -> None:
+        with self._lock:
+            self._clients.pop(client_id, None)
+            self._pending_queues.pop(client_id, None)
 
     def submit_response(
         self,
@@ -218,14 +227,22 @@ class ChromiumPromptBridge:
         response_schema_json: Optional[Dict[str, Any]] = None,
         temperature: Optional[float] = None,
         timeout_s: float = 60.0,
+        pickup_timeout_s: float = 3.0,
     ) -> Dict[str, Any]:
         client = self.active_client()
         if not client:
             raise RuntimeError("No active Electron Chromium LanguageModel bridge connected.")
         client_id = client["client_id"]
         req_id = f"lmreq_{uuid.uuid4().hex[:10]}"
+        picked_up_event = threading.Event()
         done_event = threading.Event()
-        slot: Dict[str, Any] = {"event": done_event, "content": "", "error": "", "metrics": {}}
+        slot: Dict[str, Any] = {
+            "picked_up": picked_up_event,
+            "event": done_event,
+            "content": "",
+            "error": "",
+            "metrics": {},
+        }
         payload = {
             "request_id": req_id,
             "messages": messages,
@@ -242,6 +259,12 @@ class ChromiumPromptBridge:
             q.put(payload)
 
         try:
+            if not picked_up_event.wait(timeout=pickup_timeout_s):
+                self.unregister_client(client_id)
+                self.last_error = (
+                    f"Chromium LanguageModel client {client_id} did not pick up request within {pickup_timeout_s}s"
+                )
+                raise TimeoutError(self.last_error)
             if not done_event.wait(timeout=timeout_s):
                 self.last_error = f"Timed out after {timeout_s}s waiting for Chromium LanguageModel"
                 raise TimeoutError(self.last_error)
