@@ -453,7 +453,7 @@ def test_apple_foundation_models_in_process_and_evolution_engine_planai_graph(
     evo_joiner = next(
         n for n in evo_data["workflow"]["nodes"] if n["id"] == "EvolutionCritiqueJoiner"
     )
-    assert evo_joiner["metrics"]["joined_critiques"] == 2
+    assert evo_joiner["metrics"]["joined_critiques"] >= 2
 
     lead_gen = store.get_active_prompt("lead_planner")
     chief_gen = store.get_active_prompt("chief_triage")

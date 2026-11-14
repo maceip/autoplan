@@ -281,11 +281,19 @@ class TempFileManager:
                     for change in content_changes:
                         # The LSP spec says range can be missing for full updates.
                         if "range" not in change:  # Full update
-                            pygls_change = types.TextDocumentContentChangeEvent_Type2(
-                                text=change["text"]
-                            )
+                            full_cls = getattr(
+                                types,
+                                "TextDocumentContentChangeWholeDocument",
+                                None,
+                            ) or getattr(types, "TextDocumentContentChangeEvent_Type2")
+                            pygls_change = full_cls(text=change["text"])
                         else:  # Incremental update
-                            pygls_change = types.TextDocumentContentChangeEvent_Type1(
+                            partial_cls = getattr(
+                                types,
+                                "TextDocumentContentChangePartial",
+                                None,
+                            ) or getattr(types, "TextDocumentContentChangeEvent_Type1")
+                            pygls_change = partial_cls(
                                 range=types.Range(
                                     start=types.Position(
                                         line=change["range"]["start"]["line"],

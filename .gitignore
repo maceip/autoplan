@@ -10,3 +10,7 @@ nucleus/node_modules/
 nucleus/dist/
 
 .build/
+dist/
+build/
+*.spec
+backend/planaieditor/static_frontend/

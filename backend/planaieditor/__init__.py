@@ -1,1 +1,3 @@
-# This file is intentionally left blank.
+"""AutoPlan / PlanAI Editor backend package."""
+
+__version__ = "0.2.0"

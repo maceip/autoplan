@@ -1,19 +1,24 @@
-# Try to import and monkey patch eventlet FIRST
-try:
-    import eventlet
+import os
+import shutil
+import sys
 
-    eventlet.monkey_patch()
-    print("Eventlet monkey patch applied successfully.")
-except ImportError:
-    print("Eventlet not found. Proceeding without monkey patching.")
-    # Optionally, you could force a non-eventlet server if needed
-    pass
+_IS_FROZEN = bool(getattr(sys, "frozen", False))
+_USE_EVENTLET = not _IS_FROZEN and os.environ.get("AUTOPLAN_NO_EVENTLET") != "1"
+
+# Try to import and monkey patch eventlet FIRST when running unfrozen
+if _USE_EVENTLET:
+    try:
+        import eventlet
+
+        eventlet.monkey_patch()
+        print("Eventlet monkey patch applied successfully.")
+    except ImportError:
+        _USE_EVENTLET = False
+        print("Eventlet not found. Proceeding without monkey patching.")
 
 import json
-import os
 import re
 import subprocess
-import sys
 import tempfile
 import traceback
 from argparse import ArgumentParser
@@ -24,6 +29,7 @@ from typing import Optional
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
+from planaieditor import __version__
 from planaieditor.filesystem import setup_filesystem
 from planaieditor.llm_interface_utils import list_models_for_provider
 from planaieditor.lsp_handler import lsp_handler_instance as lsp_handler
@@ -50,12 +56,13 @@ is_development = FLASK_ENV == "development"
 package_static_dir = os.path.join(os.path.dirname(__file__), "static_frontend")
 
 # Initialize Flask differently based on mode
+_SOCKETIO_ASYNC_MODE = None if _USE_EVENTLET else "threading"
 if is_development:
     print("Running in DEVELOPMENT mode. Enabling CORS for *")
     app = Flask(__name__)
     # Allow requests from frontend dev server origin
     CORS(app, resources={r"/*": {"origins": "*"}})
-    socketio = SocketIO(app, cors_allowed_origins="*")
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode=_SOCKETIO_ASYNC_MODE)
 else:
     # Production mode: Serve static files from the packaged directory
     print(
@@ -75,12 +82,30 @@ else:
         "https://queue.secure.build,http://localhost:5051,http://127.0.0.1:5051,http://100.80.211.36:5051",
     )
     allowed_origins = [o.strip() for o in raw_cors.split(",") if o.strip()]
-    socketio = SocketIO(app, cors_allowed_origins=allowed_origins or None)
+    socketio = SocketIO(
+        app,
+        cors_allowed_origins=allowed_origins or None,
+        async_mode=_SOCKETIO_ASYNC_MODE,
+    )
 
 app.config["SECRET_KEY"] = "secret!"  # Change this in production!
 app.config["SELECTED_VENV_PATH"] = (
-    sys.executable  # Will store the selected Python interpreter path
+    (shutil.which("python3") or sys.executable) if _IS_FROZEN else sys.executable
 )
+
+
+@app.route("/api/version", methods=["GET"])
+def get_version():
+    """Return running AutoPlan package/binary version and runtime metadata."""
+    return jsonify(
+        {
+            "success": True,
+            "name": "autoplan",
+            "version": __version__,
+            "frozen": _IS_FROZEN,
+            "platform": sys.platform,
+        }
+    )
 
 
 # API endpoints for Python interpreter selection
@@ -1376,7 +1401,12 @@ if not is_development:
 
 # Main execution block - Refactored to be callable by entry point
 def main():
-    parser = ArgumentParser()
+    parser = ArgumentParser(prog="autoplan")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"autoplan {__version__}",
+    )
     parser.add_argument(
         "--root-path",
         type=Path,
@@ -1429,29 +1459,22 @@ def main():
             f"Serving application on http://{run_config['host']}:{run_config['port']}"
         )
 
-    # Use eventlet for better performance if available
-    try:
-        # Verify if eventlet was successfully imported and patched earlier
-        import eventlet  # Re-import shouldn't hurt, just checks if it's available  # noqa: F401
+    # Use eventlet when enabled in unfrozen mode; threading + Werkzeug when frozen
+    if _USE_EVENTLET:
+        try:
+            import eventlet  # noqa: F401
 
-        print("Using eventlet WSGI server for socketio.run().")
-        if is_development:
-            # Eventlet doesn't directly use use_reloader, but Flask's debug mode implies it
-            pass  # Debug=True handles this sufficiently with eventlet? Check docs.
-        # else: run_config.pop("use_reloader", None) # Not needed when debug=False
+            print("Using eventlet WSGI server for socketio.run().")
+            socketio.run(**run_config)
+            return
+        except ImportError:
+            pass
 
-        # Eventlet doesn't need debug/reloader passed here when monkey-patched? Test this.
-        # socketio.run(app, host=run_config['host'], port=run_config['port']) # Simpler call?
-        socketio.run(**run_config)
-
-    except ImportError:
-        print(
-            "Eventlet not found, using Flask's default development server for socketio.run()."
-        )
-        # Add back use_reloader=False explicitly for production if not using eventlet
-        if not is_development:
-            run_config["use_reloader"] = False
-        socketio.run(**run_config)
+    print("Using threading WSGI server for socketio.run().")
+    if not is_development:
+        run_config["use_reloader"] = False
+        run_config["allow_unsafe_werkzeug"] = True
+    socketio.run(**run_config)
 
 
 if __name__ == "__main__":

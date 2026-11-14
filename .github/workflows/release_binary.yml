@@ -1,0 +1,270 @@
+name: Release Attested Binary & SBOM
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      bump_part:
+        description: "Semantic version segment to increment (patch, minor, major)"
+        required: false
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+concurrency:
+  group: autoplan-release-binary-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bump-version:
+    name: Bump Version Across Manifests
+    runs-on: ubuntu-latest
+    if: "github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'chore(release): bump version to v')"
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+      previous_version: ${{ steps.bump.outputs.previous_version }}
+      commit_sha: ${{ steps.push_bump.outputs.commit_sha }}
+    steps:
+      - name: Checkout repository with full tag history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Increment semantic version
+        id: bump
+        env:
+          HEAD_COMMIT_MSG: ${{ github.event.head_commit.message || '' }}
+          INPUT_BUMP_PART: ${{ inputs.bump_part || '' }}
+        run: |
+          set -euo pipefail
+          EXTRA_ARGS=()
+          if [[ -n "${INPUT_BUMP_PART}" ]]; then
+            EXTRA_ARGS+=(--part "${INPUT_BUMP_PART}")
+          else
+            EXTRA_ARGS+=(--commit-message "${HEAD_COMMIT_MSG}")
+          fi
+          python3 scripts/ci_bump_version.py --write-github-output "${EXTRA_ARGS[@]}"
+
+      - name: Commit and push version bump to main
+        id: push_bump
+        env:
+          NEW_TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            VERSION \
+            backend/pyproject.toml \
+            backend/planaieditor/__init__.py \
+            nucleus/package.json \
+            frontend/package.json \
+            webclaw/apps/webclaw/package.json
+          git commit -m "chore(release): bump version to ${NEW_TAG}"
+          git pull --rebase origin main
+          git push origin HEAD:main
+          echo "commit_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+  build-verify-attest:
+    name: Build, Execute, SBOM & Attest (${{ matrix.target }})
+    needs: [bump-version]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: macos-14
+            target: darwin-arm64
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Checkout bumped release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-version.outputs.commit_sha }}
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python runtime & PyInstaller dependencies
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip "poetry>=2.1.0"
+          poetry config virtualenvs.in-project true
+          cd backend
+          poetry install --only main --no-root
+          ./.venv/bin/pip install pyinstaller simple-websocket wsproto
+
+      - name: Build standalone runnable AutoPlan binary
+        run: |
+          set -euo pipefail
+          ./backend/.venv/bin/python scripts/build_binary.py \
+            --python ./backend/.venv/bin/python \
+            --target "${{ matrix.target }}"
+
+      - name: Execute compiled binary & verify live multi-step stateful workflows
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_built_binary.py \
+            --binary "dist/bin/autoplan-${{ matrix.target }}" \
+            --expected-version "${{ needs.bump-version.outputs.version }}" \
+            --report "dist/bin/verification-${{ matrix.target }}.json"
+
+      - name: Generate & verify full CycloneDX 1.5 SBOM with every dependency tagged
+        run: |
+          set -euo pipefail
+          ./backend/.venv/bin/python scripts/generate_sbom.py \
+            --version "${{ needs.bump-version.outputs.version }}" \
+            --target "${{ matrix.target }}" \
+            --binary "dist/bin/autoplan-${{ matrix.target }}" \
+            --output "dist/sbom/autoplan-v${{ needs.bump-version.outputs.version }}-${{ matrix.target }}.cdx.sbom.json" \
+            --verify
+
+      - name: Attest SLSA Build Provenance (GitHub OIDC / Sigstore)
+        id: attest-provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/bin/autoplan-${{ matrix.target }}
+
+      - name: Attest Tagged CycloneDX SBOM to Binary (GitHub OIDC / Sigstore)
+        id: attest-sbom
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/bin/autoplan-${{ matrix.target }}
+          sbom-path: dist/sbom/autoplan-v${{ needs.bump-version.outputs.version }}-${{ matrix.target }}.cdx.sbom.json
+
+      - name: Stage verified binary, SBOM & runtime verification report
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            dist/bin/autoplan-${{ matrix.target }}
+            dist/bin/autoplan-${{ matrix.target }}.sha256
+            dist/bin/verification-${{ matrix.target }}.json
+            dist/sbom/autoplan-v${{ needs.bump-version.outputs.version }}-${{ matrix.target }}.cdx.sbom.json
+
+  publish-release:
+    name: Cut GitHub Release (Post-Execution Gate)
+    needs: [bump-version, build-verify-attest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout bumped release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-version.outputs.commit_sha }}
+
+      - name: Download verified binaries, SBOMs & execution reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          merge-multiple: true
+          path: release_upload
+
+      - name: Assert all platform binaries passed live execution gate & compute SHA256SUMS
+        env:
+          REL_VERSION: ${{ needs.bump-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          rel_ver = os.environ["REL_VERSION"]
+          upload_dir = Path("release_upload")
+          for target in ("linux-x86_64", "darwin-arm64"):
+              bin_file = upload_dir / f"autoplan-{target}"
+              rep_file = upload_dir / f"verification-{target}.json"
+              sbom_file = upload_dir / f"autoplan-v{rel_ver}-{target}.cdx.sbom.json"
+              assert bin_file.is_file() and bin_file.stat().st_size > 5_000_000, f"Missing binary {bin_file}"
+              assert sbom_file.is_file(), f"Missing SBOM {sbom_file}"
+              rep = json.loads(rep_file.read_text(encoding="utf-8"))
+              assert rep.get("verified") is True, f"Unverified binary for {target}: {rep}"
+              assert rep.get("expected_version") == rel_ver, f"Version mismatch in {rep_file}"
+              assert rep["checks"]["chief_queue_and_merge"]["status"] == "landed"
+              assert rep["checks"]["planai_evolution_and_trajectory"]["active_generation"] >= 2
+          print("All platform binaries verified via live stateful execution.")
+          PY
+          cd release_upload
+          chmod +x autoplan-linux-x86_64 autoplan-darwin-arm64
+          sha256sum \
+            autoplan-linux-x86_64 \
+            autoplan-darwin-arm64 \
+            autoplan-v"${REL_VERSION}"-linux-x86_64.cdx.sbom.json \
+            autoplan-v"${REL_VERSION}"-darwin-arm64.cdx.sbom.json \
+            verification-linux-x86_64.json \
+            verification-darwin-arm64.json > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Tag release commit and publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REL_TAG: ${{ needs.bump-version.outputs.tag }}
+          REL_VERSION: ${{ needs.bump-version.outputs.version }}
+          REL_SHA: ${{ needs.bump-version.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${REL_TAG}" "${REL_SHA}" -m "AutoPlan ${REL_TAG}"
+          git push origin "${REL_TAG}"
+
+          cat <<EOF > release_notes.md
+          ## AutoPlan ${REL_TAG}
+
+          ### Live Binary Execution Gate (Passed Before Upload)
+          Both \`autoplan-linux-x86_64\` and \`autoplan-darwin-arm64\` were executed in isolated workspaces prior to attestation and release upload, completing:
+          - Bundled SvelteKit UI serving (\`GET /\`) and frozen binary inspection (\`GET /api/version\`)
+          - SQLite QueueStore + Chief-of-Staff background daemon triage, \`test_command\` execution, human-gate approval, and live Git branch merge onto \`main\`
+          - Cascade \`CONTENT_DIFF\` memory revisions + Jet Ski \`PolicyGuardian\` HTTP \`409\` secret-leak enforcement
+          - Full 7-worker \`AutoplanPromptEvolutionGraph\` (\`planai.Graph\`) advancing prompt generation, writing \`.agents/skills\`, projecting SvelteFlow topology, and enforcing \`Trajectory\` revert invariants
+
+          ### Attestation & SBOM Verification
+          Verify SLSA build provenance and CycloneDX 1.5 tagged SBOM attestations with the GitHub CLI:
+          \`\`\`bash
+          gh attestation verify autoplan-darwin-arm64 --repo ${{ github.repository }}
+          gh attestation verify autoplan-darwin-arm64 --repo ${{ github.repository }} --predicate-type https://cyclonedx.org/bom
+          \`\`\`
+          EOF
+
+          gh release create "${REL_TAG}" \
+            release_upload/autoplan-linux-x86_64 \
+            release_upload/autoplan-darwin-arm64 \
+            release_upload/autoplan-v"${REL_VERSION}"-linux-x86_64.cdx.sbom.json \
+            release_upload/autoplan-v"${REL_VERSION}"-darwin-arm64.cdx.sbom.json \
+            release_upload/verification-linux-x86_64.json \
+            release_upload/verification-darwin-arm64.json \
+            release_upload/SHA256SUMS.txt \
+            --target "${REL_SHA}" \
+            --title "AutoPlan ${REL_TAG}" \
+            --notes-file release_notes.md \
+            --generate-notes
