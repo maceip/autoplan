@@ -445,7 +445,7 @@ export function AutoplanInspector({
       />
 
       <div className="flex min-w-0 flex-1 flex-col h-full overflow-hidden">
-        {/* Clean flat underline tabs — zero nested pill boxes */}
+        {/* 3 tabs max (1 active + 2 adjacent labels) */}
         <div className="flex h-10 shrink-0 items-stretch border-b border-primary-200 px-3 gap-4">
           {(
             [
@@ -454,30 +454,33 @@ export function AutoplanInspector({
                 'inspector-tab-queue',
                 needsReviewCount > 0 ? `Review (${needsReviewCount})` : 'Review',
               ],
-              ['agents', 'inspector-tab-agents', 'Agents'],
               [
-                'runs',
-                'inspector-tab-runs',
-                activeRunsCount > 0 ? `Runs (${activeRunsCount})` : 'Runs',
+                'agents',
+                'inspector-tab-agents',
+                activeRunsCount > 0 ? `Agents (${activeRunsCount})` : 'Agents',
               ],
               ['evolution', 'inspector-tab-evolution', 'Rules'],
             ] as const
-          ).map(([id, testId, label]) => (
-            <button
-              key={id}
-              type="button"
-              data-testid={testId}
-              onClick={() => setTab(id)}
-              className={cn(
-                'flex items-center border-b-2 text-xs font-medium transition-colors tabular-nums',
-                tab === id
-                  ? 'border-primary-950 text-primary-950'
-                  : 'border-transparent text-primary-600 hover:text-primary-900',
-              )}
-            >
-              {label}
-            </button>
-          ))}
+          ).map(([id, testId, label]) => {
+            const isActive =
+              tab === id || (id === 'agents' && tab === 'runs')
+            return (
+              <button
+                key={id}
+                type="button"
+                data-testid={testId}
+                onClick={() => setTab(id)}
+                className={cn(
+                  'flex items-center border-b-2 text-xs font-medium transition-colors tabular-nums',
+                  isActive
+                    ? 'border-primary-950 text-primary-950'
+                    : 'border-transparent text-primary-600 hover:text-primary-900',
+                )}
+              >
+                {label}
+              </button>
+            )
+          })}
         </div>
 
         {inspectorError ? (
@@ -562,11 +565,9 @@ export function AutoplanInspector({
                       <span data-testid="webclaw-detail-status">
                         {selectedItem.status}
                       </span>
-                      {' · '}
-                      {selectedItem.source_agent}
                       {selectedItem.branch
-                        ? ` · ${selectedItem.branch} → ${selectedItem.target_branch}`
-                        : ''}
+                        ? ` · ${selectedItem.branch}`
+                        : ` · ${selectedItem.source_agent}`}
                     </div>
                   </div>
 
@@ -610,7 +611,7 @@ export function AutoplanInspector({
                     className="h-7 w-full rounded-md border border-primary-200 bg-primary-100 px-2 text-xs text-primary-950 placeholder:text-primary-500 outline-none"
                   />
 
-                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <div className="flex items-center gap-1.5 pt-0.5">
                     <button
                       type="button"
                       data-testid="webclaw-approve-button"
@@ -637,39 +638,54 @@ export function AutoplanInspector({
                     >
                       Request changes
                     </button>
-                    <button
-                      type="button"
-                      data-testid="webclaw-reject-button"
-                      disabled={
-                        !DECISION_ALLOWED.reject.includes(selectedItem.status)
-                      }
-                      onClick={() => void decideItem(selectedItem.id, 'reject')}
-                      className="h-7 rounded-md px-2 text-xs text-primary-600 hover:bg-primary-100 hover:text-primary-950 disabled:cursor-not-allowed disabled:opacity-35"
-                    >
-                      Reject
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="webclaw-snooze-button"
-                      disabled={
-                        !DECISION_ALLOWED.snooze.includes(selectedItem.status)
-                      }
-                      onClick={() => void decideItem(selectedItem.id, 'snooze')}
-                      className="h-7 rounded-md px-2 text-xs text-primary-600 hover:bg-primary-100 hover:text-primary-950 disabled:cursor-not-allowed disabled:opacity-35"
-                    >
-                      Snooze
-                    </button>
-                    {selectedItem.status === 'snoozed' ||
-                    selectedItem.status === 'failed' ? (
-                      <button
-                        type="button"
-                        data-testid="webclaw-wake-button"
-                        onClick={() => void wakeItem(selectedItem.id)}
-                        className="h-7 rounded-md border border-primary-300 px-2.5 text-xs font-medium"
-                      >
-                        Wake
-                      </button>
-                    ) : null}
+                    <details className="relative">
+                      <summary className="flex h-7 cursor-pointer list-none items-center rounded-md px-2 text-xs text-primary-600 hover:bg-primary-100 hover:text-primary-950">
+                        More
+                      </summary>
+                      <div className="absolute right-0 bottom-8 z-20 flex w-28 flex-col rounded-md border border-primary-200 bg-surface p-1 shadow-md">
+                        <button
+                          type="button"
+                          data-testid="webclaw-reject-button"
+                          disabled={
+                            !DECISION_ALLOWED.reject.includes(
+                              selectedItem.status,
+                            )
+                          }
+                          onClick={() =>
+                            void decideItem(selectedItem.id, 'reject')
+                          }
+                          className="rounded px-2 py-1 text-left text-xs text-primary-800 hover:bg-primary-100 disabled:opacity-35"
+                        >
+                          Reject
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="webclaw-snooze-button"
+                          disabled={
+                            !DECISION_ALLOWED.snooze.includes(
+                              selectedItem.status,
+                            )
+                          }
+                          onClick={() =>
+                            void decideItem(selectedItem.id, 'snooze')
+                          }
+                          className="rounded px-2 py-1 text-left text-xs text-primary-800 hover:bg-primary-100 disabled:opacity-35"
+                        >
+                          Snooze
+                        </button>
+                        {selectedItem.status === 'snoozed' ||
+                        selectedItem.status === 'failed' ? (
+                          <button
+                            type="button"
+                            data-testid="webclaw-wake-button"
+                            onClick={() => void wakeItem(selectedItem.id)}
+                            className="rounded px-2 py-1 text-left text-xs font-medium text-primary-900 hover:bg-primary-100"
+                          >
+                            Wake
+                          </button>
+                        ) : null}
+                      </div>
+                    </details>
                   </div>
                 </>
               ) : (
@@ -681,11 +697,43 @@ export function AutoplanInspector({
           </div>
         ) : null}
 
-        {tab === 'agents' ? (
-          <div
-            data-testid="webclaw-agents-list"
-            className="flex-1 overflow-y-auto divide-y divide-primary-200"
-          >
+        {tab === 'agents' || tab === 'runs' ? (
+          <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
+            <div className="flex items-center justify-between border-b border-primary-200 px-3 py-1.5">
+              <div className="flex rounded-md bg-primary-100 p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setTab('agents')}
+                  className={cn(
+                    'rounded px-2 py-0.5 font-medium transition-colors',
+                    tab === 'agents'
+                      ? 'bg-surface text-primary-950 shadow-2xs'
+                      : 'text-primary-600 hover:text-primary-900',
+                  )}
+                >
+                  Services
+                </button>
+                <button
+                  type="button"
+                  data-testid="inspector-tab-runs"
+                  onClick={() => setTab('runs')}
+                  className={cn(
+                    'rounded px-2 py-0.5 font-medium transition-colors tabular-nums',
+                    tab === 'runs'
+                      ? 'bg-surface text-primary-950 shadow-2xs'
+                      : 'text-primary-600 hover:text-primary-900',
+                  )}
+                >
+                  {runs.length > 0 ? `Runs (${runs.length})` : 'Runs'}
+                </button>
+              </div>
+            </div>
+
+            {tab === 'agents' ? (
+              <div
+                data-testid="webclaw-agents-list"
+                className="flex-1 overflow-y-auto divide-y divide-primary-200"
+              >
             {services.map((svc) => (
               <div
                 key={svc.service}
@@ -762,55 +810,55 @@ export function AutoplanInspector({
                 ) : null}
               </div>
             ))}
-          </div>
-        ) : null}
-
-        {tab === 'runs' ? (
-          <div
-            data-testid="webclaw-runs-list"
-            className="flex-1 overflow-y-auto divide-y divide-primary-200"
-          >
-            {runs.length === 0 ? (
-              <div className="p-4 text-primary-500">No runs yet.</div>
+              </div>
             ) : (
-              runs.map((run) => (
-                <div
-                  key={run.id}
-                  data-testid={`webclaw-run-${run.id}`}
-                  className="p-3 space-y-1"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-primary-950">
-                      {run.service}
-                      {run.role ? ` · ${run.role}` : ''}
-                    </span>
-                    <span
-                      data-testid={`webclaw-run-state-${run.id}`}
-                      className="text-[11px] text-primary-600 tabular-nums"
+              <div
+                data-testid="webclaw-runs-list"
+                className="flex-1 overflow-y-auto divide-y divide-primary-200"
+              >
+                {runs.length === 0 ? (
+                  <div className="p-4 text-primary-500">No runs yet.</div>
+                ) : (
+                  runs.map((run) => (
+                    <div
+                      key={run.id}
+                      data-testid={`webclaw-run-${run.id}`}
+                      className="p-3 space-y-1"
                     >
-                      {run.state}
-                    </span>
-                  </div>
-                  <div className="truncate text-xs text-primary-600">
-                    {run.prompt}
-                  </div>
-                  {run.response_text ? (
-                    <pre className="max-h-20 overflow-auto rounded bg-primary-100 p-2 font-mono text-[11px] text-primary-800 whitespace-pre-wrap">
-                      {run.response_text}
-                    </pre>
-                  ) : null}
-                  {run.state === 'running' ? (
-                    <button
-                      type="button"
-                      data-testid={`webclaw-stop-run-${run.id}`}
-                      onClick={() => void stopRun(run.id)}
-                      className="rounded border border-red-500/50 px-2 py-0.5 text-xs text-red-500"
-                    >
-                      Stop
-                    </button>
-                  ) : null}
-                </div>
-              ))
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-primary-950">
+                          {run.service}
+                          {run.role ? ` · ${run.role}` : ''}
+                        </span>
+                        <span
+                          data-testid={`webclaw-run-state-${run.id}`}
+                          className="text-[11px] text-primary-600 tabular-nums"
+                        >
+                          {run.state}
+                        </span>
+                      </div>
+                      <div className="truncate text-xs text-primary-600">
+                        {run.prompt}
+                      </div>
+                      {run.response_text ? (
+                        <pre className="max-h-20 overflow-auto rounded bg-primary-100 p-2 font-mono text-[11px] text-primary-800 whitespace-pre-wrap">
+                          {run.response_text}
+                        </pre>
+                      ) : null}
+                      {run.state === 'running' ? (
+                        <button
+                          type="button"
+                          data-testid={`webclaw-stop-run-${run.id}`}
+                          onClick={() => void stopRun(run.id)}
+                          className="rounded border border-red-500/50 px-2 py-0.5 text-xs text-red-500"
+                        >
+                          Stop
+                        </button>
+                      ) : null}
+                    </div>
+                  ))
+                )}
+              </div>
             )}
           </div>
         ) : null}

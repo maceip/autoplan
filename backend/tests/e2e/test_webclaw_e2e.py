@@ -99,7 +99,7 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
     # Verify routing controls live INSIDE the chat composer input box
     composer_box = page.locator('[data-testid="composer-mode-toggle"]')
     expect(composer_box).to_be_visible()
-    expect(page.locator('[data-testid="composer-project-pill"]')).to_be_visible()
+    expect(page.locator('[data-testid="header-active-project"]')).to_be_visible()
     expect(page.locator('[data-testid="agent-service-selector"]')).to_be_visible()
 
     # Verify 'Start Demo' is in secondary sidebar footer (not 'Simple Task')
@@ -159,9 +159,6 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
                 ).click()
 
             expect(page.locator('[data-testid="header-active-project"]')).to_have_text(
-                proj_name, timeout=15000
-            )
-            expect(page.locator('[data-testid="composer-project-pill"]')).to_contain_text(
                 proj_name, timeout=15000
             )
         finally:
@@ -311,6 +308,7 @@ def test_webclaw_live_start_demo_through_chief_approval(page: Page):
     run_id = run_payload["id"]
     workspace_dir = Path(run_payload["cwd"])
 
+    page.locator('[data-testid="inspector-tab-agents"]').click()
     page.locator('[data-testid="inspector-tab-runs"]').click()
     run_state = page.locator(f'[data-testid="webclaw-run-state-{run_id}"]')
     expect(run_state).to_have_text("succeeded", timeout=90000)

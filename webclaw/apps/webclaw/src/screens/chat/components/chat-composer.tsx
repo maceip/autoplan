@@ -46,7 +46,7 @@ function ChatComposerComponent({
   onSelectService,
   sessionMode = 'single',
   onSelectMode,
-  activeProjectName = '',
+  activeProjectName: _activeProjectName = '',
 }: ChatComposerProps) {
   const [attachments, setAttachments] = useState<Array<AttachmentFile>>([])
   const promptRef = useRef<HTMLTextAreaElement | null>(null)
@@ -234,15 +234,6 @@ function ChatComposerComponent({
                     Team
                   </button>
                 </div>
-              ) : null}
-
-              {activeProjectName ? (
-                <span
-                  data-testid="composer-project-pill"
-                  className="hidden md:inline truncate text-[11px] text-primary-500"
-                >
-                  {activeProjectName}
-                </span>
               ) : null}
             </div>
 

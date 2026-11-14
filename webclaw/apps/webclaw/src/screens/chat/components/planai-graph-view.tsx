@@ -243,10 +243,7 @@ export function PlanAIGraphView({
     : TEAMWORK_BLUEPRINT_NODES
 
   const selectedNode = useMemo(
-    () =>
-      displayNodes.find((n) => n.id === selectedNodeId) ??
-      displayNodes[0] ??
-      null,
+    () => displayNodes.find((n) => n.id === selectedNodeId) ?? null,
     [displayNodes, selectedNodeId],
   )
 
@@ -260,7 +257,7 @@ export function PlanAIGraphView({
       data-testid="planai-graph-view"
       className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-surface text-xs text-primary-900"
     >
-      {/* Single thin 40px action bar — zero stacked toolbars */}
+      {/* Single thin 40px action bar — max 2 adjacent labels per primary label */}
       <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-primary-200 px-3.5">
         <div className="flex min-w-0 items-center gap-2">
           <select
@@ -268,7 +265,7 @@ export function PlanAIGraphView({
             data-testid="planai-workflow-selector"
             value={activeWorkflow?.id || ''}
             onChange={(e) => setSelectedWorkflowId(e.target.value)}
-            className="h-7 max-w-[300px] truncate rounded-md border border-primary-200 bg-primary-100 px-2 text-xs font-medium text-primary-950 outline-none"
+            className="h-7 max-w-[280px] truncate rounded-md border border-primary-200 bg-primary-100 px-2 text-xs font-medium text-primary-950 outline-none"
           >
             {workflows.length === 0 ? (
               <option value="">Default team pipeline</option>
@@ -280,9 +277,25 @@ export function PlanAIGraphView({
               ))
             )}
           </select>
+
+          {!compact ? (
+            <a
+              href={
+                activeWorkflow?.id
+                  ? `/planai-editor?workflow_id=${encodeURIComponent(activeWorkflow.id)}`
+                  : '/planai-editor'
+              }
+              target="_blank"
+              rel="noreferrer"
+              data-testid="open-svelteflow-editor-link"
+              className="shrink-0 rounded-md px-2 py-1 text-xs text-primary-600 hover:bg-primary-100 hover:text-primary-950"
+            >
+              Visual editor ↗
+            </a>
+          ) : null}
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center">
           <div className="flex rounded-md bg-primary-100 p-0.5">
             {(['dag', 'provenance', 'python'] as const).map((mode) => (
               <button
@@ -305,22 +318,6 @@ export function PlanAIGraphView({
               </button>
             ))}
           </div>
-
-          {!compact ? (
-            <a
-              href={
-                activeWorkflow?.id
-                  ? `/planai-editor?workflow_id=${encodeURIComponent(activeWorkflow.id)}`
-                  : '/planai-editor'
-              }
-              target="_blank"
-              rel="noreferrer"
-              data-testid="open-svelteflow-editor-link"
-              className="rounded-md px-2 py-1 text-xs text-primary-600 hover:bg-primary-100 hover:text-primary-950"
-            >
-              Visual editor ↗
-            </a>
-          ) : null}
         </div>
       </div>
 
