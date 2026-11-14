@@ -726,12 +726,41 @@
           }
           editorFrame.classList.add('hidden');
           workbenchFrame.classList.remove('hidden');
-          const target = `${webclawUrl}/new?view=${encodeURIComponent(currentMode)}`;
-          if (forceReload || workbenchFrame.dataset.mode !== currentMode) {
+          const target = `${webclawUrl}/chat/new?view=${encodeURIComponent(currentMode)}`;
+          if (forceReload || !workbenchFrame.src) {
             workbenchFrame.dataset.mode = currentMode;
             workbenchFrame.src = target;
+          } else {
+            workbenchFrame.dataset.mode = currentMode;
+            try {
+              if (workbenchFrame.contentWindow) {
+                workbenchFrame.contentWindow.postMessage(
+                  { type: 'nucleus:set-view', view: currentMode },
+                  '*'
+                );
+              }
+            } catch {
+              workbenchFrame.src = target;
+            }
           }
         }
+
+        workbenchFrame.addEventListener('load', () => {
+          if (
+            currentMode === 'workbench' ||
+            currentMode === 'graph' ||
+            currentMode === 'split'
+          ) {
+            try {
+              workbenchFrame.contentWindow?.postMessage(
+                { type: 'nucleus:set-view', view: currentMode },
+                '*'
+              );
+            } catch {
+              // ignore cross-origin load timing
+            }
+          }
+        });
 
         document.querySelectorAll('.mode-btn').forEach((btn) => {
           btn.addEventListener('click', () => {
@@ -804,6 +833,14 @@
                 `;
                 btn.addEventListener('click', () => {
                   activeProjectId = proj.id;
+                  try {
+                    workbenchFrame.contentWindow?.postMessage(
+                      { type: 'nucleus:select-project', projectId: proj.id },
+                      '*'
+                    );
+                  } catch {
+                    // ignore frame timing
+                  }
                   loadProjectsAndBrain();
                 });
                 listEl.appendChild(btn);

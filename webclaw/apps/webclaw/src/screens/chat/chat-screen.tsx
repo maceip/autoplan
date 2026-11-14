@@ -281,6 +281,40 @@ export function ChatScreen({
   }, [projectsQuery])
 
   useEffect(() => {
+    const param = new URLSearchParams(window.location.search).get('view')
+    if (param === 'workbench' || param === 'graph' || param === 'split') {
+      setChatUiState(queryClient, (s) => ({ ...s, workspaceView: param }))
+    }
+    const onNucleusMessage = (ev: MessageEvent) => {
+      const data = ev.data as {
+        type?: string
+        view?: string
+        projectId?: string
+      } | null
+      if (!data || typeof data !== 'object') return
+      if (
+        data.type === 'nucleus:set-view' &&
+        (data.view === 'workbench' ||
+          data.view === 'graph' ||
+          data.view === 'split')
+      ) {
+        const nextView = data.view
+        setChatUiState(queryClient, (s) => ({ ...s, workspaceView: nextView }))
+      } else if (
+        data.type === 'nucleus:select-project' &&
+        typeof data.projectId === 'string' &&
+        data.projectId.trim().length > 0
+      ) {
+        setNewChatProjectId(data.projectId.trim())
+      }
+    }
+    window.addEventListener('message', onNucleusMessage)
+    return () => {
+      window.removeEventListener('message', onNucleusMessage)
+    }
+  }, [queryClient])
+
+  useEffect(() => {
     const onLiveEvent = () => {
       void projectsQuery.refetch()
       void queueStatsQuery.refetch()
