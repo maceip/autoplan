@@ -33,9 +33,16 @@ app.commandLine.appendSwitch(
   'AIPromptAPI,AIPromptAPIMultimodalInput'
 );
 
-const BACKEND_URL = (
-  process.env.NUCLEUS_BACKEND_URL || 'http://127.0.0.1:5051'
-).replace(/\/+$/, '');
+const EXPLICIT_BACKEND_URL = (process.env.NUCLEUS_BACKEND_URL || '').replace(
+  /\/+$/,
+  ''
+);
+const BACKEND_CANDIDATES = [
+  EXPLICIT_BACKEND_URL,
+  'http://127.0.0.1:5051',
+  'http://100.80.211.36:5051',
+].filter(Boolean);
+let resolvedBackendUrl = BACKEND_CANDIDATES[0] || 'http://127.0.0.1:5051';
 const MLX_PORT = Number(process.env.AUTOPLAN_MLX_PORT || 18089);
 const MLX_MODEL =
   process.env.AUTOPLAN_MLX_MODEL || 'mlx-community/Qwen3-4B-Instruct-2507-4bit';
@@ -148,7 +155,22 @@ function resolveRepoRoot() {
   return '';
 }
 
+async function detectBackendUrl() {
+  if (EXPLICIT_BACKEND_URL) {
+    resolvedBackendUrl = EXPLICIT_BACKEND_URL;
+    return resolvedBackendUrl;
+  }
+  for (const candidate of BACKEND_CANDIDATES) {
+    if (await probeHttpOk(`${candidate}/api/projects`, 1200)) {
+      resolvedBackendUrl = candidate;
+      return resolvedBackendUrl;
+    }
+  }
+  return resolvedBackendUrl;
+}
+
 async function ensureLocalWebclawServer() {
+  await detectBackendUrl();
   if (resolvedWebclawUrl) {
     return resolvedWebclawUrl;
   }
@@ -178,7 +200,7 @@ async function ensureLocalWebclawServer() {
           stdio: 'ignore',
           env: {
             ...process.env,
-            AUTOPLAN_BACKEND_URL: BACKEND_URL,
+            AUTOPLAN_BACKEND_URL: resolvedBackendUrl,
           },
         }
       );
@@ -277,19 +299,26 @@ ipcMain.handle('nucleus:get-runtime-info', () => ({
   v8Version: process.versions.v8,
   arch: process.arch,
   platform: process.platform,
-  backendUrl: BACKEND_URL,
+  backendUrl: resolvedBackendUrl,
   webclawUrl: resolvedWebclawUrl,
   mlxPort: MLX_PORT,
   mlxModel: MLX_MODEL,
 }));
 
 ipcMain.handle('nucleus:get-services-status', async () => {
+  await detectBackendUrl();
   const [backendOk, mlxOk, webclawOk] = await Promise.all([
-    probeHttpOk(`${BACKEND_URL}/api/projects`),
+    probeHttpOk(`${resolvedBackendUrl}/api/projects`),
     probeHttpOk(`http://127.0.0.1:${MLX_PORT}/v1/models`),
     resolvedWebclawUrl ? probeHttpOk(resolvedWebclawUrl) : Promise.resolve(false),
   ]);
-  return { backendOk, mlxOk, webclawOk, webclawUrl: resolvedWebclawUrl };
+  return {
+    backendOk,
+    mlxOk,
+    webclawOk,
+    backendUrl: resolvedBackendUrl,
+    webclawUrl: resolvedWebclawUrl,
+  };
 });
 
 ipcMain.handle('nucleus:ensure-local-services', async () => {

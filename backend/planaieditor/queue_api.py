@@ -169,7 +169,12 @@ def setup_queue(
     @app.after_request
     def add_localhost_cors(response: Response) -> Response:
         origin = request.headers.get("Origin", "")
-        if origin in _LOCALHOST_ORIGINS or origin.startswith("file://"):
+        if (
+            origin in _LOCALHOST_ORIGINS
+            or origin.startswith("file://")
+            or origin.startswith("http://127.0.0.1:")
+            or origin.startswith("http://localhost:")
+        ):
             response.headers["Access-Control-Allow-Origin"] = origin or "*"
             response.headers["Access-Control-Allow-Headers"] = (
                 "Content-Type, Authorization"
