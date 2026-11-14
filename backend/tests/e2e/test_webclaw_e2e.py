@@ -184,26 +184,57 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
                 "New session", timeout=10000
             )
 
-            # Empty session shows centered Single-mode 3-stage DAG + unique 'Start Demo' button
+            # Empty session shows centered IronCurtain Dagre state-machine SVG + unique 'Start Demo' button
             start_demo_btn = page.locator('[data-testid="start-demo-button"]')
             expect(start_demo_btn).to_have_count(1)
             expect(start_demo_btn).to_be_visible()
             expect(start_demo_btn).to_have_text("Start Demo")
             expect(
-                page.locator('[data-testid="planai-node-WorktreeRunner"]')
+                page.locator('[data-testid="planai-state-machine-svg"]')
             ).to_be_visible()
             expect(
-                page.locator('[data-testid="planai-node-VerificationGate"]')
+                page.locator(
+                    '[data-testid="planai-node-WorktreeRunner"][data-node-kind="agent"]'
+                )
             ).to_be_visible()
             expect(
-                page.locator('[data-testid="planai-node-ChiefReviewSink"]')
+                page.locator(
+                    '[data-testid="planai-node-VerificationGate"][data-node-kind="deterministic"]'
+                )
+            ).to_be_visible()
+            expect(
+                page.locator(
+                    '[data-testid="planai-node-ChiefReviewSink"][data-node-kind="human_gate"]'
+                )
+            ).to_be_visible()
+            expect(
+                page.locator(
+                    '[data-testid="planai-node-DoneTerminal"][data-node-kind="terminal"]'
+                )
+            ).to_be_visible()
+            expect(
+                page.locator(
+                    '[data-testid="planai-node-AbortedTerminal"][data-node-kind="terminal"]'
+                )
+            ).to_be_visible()
+            expect(
+                page.locator(
+                    '[data-testid="planai-edge-e_review_revision"][data-back-edge="true"]'
+                )
             ).to_be_visible()
             _maybe_screenshot(page, "ui_inline_dag_single.png")
 
-            # Toggle Single -> Team inside composer: 2D branching topology morphs inline
+            # Toggle Single -> Team inside composer: 2D Dagre branching topology morphs inline
             page.locator('[data-testid="mode-team-btn"]').click()
             expect(
-                page.locator('[data-testid="planai-node-LeadPlannerWorker"]')
+                page.locator(
+                    '[data-testid="planai-node-ContextHarvesterWorker"][data-node-kind="deterministic"]'
+                )
+            ).to_be_visible()
+            expect(
+                page.locator(
+                    '[data-testid="planai-node-LeadPlannerWorker"][data-node-kind="agent"]'
+                )
             ).to_be_visible()
             expect(
                 page.locator('[data-testid="planai-node-subagent_1"]')
@@ -212,7 +243,19 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
                 page.locator('[data-testid="planai-node-subagent_2"]')
             ).to_be_visible()
             expect(
-                page.locator('[data-testid="planai-node-TeamSynthesisJoiner"]')
+                page.locator(
+                    '[data-testid="planai-node-TeamSynthesisJoiner"][data-node-kind="deterministic"]'
+                )
+            ).to_be_visible()
+            expect(
+                page.locator(
+                    '[data-testid="planai-node-ChiefEscalationSink"][data-node-kind="human_gate"]'
+                )
+            ).to_be_visible()
+            expect(
+                page.locator(
+                    '[data-testid="planai-edge-e_sink_revision"][data-back-edge="true"]'
+                )
             ).to_be_visible()
             page.locator('[data-testid="planai-node-TeamSynthesisJoiner"]').click()
             expect(
@@ -265,12 +308,6 @@ def test_webclaw_composer_routing_multi_project_and_planai_views(page: Page):
     after_evo = _api_get("/api/evolution/status")
     assert int(after_evo["active_generation"]) >= before_gen + 1
     _maybe_screenshot(page, "web_brain_evolution_tab.png")
-
-    # 4. Verify SvelteFlow /planai-editor loads cleanly
-    page.goto(f"{WEBCLAW_URL}/planai-editor")
-    expect(page.locator('[data-testid="toolshelf-container"]')).to_be_visible(
-        timeout=20000
-    )
 
 
 def test_webclaw_agents_registry_and_observe_only_minimax(page: Page):
@@ -386,14 +423,68 @@ def test_webclaw_live_start_demo_through_chief_approval(page: Page):
         expect(
             page.locator('[data-testid="planai-node-state-VerificationGate"]')
         ).to_have_text("Done", timeout=15000)
+        expect(
+            page.locator('[data-testid="planai-node-state-ChiefReviewSink"]')
+        ).to_have_text("Gate", timeout=15000)
+
+        # Verify inline IronCurtain GateReviewPanel auto-opens below the Dagre SVG
+        gate_panel = page.locator('[data-testid="planai-gate-review-panel"]')
+        expect(gate_panel).to_be_visible(timeout=20000)
+        expect(page.locator('[data-testid="gate-diff-viewer"]')).to_contain_text(
+            "AUTOPLAN_DEMO_OK", timeout=15000
+        )
+        page.locator('[data-testid="gate-tab-checks"]').click()
+        expect(page.locator('[data-testid="gate-checks-body"]')).to_contain_text(
+            "Law-2 Reality Scan", timeout=10000
+        )
+        page.locator('[data-testid="gate-tab-diff"]').click()
+        _maybe_screenshot(page, "web_ironcurtain_gate_review_panel.png")
+
+        # Exercise bounded cyclic FORCE_REVISION directly from GateReviewPanel -> Round 2 (x2 badges)
+        page.locator('[data-testid="gate-revision-toggle"]').click()
+        rev_input = page.locator('[data-testid="gate-revision-input"]')
+        expect(rev_input).to_be_visible()
+        rev_input.fill(
+            "Append a second line 'REVISION_ROUND_2_OK' to task_result.txt while keeping AUTOPLAN_DEMO_OK."
+        )
+        with page.expect_response(
+            lambda r: "/gate" in r.url and r.request.method == "POST",
+            timeout=20000,
+        ) as rev_resp:
+            page.locator('[data-testid="gate-revision-submit"]').click()
+        assert rev_resp.value.ok, rev_resp.value.text()
+
+        # Wait for Round 2 to complete and pause at Human Gate with x2 visit badges
+        expect(
+            page.locator('[data-testid="planai-node-visits-WorktreeRunner"]')
+        ).to_contain_text("×2", timeout=90000)
+        expect(
+            page.locator('[data-testid="planai-node-visits-VerificationGate"]')
+        ).to_contain_text("×2", timeout=45000)
+        expect(
+            page.locator('[data-testid="planai-node-visits-ChiefReviewSink"]')
+        ).to_contain_text("×2", timeout=45000)
+        expect(
+            page.locator('[data-testid="planai-node-state-ChiefReviewSink"]')
+        ).to_have_text("Gate", timeout=30000)
+        expect(gate_panel).to_be_visible(timeout=20000)
+        _maybe_screenshot(page, "web_ironcurtain_cyclic_revision_x2.png")
         _maybe_screenshot(page, "ui_master_detail_review.png")
 
-        approve_btn = page.locator('[data-testid="webclaw-approve-button"]')
-        expect(approve_btn).to_be_enabled(timeout=10000)
-        approve_btn.click()
+        # Exercise live Approve & Merge directly inside GateReviewPanel -> DoneTerminal Done & branch landed!
+        gate_approve_btn = page.locator('[data-testid="gate-approve-button"]')
+        expect(gate_approve_btn).to_be_enabled(timeout=10000)
+        with page.expect_response(
+            lambda r: "/gate" in r.url and r.request.method == "POST",
+            timeout=30000,
+        ) as app_resp:
+            gate_approve_btn.click()
+        assert app_resp.value.ok, app_resp.value.text()
 
+        expect(
+            page.locator('[data-testid="planai-node-state-DoneTerminal"]')
+        ).to_have_text("Done", timeout=30000)
         expect(detail_status).to_have_text("landed", timeout=45000)
-        expect(approve_btn).to_be_disabled()
         landed_file = workspace_dir / "task_result.txt"
         assert landed_file.is_file()
         assert "AUTOPLAN_DEMO_OK" in landed_file.read_text()

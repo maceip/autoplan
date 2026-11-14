@@ -120,8 +120,14 @@ def test_nucleus_macos_shell_and_in_process_apple_foundation_models():
                 expect(
                     window.locator('[data-testid="nucleus-mode-prompt-api"]')
                 ).to_have_count(0)
+                expect(
+                    window.locator('[data-testid="nucleus-mode-editor"]')
+                ).to_have_count(0)
+                expect(
+                    window.locator('[data-testid="nucleus-editor-frame"]')
+                ).to_have_count(0)
 
-                # 1. Verify 3-Column Workbench frame loads with inline zero-click PlanAI 2D DAG
+                # 1. Verify unified 3-Column Workbench frame loads with IronCurtain Dagre state-machine SVG
                 wb_frame = window.frame_locator(
                     '[data-testid="nucleus-workbench-frame"]'
                 )
@@ -134,17 +140,32 @@ def test_nucleus_macos_shell_and_in_process_apple_foundation_models():
                 expect(
                     wb_frame.locator('[data-testid="planai-dag-canvas"]')
                 ).to_be_visible(timeout=25000)
+                expect(
+                    wb_frame.locator('[data-testid="planai-state-machine-svg"]')
+                ).to_be_visible(timeout=25000)
+                expect(
+                    wb_frame.locator(
+                        '[data-testid="planai-node-WorktreeRunner"][data-node-kind="agent"]'
+                    )
+                ).to_be_visible(timeout=20000)
+                expect(
+                    wb_frame.locator(
+                        '[data-testid="planai-node-VerificationGate"][data-node-kind="deterministic"]'
+                    )
+                ).to_be_visible(timeout=20000)
+                expect(
+                    wb_frame.locator(
+                        '[data-testid="planai-node-ChiefReviewSink"][data-node-kind="human_gate"]'
+                    )
+                ).to_be_visible(timeout=20000)
+                expect(
+                    wb_frame.locator(
+                        '[data-testid="planai-node-DoneTerminal"][data-node-kind="terminal"]'
+                    )
+                ).to_be_visible(timeout=20000)
                 _save_shot(window, "nucleus_macos_workbench_3col.png")
 
-                # 2. Switch Nucleus to Visual Editor mode and verify SvelteFlow loads
-                window.locator('[data-testid="nucleus-mode-editor"]').click()
-                ed_frame = window.frame_locator('[data-testid="nucleus-editor-frame"]')
-                expect(
-                    ed_frame.locator('[data-testid="toolshelf-container"]')
-                ).to_be_visible(timeout=25000)
-                _save_shot(window, "nucleus_macos_svelteflow_editor.png")
-
-                # 3. Verify backend `/api/llm/test-prompt` executes via Apple FoundationModels in-process
+                # 2. Verify backend `/api/llm/test-prompt` executes via Apple FoundationModels in-process
                 runtime_info = window.evaluate(
                     "() => window.nucleusDesktop.getRuntimeInfo()"
                 )
