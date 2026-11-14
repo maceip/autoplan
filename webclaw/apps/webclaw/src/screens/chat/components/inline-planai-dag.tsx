@@ -56,20 +56,23 @@ type PlanAIWorkflow = {
   created_at: number
 }
 
+type WorkflowQueueItemInfo = {
+  id: string
+  title: string
+  body: string
+  status: string
+  branch: string
+  target_branch: string
+  repo_path: string
+  test_command: string
+  result?: Record<string, unknown>
+}
+
 type WorkflowDetailPayload = {
   success: boolean
   workflow?: PlanAIWorkflow
-  queue_item?: {
-    id: string
-    title: string
-    body: string
-    status: string
-    branch: string
-    target_branch: string
-    repo_path: string
-    test_command: string
-    result?: Record<string, unknown>
-  } | null
+  item?: WorkflowQueueItemInfo | null
+  queue_item?: WorkflowQueueItemInfo | null
   runs?: Array<{
     id: string
     service: string
@@ -96,6 +99,32 @@ type WorkflowDetailPayload = {
   secret_scan?: {
     passed?: boolean
     redacted_hits_count?: number
+  }
+  policy_guardian?: {
+    allowed?: boolean
+    severity?: number
+    checks_run?: number
+    summary?: string
+    risk_signals?: Array<{
+      code: string
+      label: string
+      target?: string
+      reason?: string
+      severity?: number
+    }>
+  }
+  trajectory?: {
+    step_count?: number
+    board_messages?: Array<{
+      seq: number
+      author: string
+      kind: string
+      text: string
+    }>
+    spawn_decision?: {
+      routine?: string
+      count?: number
+    }
   }
   can_force_revision?: boolean
 }
@@ -159,7 +188,9 @@ function inferNodeKind(node: WorkflowNode): NodeKind {
     node.id === 'ContextHarvesterWorker' ||
     node.id === 'SubtaskFanOutWorker' ||
     node.id === 'TeamSynthesisJoiner' ||
-    node.id === 'TemplateIntegrityGateWorker'
+    node.id === 'PolicyGuardianGateWorker' ||
+    node.id === 'TemplateIntegrityGateWorker' ||
+    node.id === 'SkillAndMemoryAccumulatorWorker'
   ) {
     return 'deterministic'
   }
@@ -1080,12 +1111,14 @@ export function InlinePlanAIDag({
     </div>
   )
 
-  const qItem = detail?.queue_item || null
+  const qItem = detail?.item || detail?.queue_item || null
   const changedFiles = detail?.changed_files || []
   const diffText = detail?.diff_text || ''
   const testReport = detail?.test_report
   const realityScan = detail?.reality_scan
   const secretScan = detail?.secret_scan
+  const policyGuardian = detail?.policy_guardian
+  const trajectory = detail?.trajectory
   const isWaitingAtGate = activeWorkflow?.state === 'waiting_gate'
 
   const gateReviewPanel = showGateReviewPanel ? (
@@ -1210,6 +1243,22 @@ export function InlinePlanAIDag({
               {secretScan?.passed === false
                 ? `Blocked (${secretScan.redacted_hits_count || 1} credential patterns)`
                 : 'Clean (0 leaked tokens)'}
+            </div>
+            <div data-testid="gate-policy-guardian">
+              <span className="font-medium text-primary-950">
+                PolicyGuardian:{' '}
+              </span>
+              {policyGuardian?.allowed === false
+                ? `Denied · severity ${policyGuardian.severity ?? 0} (${(policyGuardian.risk_signals || []).map((r) => `${r.code}: ${r.label}`).join(', ') || 'policy violation'})`
+                : `Allowed · severity ${policyGuardian?.severity ?? 0} (${policyGuardian?.checks_run ?? 0} checks)`}
+            </div>
+            <div data-testid="gate-trajectory-summary">
+              <span className="font-medium text-primary-950">Trajectory: </span>
+              {`${trajectory?.step_count ?? 0} recorded steps${
+                trajectory?.board_messages?.length
+                  ? ` · ${trajectory.board_messages.length} swarm board posts`
+                  : ''
+              }`}
             </div>
           </div>
         ) : null}

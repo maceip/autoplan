@@ -117,7 +117,8 @@ export function useChatStream({
             parsed.event === 'run_updated' ||
             parsed.event === 'planai_workflow_updated' ||
             parsed.event === 'projects_updated' ||
-            parsed.event === 'evolution_rule_learned'
+            parsed.event === 'evolution_rule_learned' ||
+            parsed.event === 'evolution_memory_updated'
           ) {
             window.dispatchEvent(
               new CustomEvent('autoplan:event', { detail: parsed }),

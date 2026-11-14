@@ -88,11 +88,42 @@ type EvolutionRuleInfo = {
   evidence_count: number
 }
 
+type CascadeMemoryInfo = {
+  id: string
+  project_id: string
+  memory_key: string
+  content: string
+  prev_content: string
+  content_diff: string
+  action_type: string
+  trigger_type: string
+  source_ref: string
+  revision: number
+}
+
+type AccumulatedSkillInfo = {
+  id: string
+  project_id: string
+  name: string
+  description: string
+  skill_path: string
+  instructions_md: string
+  source_workflow_id: string
+  evidence_count: number
+}
+
 type EvolutionStatusPayload = {
   active_generation?: number
   rules?: Array<EvolutionRuleInfo>
   rules_count?: number
+  memories?: Array<CascadeMemoryInfo>
+  memories_count?: number
+  skills?: Array<AccumulatedSkillInfo>
+  skills_count?: number
+  skills_manifest_path?: string
 }
+
+type EvolutionSubTab = 'rules' | 'memories' | 'skills'
 
 export type InspectorTab = 'queue' | 'agents' | 'runs' | 'evolution'
 
@@ -164,9 +195,20 @@ export function AutoplanInspector({
   >({})
   const [evolutionStatus, setEvolutionStatus] =
     useState<EvolutionStatusPayload | null>(null)
+  const [evolutionSubTab, setEvolutionSubTab] =
+    useState<EvolutionSubTab>('rules')
   const [evolving, setEvolving] = useState(false)
   const [newRuleText, setNewRuleText] = useState('')
   const [addingRule, setAddingRule] = useState(false)
+  const [memoryKeyInput, setMemoryKeyInput] = useState('')
+  const [memoryContentInput, setMemoryContentInput] = useState('')
+  const [savingMemory, setSavingMemory] = useState(false)
+  const [expandedDiffIds, setExpandedDiffIds] = useState<
+    Record<string, boolean>
+  >({})
+  const [expandedSkillIds, setExpandedSkillIds] = useState<
+    Record<string, boolean>
+  >({})
   const [inspectorError, setInspectorError] = useState<string>('')
   const dragStartRef = useRef<{ x: number; w: number } | null>(null)
   const prevRunStatesRef = useRef<Record<string, string> | null>(null)
@@ -419,6 +461,61 @@ export function AutoplanInspector({
       setInspectorError(err instanceof Error ? err.message : String(err))
     } finally {
       setAddingRule(false)
+    }
+  }
+
+  async function handleSaveMemory(e: React.FormEvent) {
+    e.preventDefault()
+    const keyTrimmed = memoryKeyInput.trim()
+    const contentTrimmed = memoryContentInput.trim()
+    if (!keyTrimmed || !contentTrimmed) return
+    setSavingMemory(true)
+    setInspectorError('')
+    try {
+      const res = await fetch('/api/autoplan/evolution/memories', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          memory_key: keyTrimmed,
+          content: contentTrimmed,
+          project_id: activeProjectId || '*',
+          trigger_type: 'MANUAL',
+        }),
+      })
+      const payload = (await res.json()) as {
+        success?: boolean
+        error?: string
+      }
+      if (!res.ok || payload.success === false) {
+        throw new Error(payload.error || `Memory HTTP ${res.status}`)
+      }
+      setMemoryKeyInput('')
+      setMemoryContentInput('')
+      await refreshEvolution()
+    } catch (err) {
+      setInspectorError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSavingMemory(false)
+    }
+  }
+
+  async function handleDeleteMemory(memId: string) {
+    setInspectorError('')
+    try {
+      const res = await fetch(
+        `/api/autoplan/evolution/memories/${encodeURIComponent(memId)}`,
+        { method: 'DELETE' },
+      )
+      const payload = (await res.json()) as {
+        success?: boolean
+        error?: string
+      }
+      if (!res.ok || payload.success === false) {
+        throw new Error(payload.error || `Delete memory HTTP ${res.status}`)
+      }
+      await refreshEvolution()
+    } catch (err) {
+      setInspectorError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -867,11 +964,14 @@ export function AutoplanInspector({
         {tab === 'evolution' ? (
           <div
             data-testid="webclaw-evolution-panel"
-            className="flex-1 overflow-y-auto p-3 space-y-3"
+            className="flex flex-1 flex-col min-h-0 overflow-hidden"
           >
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-medium text-primary-950">
-                Project Guardrails
+            <div className="flex items-center justify-between gap-2 border-b border-primary-200 px-3 py-2">
+              <span
+                data-testid="evolution-active-gen"
+                className="font-medium text-primary-950 tabular-nums"
+              >
+                Gen v{evolutionStatus?.active_generation ?? 1}
               </span>
               <button
                 type="button"
@@ -884,38 +984,266 @@ export function AutoplanInspector({
               </button>
             </div>
 
-            <form
-              data-testid="inspector-add-rule-form"
-              onSubmit={(e) => void handleAddRule(e)}
-              className="flex gap-1.5"
-            >
-              <input
-                type="text"
-                data-testid="inspector-add-rule-input"
-                value={newRuleText}
-                onChange={(e) => setNewRuleText(e.target.value)}
-                placeholder="Add guardrail rule…"
-                className="h-7 min-w-0 flex-1 rounded-md border border-primary-200 bg-primary-100 px-2 text-xs text-primary-950 outline-none"
-              />
-              <button
-                type="submit"
-                disabled={addingRule || !newRuleText.trim()}
-                className="h-7 shrink-0 rounded-md bg-primary-900 px-2.5 text-xs font-medium text-surface disabled:opacity-40"
-              >
-                Add
-              </button>
-            </form>
+            <div className="border-b border-primary-200 px-3 py-1.5">
+              <div className="flex rounded-md bg-primary-100 p-0.5 text-xs">
+                {(
+                  [
+                    [
+                      'rules',
+                      'evolution-subtab-rules',
+                      `Guardrails (${evolutionStatus?.rules?.length ?? 0})`,
+                    ],
+                    [
+                      'memories',
+                      'evolution-subtab-memories',
+                      `Memories (${evolutionStatus?.memories?.length ?? 0})`,
+                    ],
+                    [
+                      'skills',
+                      'evolution-subtab-skills',
+                      `Skills (${evolutionStatus?.skills?.length ?? 0})`,
+                    ],
+                  ] as const
+                ).map(([subId, subTestId, subLabel]) => (
+                  <button
+                    key={subId}
+                    type="button"
+                    data-testid={subTestId}
+                    onClick={() => setEvolutionSubTab(subId)}
+                    className={cn(
+                      'flex-1 rounded px-2 py-0.5 font-medium transition-colors tabular-nums',
+                      evolutionSubTab === subId
+                        ? 'bg-surface text-primary-950 shadow-2xs'
+                        : 'text-primary-600 hover:text-primary-900',
+                    )}
+                  >
+                    {subLabel}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-            <div className="divide-y divide-primary-200">
-              {(evolutionStatus?.rules ?? []).map((rule) => (
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              {evolutionSubTab === 'rules' ? (
+                <>
+                  <form
+                    data-testid="inspector-add-rule-form"
+                    onSubmit={(e) => void handleAddRule(e)}
+                    className="flex gap-1.5"
+                  >
+                    <input
+                      type="text"
+                      data-testid="inspector-add-rule-input"
+                      value={newRuleText}
+                      onChange={(e) => setNewRuleText(e.target.value)}
+                      placeholder="Add guardrail rule…"
+                      className="h-7 min-w-0 flex-1 rounded-md border border-primary-200 bg-primary-100 px-2 text-xs text-primary-950 outline-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={addingRule || !newRuleText.trim()}
+                      className="h-7 shrink-0 rounded-md bg-primary-900 px-2.5 text-xs font-medium text-surface disabled:opacity-40"
+                    >
+                      Add
+                    </button>
+                  </form>
+
+                  <div className="divide-y divide-primary-200">
+                    {(evolutionStatus?.rules ?? []).map((rule) => (
+                      <div
+                        key={rule.id}
+                        data-testid={`evolution-rule-${rule.id}`}
+                        className="py-2 text-xs text-primary-800 text-pretty"
+                      >
+                        {rule.rule_text}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+
+              {evolutionSubTab === 'memories' ? (
+                <>
+                  <form
+                    data-testid="inspector-add-memory-form"
+                    onSubmit={(e) => void handleSaveMemory(e)}
+                    className="space-y-1.5"
+                  >
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        data-testid="inspector-memory-key-input"
+                        value={memoryKeyInput}
+                        onChange={(e) => setMemoryKeyInput(e.target.value)}
+                        placeholder="Memory key (e.g. build-notes)…"
+                        className="h-7 min-w-0 flex-1 rounded-md border border-primary-200 bg-primary-100 px-2 text-xs text-primary-950 outline-none"
+                      />
+                      <button
+                        type="submit"
+                        data-testid="inspector-memory-save-button"
+                        disabled={
+                          savingMemory ||
+                          !memoryKeyInput.trim() ||
+                          !memoryContentInput.trim()
+                        }
+                        className="h-7 shrink-0 rounded-md bg-primary-900 px-2.5 text-xs font-medium text-surface disabled:opacity-40"
+                      >
+                        Save
+                      </button>
+                    </div>
+                    <textarea
+                      rows={2}
+                      data-testid="inspector-memory-content-input"
+                      value={memoryContentInput}
+                      onChange={(e) => setMemoryContentInput(e.target.value)}
+                      placeholder="Persisted cascade memory markdown…"
+                      className="w-full rounded-md border border-primary-200 bg-primary-100 p-2 text-xs text-primary-950 outline-none resize-y"
+                    />
+                  </form>
+
+                  <div
+                    data-testid="evolution-memories-list"
+                    className="divide-y divide-primary-200"
+                  >
+                    {(evolutionStatus?.memories ?? []).length === 0 ? (
+                      <div className="py-4 text-center text-primary-500">
+                        No cascade memories recorded yet.
+                      </div>
+                    ) : (
+                      (evolutionStatus?.memories ?? []).map((mem) => {
+                        const showDiff = Boolean(expandedDiffIds[mem.id])
+                        return (
+                          <div
+                            key={mem.id}
+                            data-testid={`evolution-memory-${mem.id}`}
+                            className="py-2.5 space-y-1.5"
+                          >
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className="font-medium text-primary-950 truncate">
+                                {mem.memory_key}
+                              </span>
+                              <span className="shrink-0 text-[11px] text-primary-600 tabular-nums">
+                                {`${mem.trigger_type} · r${mem.revision}`}
+                              </span>
+                            </div>
+                            <pre className="whitespace-pre-wrap font-sans text-xs text-primary-800">
+                              {mem.content}
+                            </pre>
+                            <div className="flex items-center gap-2">
+                              {mem.content_diff ? (
+                                <button
+                                  type="button"
+                                  data-testid={`memory-diff-toggle-${mem.id}`}
+                                  onClick={() =>
+                                    setExpandedDiffIds((prev) => ({
+                                      ...prev,
+                                      [mem.id]: !prev[mem.id],
+                                    }))
+                                  }
+                                  className="rounded px-1.5 py-0.5 -ml-1.5 text-[11px] font-medium text-primary-600 hover:bg-primary-100 hover:text-primary-950"
+                                >
+                                  {showDiff ? 'Hide diff' : 'Diff'}
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                data-testid={`memory-edit-${mem.id}`}
+                                onClick={() => {
+                                  setMemoryKeyInput(mem.memory_key)
+                                  setMemoryContentInput(mem.content)
+                                }}
+                                className="rounded px-1.5 py-0.5 text-[11px] text-primary-600 hover:bg-primary-100 hover:text-primary-950"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                data-testid={`memory-delete-${mem.id}`}
+                                onClick={() => void handleDeleteMemory(mem.id)}
+                                className="rounded px-1.5 py-0.5 text-[11px] text-red-500 hover:bg-red-500/10"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                            {showDiff && mem.content_diff ? (
+                              <pre
+                                data-testid={`memory-diff-${mem.id}`}
+                                className="max-h-40 overflow-auto rounded bg-primary-100 p-2 font-mono text-[11px] text-primary-800 whitespace-pre-wrap"
+                              >
+                                {mem.content_diff}
+                              </pre>
+                            ) : null}
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                </>
+              ) : null}
+
+              {evolutionSubTab === 'skills' ? (
                 <div
-                  key={rule.id}
-                  data-testid={`evolution-rule-${rule.id}`}
-                  className="py-2 text-xs text-primary-800 text-pretty"
+                  data-testid="evolution-skills-list"
+                  className="divide-y divide-primary-200"
                 >
-                  {rule.rule_text}
+                  {(evolutionStatus?.skills ?? []).length === 0 ? (
+                    <div className="py-4 text-center text-primary-500">
+                      No accumulated skills distilled yet.
+                    </div>
+                  ) : (
+                    (evolutionStatus?.skills ?? []).map((skill) => {
+                      const showMd = Boolean(expandedSkillIds[skill.id])
+                      return (
+                        <div
+                          key={skill.id}
+                          data-testid={`evolution-skill-${skill.id}`}
+                          className="py-2.5 space-y-1.5"
+                        >
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className="font-medium text-primary-950 truncate">
+                              {skill.name}
+                            </span>
+                            <span className="shrink-0 text-[11px] text-primary-600 tabular-nums">
+                              {`evidence ${skill.evidence_count}`}
+                            </span>
+                          </div>
+                          <p className="text-xs text-primary-800 text-pretty">
+                            {skill.description}
+                          </p>
+                          <div className="truncate font-mono text-[11px] text-primary-500">
+                            {skill.skill_path}
+                          </div>
+                          {skill.instructions_md ? (
+                            <div>
+                              <button
+                                type="button"
+                                data-testid={`skill-md-toggle-${skill.id}`}
+                                onClick={() =>
+                                  setExpandedSkillIds((prev) => ({
+                                    ...prev,
+                                    [skill.id]: !prev[skill.id],
+                                  }))
+                                }
+                                className="rounded px-1.5 py-0.5 -ml-1.5 text-[11px] font-medium text-primary-600 hover:bg-primary-100 hover:text-primary-950"
+                              >
+                                {showMd ? 'Hide checklist' : 'Checklist'}
+                              </button>
+                              {showMd ? (
+                                <pre
+                                  data-testid={`skill-md-${skill.id}`}
+                                  className="mt-1.5 max-h-40 overflow-auto rounded bg-primary-100 p-2 font-mono text-[11px] text-primary-800 whitespace-pre-wrap"
+                                >
+                                  {skill.instructions_md}
+                                </pre>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      )
+                    })
+                  )}
                 </div>
-              ))}
+              ) : null}
             </div>
           </div>
         ) : null}
