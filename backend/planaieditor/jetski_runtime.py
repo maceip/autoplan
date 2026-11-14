@@ -1909,16 +1909,16 @@ def compute_content_diff(
     prev_content: str, new_content: str, memory_key: str = "memory"
 ) -> str:
     """Compute unified `CONTENT_DIFF` matching `CASCADE_MEMORY_ACTION_TYPE_UPDATE`."""
-    prev_lines = (prev_content or "").splitlines(keepends=True)
-    new_lines = (new_content or "").splitlines(keepends=True)
+    prev_lines = (prev_content or "").splitlines()
+    new_lines = (new_content or "").splitlines()
     diff = difflib.unified_diff(
         prev_lines,
         new_lines,
         fromfile=f"a/{memory_key}",
         tofile=f"b/{memory_key}",
-        lineterm="\n",
+        lineterm="",
     )
-    return "".join(diff).strip()
+    return "\n".join(diff).strip()
 
 
 def slugify_skill_name(raw_name: str) -> str:
