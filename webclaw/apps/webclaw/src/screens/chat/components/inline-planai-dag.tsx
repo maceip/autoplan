@@ -174,7 +174,7 @@ function StageCard({
 }
 
 export function InlinePlanAIDag({
-  activeProjectId,
+  activeProjectId: _activeProjectId,
   activeProjectName = '',
   sessionKey = '',
   sessionMode,
@@ -190,10 +190,7 @@ export function InlinePlanAIDag({
 
   const refreshWorkflows = useCallback(async () => {
     try {
-      const qs = activeProjectId
-        ? `?project_id=${encodeURIComponent(activeProjectId)}&limit=20`
-        : '?limit=20'
-      const res = await fetch(`/api/autoplan/planai/workflows${qs}`)
+      const res = await fetch('/api/autoplan/planai/workflows?limit=30')
       if (!res.ok) return
       const data = (await res.json()) as {
         workflows?: Array<PlanAIWorkflow>
@@ -202,7 +199,7 @@ export function InlinePlanAIDag({
     } catch {
       // ignore transient poll errors
     }
-  }, [activeProjectId])
+  }, [])
 
   const activeWorkflow = useMemo(() => {
     if (!sessionKey || sessionKey === 'new') return null

@@ -268,10 +268,10 @@ export function MobileAntigravityWorkbench({
   const [sessionDraft, setSessionDraft] = useState('')
   const [attachments, setAttachments] = useState<Array<AttachmentFile>>([])
 
-  // Live AutoPlan detail sheet state (real backend Queue, Runs, PlanAI Graph, Scanned Sessions)
-  const [detailTab, setDetailTab] = useState<
-    'overview' | 'queue' | 'runs' | 'graph'
-  >('overview')
+  // Live AutoPlan detail sheet state (real backend Queue, Runs, Scanned Sessions)
+  const [detailTab, setDetailTab] = useState<'overview' | 'queue' | 'runs'>(
+    'overview',
+  )
   const [openSection, setOpenSection] = useState<
     'queue' | 'runs' | 'agents' | 'observed' | null
   >(null)
@@ -1623,21 +1623,6 @@ export function MobileAntigravityWorkbench({
                     />
                   </svg>
                 </button>
-
-                <button
-                  type="button"
-                  data-testid="mobile-detail-tab-graph"
-                  aria-label="Plan"
-                  onClick={() => setDetailTab('graph')}
-                  className={cn(
-                    'flex h-8 items-center gap-1 rounded-lg border px-2 text-xs font-medium transition-colors',
-                    detailTab === 'graph'
-                      ? 'border-[#27535e] bg-[#1a414a] text-[#e6f0f2]'
-                      : 'border-transparent text-[#6b8184] active:bg-[#0c3540]',
-                  )}
-                >
-                  <span>Plan</span>
-                </button>
               </div>
 
               <span className="truncate max-w-[120px] font-mono text-[11px] text-[#586e75]">
@@ -1651,19 +1636,7 @@ export function MobileAntigravityWorkbench({
               </div>
             ) : null}
 
-            {detailTab === 'graph' ? (
-              <div className="flex-1 min-h-0 overflow-y-auto p-3">
-                <InlinePlanAIDag
-                  empty
-                  activeProjectId={activeProjectId}
-                  activeProjectName={activeProject?.name || ''}
-                  sessionKey={activeCanonicalKey}
-                  sessionMode={sessionMode}
-                  services={services}
-                />
-              </div>
-            ) : (
-              <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
                 {detailTab === 'overview' ? (
                   <div className="flex flex-col gap-3">
                     <div>
@@ -2068,8 +2041,7 @@ export function MobileAntigravityWorkbench({
                     ) : null}
                   </div>
                 ) : null}
-              </div>
-            )}
+            </div>
           </div>
         </div>
       ) : null}

@@ -1548,14 +1548,20 @@ class AgentRunManager:
     ) -> Dict[str, Any]:
         chosen_service = (service or "").strip() or self.default_dispatch_service()
         resolved_session_key = (webclaw_session_key or "").strip()
+        demo_project_id = ""
         if resolved_session_key and resolved_session_key != "new":
             sess = self.store.get_chat_session(resolved_session_key)
             if sess is None and resolved_session_key == "main":
                 sess = self.store.get_or_create_main_chat_session(default_service=chosen_service)
             if sess is not None:
                 resolved_session_key = sess["key"]
+                demo_project_id = str(sess.get("projectId") or "")
         elif resolved_session_key == "new":
             resolved_session_key = ""
+        if not demo_project_id:
+            projects = self.store.list_projects()
+            if projects:
+                demo_project_id = str(projects[0]["id"])
 
         prompt = custom_prompt.strip() or (
             f"Create the file '{{WORKSPACE_DIR}}/task_result.txt' inside workspace directory '{{WORKSPACE_DIR}}' "
@@ -1573,6 +1579,7 @@ class AgentRunManager:
             service=chosen_service,
             prompt=prompt,
             webclaw_session_key=resolved_session_key,
+            project_id=demo_project_id,
             submit_to_queue=True,
             queue_title=f"[{chosen_service}] {SIMPLE_DEMO_TASK_TITLE}",
             is_demo_repo=True,

@@ -380,6 +380,12 @@ def test_webclaw_live_start_demo_through_chief_approval(page: Page):
         expect(page.locator('[data-testid="webclaw-detail-test"]')).to_contain_text(
             "Test exit 0 (passed)", timeout=15000
         )
+        expect(
+            page.locator('[data-testid="planai-node-state-WorktreeRunner"]')
+        ).to_have_text("Done", timeout=15000)
+        expect(
+            page.locator('[data-testid="planai-node-state-VerificationGate"]')
+        ).to_have_text("Done", timeout=15000)
         _maybe_screenshot(page, "ui_master_detail_review.png")
 
         approve_btn = page.locator('[data-testid="webclaw-approve-button"]')
@@ -424,7 +430,7 @@ def test_webclaw_mobile_antigravity_projects_and_planai_sheet(page: Page):
     assert scroll_width <= 390, f"Expected zero mobile horizontal overflow, got {scroll_width}"
     _maybe_screenshot(page, "web_mobile_projects_stage1.png")
 
-    # Stage 2: Open session -> Full-screen Session view with in-composer mode + agent picker
+    # Stage 2: Open session -> Full-screen Session view with inline PlanAI DAG + in-composer routing
     first_session = page.locator('[data-testid^="mobile-session-row-"]').first
     expect(first_session).to_be_visible(timeout=10000)
     first_session.click()
@@ -432,18 +438,17 @@ def test_webclaw_mobile_antigravity_projects_and_planai_sheet(page: Page):
     session_screen = page.locator('[data-testid="mobile-session-screen"]')
     expect(session_screen).to_be_visible(timeout=15000)
     expect(page.locator('[data-testid="mobile-session-mode-toggle"]')).to_be_visible()
+    expect(page.locator('[data-testid="planai-dag-canvas"]')).to_be_visible(
+        timeout=15000
+    )
+    _maybe_screenshot(page, "web_mobile_planai_sheet.png")
 
-    # Stage 3: Tap top 'footer' icon -> Detail panel sheet opens with PlanAI DAG tab
+    # Stage 3: Tap top 'footer' icon -> 3-tab Detail panel sheet opens & closes cleanly
     footer_btn = page.locator('[data-testid="mobile-footer-detail-button"]')
     footer_btn.click()
     detail_sheet = page.locator('[data-testid="mobile-detail-sheet"]')
     expect(detail_sheet).to_be_visible(timeout=10000)
-
-    page.locator('[data-testid="mobile-detail-tab-graph"]').click()
-    expect(page.locator('[data-testid="planai-graph-view"]')).to_be_visible(
-        timeout=15000
-    )
-    _maybe_screenshot(page, "web_mobile_planai_sheet.png")
+    expect(page.locator('[data-testid="mobile-detail-tab-graph"]')).to_have_count(0)
 
     footer_btn.click()
     expect(detail_sheet).to_have_count(0)
