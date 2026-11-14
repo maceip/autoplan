@@ -33,6 +33,9 @@ type AgentRun = {
   branch: string
   session_id: string
   queue_item_id: string
+  project_id?: string
+  workflow_id?: string
+  role?: string
   state: 'queued' | 'running' | 'succeeded' | 'failed' | 'stopped'
   exit_code: number | null
   response_text: string
@@ -48,6 +51,8 @@ type AgentRun = {
 
 type QueueItem = {
   id: string
+  project_id?: string
+  workflow_id?: string
   source_agent: string
   kind: string
   title: string
@@ -72,24 +77,99 @@ type QueueItem = {
   created_at: number
 }
 
+type PromptVersionInfo = {
+  id: string
+  worker_role: string
+  generation: number
+  prompt_template: string
+  rationale: string
+  pass_count: number
+  fail_count: number
+  active: boolean
+}
+
+type EvolutionRuleInfo = {
+  id: string
+  category: string
+  rule_text: string
+  source_type: string
+  source_ref: string
+  project_id: string
+  evidence_count: number
+}
+
+type ServiceFitnessEntry = {
+  service?: string
+  total_runs: number
+  succeeded_runs: number
+  failed_runs: number
+  pass_rate: number | null
+}
+
+type EvolutionStatusPayload = {
+  bootstrap?: {
+    corpus_loaded?: boolean
+    corpus_total_prompts?: number
+    corpus_total_sessions?: number
+  }
+  active_generation?: number
+  active_prompts?: {
+    lead_planner?: PromptVersionInfo | null
+    chief_triage?: PromptVersionInfo | null
+  }
+  rules?: Array<EvolutionRuleInfo>
+  rules_count?: number
+  service_fitness?: Record<string, ServiceFitnessEntry> | Array<ServiceFitnessEntry>
+}
+
+type LlmDiagnosticsPayload = {
+  configured?: boolean
+  status_label?: string
+  last_provider_used?: string
+  total_hybrid_calls?: number
+  chromium_prompt_bridge?: {
+    connected?: boolean
+    total_bridged_calls?: number
+    last_call_latency_ms?: number | null
+    active_client?: {
+      app_name?: string
+      chrome_version?: string
+      local_backend_model?: string
+    } | null
+  }
+  gemini_nano_investigation?: {
+    weights_present?: boolean
+    summary?: string
+  }
+  local_mlx?: {
+    available?: boolean
+    listening?: boolean
+    model_id?: string
+  }
+}
+
+export type InspectorTab = 'queue' | 'agents' | 'runs' | 'evolution'
+
 type AutoplanInspectorProps = {
   services: Array<AgentServiceInfo>
   chiefLlmStatus: string
+  activeProjectId?: string
   onRunSimpleTask: (service: string) => Promise<void>
   busyDemoService: string | null
   onRefreshAgents: () => void
   onRefreshHistory?: () => void
   onRunFinished?: (runId: string) => void
-  activeTab?: 'queue' | 'agents' | 'runs'
-  onTabChange?: (tab: 'queue' | 'agents' | 'runs') => void
+  activeTab?: InspectorTab
+  onTabChange?: (tab: InspectorTab) => void
 }
 
-const DEFAULT_WIDTH = 380
-const MIN_WIDTH = 280
+const DEFAULT_WIDTH = 392
+const MIN_WIDTH = 290
 const MAX_WIDTH = 560
 
 const DECISION_ALLOWED: Record<string, Array<string>> = {
   approve: ['needs_review'],
+  request_changes: ['needs_review', 'queued', 'triaged'],
   reject: ['needs_review', 'queued', 'triaged', 'in_progress'],
   snooze: ['needs_review', 'queued', 'triaged'],
 }
@@ -97,6 +177,7 @@ const DECISION_ALLOWED: Record<string, Array<string>> = {
 export function AutoplanInspector({
   services,
   chiefLlmStatus,
+  activeProjectId = '',
   onRunSimpleTask,
   busyDemoService,
   onRefreshAgents,
@@ -105,12 +186,10 @@ export function AutoplanInspector({
   activeTab,
   onTabChange,
 }: AutoplanInspectorProps) {
-  const [internalTab, setInternalTab] = useState<'queue' | 'agents' | 'runs'>(
-    'queue',
-  )
+  const [internalTab, setInternalTab] = useState<InspectorTab>('queue')
   const tab = activeTab ?? internalTab
   const setTab = useCallback(
-    (next: 'queue' | 'agents' | 'runs') => {
+    (next: InspectorTab) => {
       setInternalTab(next)
       onTabChange?.(next)
     },
@@ -121,15 +200,44 @@ export function AutoplanInspector({
   const [runs, setRuns] = useState<Array<AgentRun>>([])
   const [queueFilter, setQueueFilter] = useState<string>('')
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
+  const [decisionNote, setDecisionNote] = useState<string>('')
   const [expandedSessionsSvc, setExpandedSessionsSvc] = useState<string | null>(
     null,
   )
   const [scannedSessions, setScannedSessions] = useState<
     Record<string, Array<ScannedSession>>
   >({})
+  const [evolutionStatus, setEvolutionStatus] =
+    useState<EvolutionStatusPayload | null>(null)
+  const [llmStatus, setLlmStatus] = useState<LlmDiagnosticsPayload | null>(null)
+  const [evolving, setEvolving] = useState(false)
+  const [newRuleText, setNewRuleText] = useState('')
+  const [addingRule, setAddingRule] = useState(false)
   const [inspectorError, setInspectorError] = useState<string>('')
   const dragStartRef = useRef<{ x: number; w: number } | null>(null)
   const prevRunStatesRef = useRef<Record<string, string> | null>(null)
+
+  const refreshEvolutionAndLlm = useCallback(async () => {
+    try {
+      const projParam = activeProjectId
+        ? `?project_id=${encodeURIComponent(activeProjectId)}`
+        : ''
+      const [eRes, lRes] = await Promise.all([
+        fetch(`/api/autoplan/evolution/status${projParam}`),
+        fetch('/api/autoplan/llm/status'),
+      ])
+      if (eRes.ok) {
+        const eData = (await eRes.json()) as EvolutionStatusPayload
+        setEvolutionStatus(eData)
+      }
+      if (lRes.ok) {
+        const lData = (await lRes.json()) as LlmDiagnosticsPayload
+        setLlmStatus(lData)
+      }
+    } catch {
+      // Handled via main inspectorError when explicit action runs
+    }
+  }, [activeProjectId])
 
   const refreshQueueAndRuns = useCallback(async () => {
     try {
@@ -190,11 +298,16 @@ export function AutoplanInspector({
 
   useEffect(() => {
     void refreshQueueAndRuns()
+    void refreshEvolutionAndLlm()
     const interval = window.setInterval(() => {
       void refreshQueueAndRuns()
+      if (tab === 'evolution') {
+        void refreshEvolutionAndLlm()
+      }
     }, 3000)
     const onLiveEvent = () => {
       void refreshQueueAndRuns()
+      void refreshEvolutionAndLlm()
       onRefreshAgents()
     }
     window.addEventListener('autoplan:event', onLiveEvent)
@@ -202,7 +315,7 @@ export function AutoplanInspector({
       window.clearInterval(interval)
       window.removeEventListener('autoplan:event', onLiveEvent)
     }
-  }, [onRefreshAgents, refreshQueueAndRuns])
+  }, [onRefreshAgents, refreshEvolutionAndLlm, refreshQueueAndRuns, tab])
 
   useEffect(() => {
     function onMouseMove(e: MouseEvent) {
@@ -232,13 +345,19 @@ export function AutoplanInspector({
       const res = await fetch(`/api/autoplan/queue/items/${itemId}/decision`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action, actor: 'webclaw-operator' }),
+        body: JSON.stringify({
+          action,
+          note: decisionNote.trim(),
+          actor: 'webclaw-operator',
+        }),
       })
       const payload = (await res.json()) as { success?: boolean; error?: string }
       if (!res.ok || payload.success === false) {
         throw new Error(payload.error || `Decision HTTP ${res.status}`)
       }
+      setDecisionNote('')
       await refreshQueueAndRuns()
+      await refreshEvolutionAndLlm()
     } catch (err) {
       setInspectorError(err instanceof Error ? err.message : String(err))
     }
@@ -306,8 +425,72 @@ export function AutoplanInspector({
     }
   }
 
+  async function handleRunEvolution() {
+    setEvolving(true)
+    setInspectorError('')
+    try {
+      const res = await fetch('/api/autoplan/evolution/evolve', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          project_id: activeProjectId || '*',
+          reason: 'inspector_manual',
+        }),
+      })
+      const payload = (await res.json()) as { success?: boolean; error?: string }
+      if (!res.ok || payload.success === false) {
+        throw new Error(payload.error || `Evolution HTTP ${res.status}`)
+      }
+      await refreshEvolutionAndLlm()
+      window.dispatchEvent(new CustomEvent('autoplan:event'))
+    } catch (err) {
+      setInspectorError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setEvolving(false)
+    }
+  }
+
+  async function handleAddRule(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmed = newRuleText.trim()
+    if (!trimmed) return
+    setAddingRule(true)
+    setInspectorError('')
+    try {
+      const res = await fetch('/api/autoplan/evolution/rules', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          rule_text: trimmed,
+          category: 'operator_rule',
+          project_id: activeProjectId || '*',
+        }),
+      })
+      const payload = (await res.json()) as { success?: boolean; error?: string }
+      if (!res.ok || payload.success === false) {
+        throw new Error(payload.error || `Rule HTTP ${res.status}`)
+      }
+      setNewRuleText('')
+      await refreshEvolutionAndLlm()
+    } catch (err) {
+      setInspectorError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setAddingRule(false)
+    }
+  }
+
   const selectedItem = items.find((it) => it.id === selectedItemId) ?? null
   const activeRunsCount = runs.filter((r) => r.state === 'running').length
+  const activeGen = evolutionStatus?.active_generation ?? 1
+
+  const fitnessRows: Array<{ service: string } & ServiceFitnessEntry> = (() => {
+    const raw = evolutionStatus?.service_fitness
+    if (!raw) return []
+    if (Array.isArray(raw)) {
+      return raw.map((r) => ({ ...r, service: r.service || 'unknown' }))
+    }
+    return Object.entries(raw).map(([svc, val]) => ({ ...val, service: svc }))
+  })()
 
   return (
     <aside
@@ -330,13 +513,13 @@ export function AutoplanInspector({
       />
 
       <div className="flex min-w-0 flex-1 flex-col h-full overflow-hidden">
-        <div className="flex h-10 shrink-0 items-center border-b border-primary-200 px-2.5">
-          <div className="grid w-full grid-cols-3 gap-0.5 rounded-lg border border-primary-200 bg-primary-100 p-0.5">
+        <div className="flex h-10 shrink-0 items-center border-b border-primary-200 px-2">
+          <div className="grid w-full grid-cols-4 gap-0.5 rounded-lg border border-primary-200 bg-primary-100 p-0.5 text-[11px]">
             <button
               type="button"
               data-testid="inspector-tab-queue"
               onClick={() => setTab('queue')}
-              className={`rounded-md px-2 py-1 text-center font-medium transition-colors ${
+              className={`rounded-md px-1.5 py-1 text-center font-medium transition-colors truncate ${
                 tab === 'queue'
                   ? 'border border-primary-300 bg-surface text-primary-950'
                   : 'border border-transparent text-primary-700 hover:text-primary-900'
@@ -348,7 +531,7 @@ export function AutoplanInspector({
               type="button"
               data-testid="inspector-tab-agents"
               onClick={() => setTab('agents')}
-              className={`rounded-md px-2 py-1 text-center font-medium transition-colors ${
+              className={`rounded-md px-1.5 py-1 text-center font-medium transition-colors truncate ${
                 tab === 'agents'
                   ? 'border border-primary-300 bg-surface text-primary-950'
                   : 'border border-transparent text-primary-700 hover:text-primary-900'
@@ -360,13 +543,25 @@ export function AutoplanInspector({
               type="button"
               data-testid="inspector-tab-runs"
               onClick={() => setTab('runs')}
-              className={`rounded-md px-2 py-1 text-center font-medium transition-colors ${
+              className={`rounded-md px-1.5 py-1 text-center font-medium transition-colors truncate ${
                 tab === 'runs'
                   ? 'border border-primary-300 bg-surface text-primary-950'
                   : 'border border-transparent text-primary-700 hover:text-primary-900'
               }`}
             >
               Runs ({activeRunsCount > 0 ? `${activeRunsCount} live` : runs.length})
+            </button>
+            <button
+              type="button"
+              data-testid="inspector-tab-evolution"
+              onClick={() => setTab('evolution')}
+              className={`rounded-md px-1.5 py-1 text-center font-medium transition-colors truncate ${
+                tab === 'evolution'
+                  ? 'border border-primary-300 bg-surface text-primary-950'
+                  : 'border border-transparent text-primary-700 hover:text-primary-900'
+              }`}
+            >
+              Brain (v{activeGen})
             </button>
           </div>
         </div>
@@ -407,7 +602,7 @@ export function AutoplanInspector({
 
             <div
               data-testid="webclaw-queue-list"
-              className="max-h-56 shrink-0 overflow-y-auto border-b border-primary-200"
+              className="max-h-52 shrink-0 overflow-y-auto border-b border-primary-200"
             >
               {items.length === 0 ? (
                 <div className="px-3 py-4 text-primary-500">
@@ -488,12 +683,21 @@ export function AutoplanInspector({
                   ) : null}
 
                   {selectedItem.body ? (
-                    <pre className="max-h-40 overflow-auto border border-primary-200 p-2 font-mono text-[11px] whitespace-pre-wrap">
+                    <pre className="max-h-36 overflow-auto border border-primary-200 p-2 font-mono text-[11px] whitespace-pre-wrap">
                       {selectedItem.body}
                     </pre>
                   ) : null}
 
-                  <div className="flex flex-wrap gap-1.5 pt-1">
+                  <input
+                    type="text"
+                    data-testid="webclaw-decision-note-input"
+                    value={decisionNote}
+                    onChange={(e) => setDecisionNote(e.target.value)}
+                    placeholder="Feedback note (learns into Brain on changes/reject)…"
+                    className="w-full rounded border border-primary-200 bg-primary-50 px-2 py-1 text-[11px] text-primary-900 placeholder:text-primary-500 outline-none"
+                  />
+
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
                     <button
                       type="button"
                       data-testid="webclaw-approve-button"
@@ -501,9 +705,24 @@ export function AutoplanInspector({
                         !DECISION_ALLOWED.approve.includes(selectedItem.status)
                       }
                       onClick={() => void decideItem(selectedItem.id, 'approve')}
-                      className="border border-primary-800 bg-primary-900 px-2.5 py-1 font-medium text-surface disabled:opacity-30"
+                      className="rounded border border-primary-800 bg-primary-900 px-2.5 py-1 font-medium text-surface disabled:cursor-not-allowed disabled:border-primary-200 disabled:bg-primary-100 disabled:text-primary-400 disabled:opacity-60"
                     >
                       Approve
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="webclaw-request-changes-button"
+                      disabled={
+                        !DECISION_ALLOWED.request_changes.includes(
+                          selectedItem.status,
+                        )
+                      }
+                      onClick={() =>
+                        void decideItem(selectedItem.id, 'request_changes')
+                      }
+                      className="rounded border border-primary-300 px-2.5 py-1 font-medium disabled:cursor-not-allowed disabled:opacity-35"
+                    >
+                      Changes
                     </button>
                     <button
                       type="button"
@@ -512,7 +731,7 @@ export function AutoplanInspector({
                         !DECISION_ALLOWED.reject.includes(selectedItem.status)
                       }
                       onClick={() => void decideItem(selectedItem.id, 'reject')}
-                      className="border border-primary-300 px-2.5 py-1 font-medium disabled:opacity-30"
+                      className="rounded border border-primary-300 px-2.5 py-1 font-medium disabled:cursor-not-allowed disabled:opacity-35"
                     >
                       Reject
                     </button>
@@ -523,7 +742,7 @@ export function AutoplanInspector({
                         !DECISION_ALLOWED.snooze.includes(selectedItem.status)
                       }
                       onClick={() => void decideItem(selectedItem.id, 'snooze')}
-                      className="border border-primary-300 px-2.5 py-1 font-medium disabled:opacity-30"
+                      className="rounded border border-primary-300 px-2.5 py-1 font-medium disabled:cursor-not-allowed disabled:opacity-35"
                     >
                       Snooze
                     </button>
@@ -533,7 +752,7 @@ export function AutoplanInspector({
                         type="button"
                         data-testid="webclaw-wake-button"
                         onClick={() => void wakeItem(selectedItem.id)}
-                        className="border border-primary-800 px-2.5 py-1 font-medium"
+                        className="rounded border border-primary-800 px-2.5 py-1 font-medium"
                       >
                         Wake
                       </button>
@@ -542,7 +761,7 @@ export function AutoplanInspector({
                 </>
               ) : (
                 <div className="text-primary-500">
-                  Select a queue item or run a task to populate the queue.
+                  Select a queue item or dispatch work to populate the queue.
                 </div>
               )}
             </div>
@@ -589,17 +808,17 @@ export function AutoplanInspector({
                       !svc.dispatch_ready || busyDemoService === svc.service
                     }
                     onClick={() => void onRunSimpleTask(svc.service)}
-                    className="border border-primary-800 bg-primary-900 px-2.5 py-1 font-medium text-surface disabled:opacity-30"
+                    className="rounded border border-primary-300 bg-primary-100 px-2.5 py-1 font-medium text-primary-900 hover:bg-primary-200 disabled:cursor-not-allowed disabled:opacity-35"
                   >
                     {busyDemoService === svc.service
-                      ? 'Spinning up…'
-                      : 'Run Simple Task'}
+                      ? 'Starting…'
+                      : 'Start Demo'}
                   </button>
                   <button
                     type="button"
                     data-testid={`agent-scan-btn-${svc.service}`}
                     onClick={() => void toggleScannedSessions(svc.service)}
-                    className="border border-primary-300 px-2 py-1"
+                    className="rounded border border-primary-300 px-2 py-1"
                   >
                     {expandedSessionsSvc === svc.service
                       ? 'Hide sessions'
@@ -665,6 +884,7 @@ export function AutoplanInspector({
                   </div>
                   <div className="font-mono text-[11px] text-primary-600">
                     {run.service} · {run.model || 'default'}
+                    {run.role ? ` · ${run.role}` : ''}
                     {run.metadata?.duration_s !== undefined
                       ? ` · ${run.metadata.duration_s}s`
                       : ''}
@@ -691,6 +911,174 @@ export function AutoplanInspector({
                 </div>
               ))
             )}
+          </div>
+        ) : null}
+
+        {tab === 'evolution' ? (
+          <div
+            data-testid="webclaw-evolution-panel"
+            className="flex-1 overflow-y-auto p-3 space-y-3"
+          >
+            {/* Header + Evolve Action */}
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-primary-200 bg-primary-100 p-2.5">
+              <div className="min-w-0">
+                <div className="font-semibold text-primary-950">
+                  PlanAI Evolution Engine · Gen v{activeGen}
+                </div>
+                <div className="text-[11px] text-primary-600">
+                  {evolutionStatus?.bootstrap?.corpus_loaded
+                    ? `Bootstrapped from ${evolutionStatus.bootstrap.corpus_total_prompts?.toLocaleString() ?? 0} prompts (${evolutionStatus.bootstrap.corpus_total_sessions ?? 0} sessions)`
+                    : 'Learning live from Chief decisions & verification gates'}
+                </div>
+              </div>
+              <button
+                type="button"
+                data-testid="inspector-evolve-button"
+                disabled={evolving}
+                onClick={() => void handleRunEvolution()}
+                className="shrink-0 rounded-md border border-primary-800 bg-primary-900 px-2.5 py-1.5 font-medium text-surface hover:bg-primary-800 disabled:opacity-40"
+              >
+                {evolving ? 'Evolving…' : 'Evolve Prompts'}
+              </button>
+            </div>
+
+            {/* PlanAI LLM Core & Chromium Prompt API Diagnostics */}
+            <div
+              data-testid="inspector-llm-diagnostics"
+              className="rounded-lg border border-primary-200 p-2.5 space-y-1"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-primary-900">
+                  PlanAI LLM Core
+                </span>
+                <span className="rounded border border-primary-300 px-1.5 py-0.5 font-mono text-[10px]">
+                  {llmStatus?.chromium_prompt_bridge?.connected
+                    ? 'Chromium Prompt API live'
+                    : llmStatus?.local_mlx?.available
+                      ? 'Local Metal MLX'
+                      : 'Deterministic / Env'}
+                </span>
+              </div>
+              <div className="font-mono text-[11px] text-primary-600 break-words">
+                {llmStatus?.status_label || chiefLlmStatus || 'deterministic'}
+              </div>
+              {llmStatus?.chromium_prompt_bridge ? (
+                <div className="text-[11px] text-primary-600">
+                  Bridge calls:{' '}
+                  {llmStatus.chromium_prompt_bridge.total_bridged_calls ?? 0}
+                  {llmStatus.chromium_prompt_bridge.last_call_latency_ms
+                    ? ` · last ${llmStatus.chromium_prompt_bridge.last_call_latency_ms}ms`
+                    : ''}
+                </div>
+              ) : null}
+            </div>
+
+            {/* Active Prompt Generations */}
+            <div className="space-y-1.5">
+              <div className="font-semibold text-primary-900">
+                Active Prompt Generations
+              </div>
+              {(
+                [
+                  evolutionStatus?.active_prompts?.lead_planner,
+                  evolutionStatus?.active_prompts?.chief_triage,
+                ].filter(Boolean) as Array<PromptVersionInfo>
+              ).map((pv) => (
+                <div
+                  key={pv.id}
+                  data-testid={`prompt-version-${pv.worker_role}`}
+                  className="rounded-lg border border-primary-200 p-2 space-y-1"
+                >
+                  <div className="flex items-center justify-between font-mono text-[11px]">
+                    <span className="font-semibold text-primary-950">
+                      {pv.worker_role} · v{pv.generation}
+                    </span>
+                    <span className="text-primary-600">
+                      pass {pv.pass_count} / fail {pv.fail_count}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-primary-600">
+                    {pv.rationale}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Service Empirical Fitness */}
+            {fitnessRows.length > 0 ? (
+              <div className="space-y-1">
+                <div className="font-semibold text-primary-900">
+                  Measured Agent Fitness
+                </div>
+                <div className="divide-y divide-primary-200 rounded-lg border border-primary-200">
+                  {fitnessRows.map((row) => (
+                    <div
+                      key={row.service}
+                      className="flex items-center justify-between px-2.5 py-1.5 font-mono text-[11px]"
+                    >
+                      <span>{row.service}</span>
+                      <span className="text-primary-600">
+                        {row.succeeded_runs}/{row.total_runs} ok
+                        {row.pass_rate !== null
+                          ? ` (${Math.round(row.pass_rate * 100)}%)`
+                          : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* Learned Guardrail Rules + Add Rule */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-primary-900">
+                  Learned Guardrail Rules ({evolutionStatus?.rules?.length ?? 0})
+                </span>
+              </div>
+
+              <form
+                data-testid="inspector-add-rule-form"
+                onSubmit={(e) => void handleAddRule(e)}
+                className="flex gap-1.5"
+              >
+                <input
+                  type="text"
+                  data-testid="inspector-add-rule-input"
+                  value={newRuleText}
+                  onChange={(e) => setNewRuleText(e.target.value)}
+                  placeholder="Add persistent planning rule…"
+                  className="min-w-0 flex-1 rounded border border-primary-200 bg-primary-50 px-2 py-1 text-[11px] outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={addingRule || !newRuleText.trim()}
+                  className="shrink-0 rounded border border-primary-300 bg-primary-100 px-2 py-1 font-medium disabled:opacity-40"
+                >
+                  + Rule
+                </button>
+              </form>
+
+              <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                {(evolutionStatus?.rules ?? []).map((rule) => (
+                  <div
+                    key={rule.id}
+                    data-testid={`evolution-rule-${rule.id}`}
+                    className="rounded border border-primary-200 p-2 text-[11px]"
+                  >
+                    <div className="flex items-center justify-between font-mono text-[10px] text-primary-600">
+                      <span>
+                        {rule.category} · {rule.source_type}
+                      </span>
+                      <span>×{rule.evidence_count}</span>
+                    </div>
+                    <div className="mt-0.5 text-primary-900">
+                      {rule.rule_text}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         ) : null}
       </div>

@@ -18,14 +18,24 @@ import {
   updateHistoryMessageByClientId,
   updateSessionLastMessage,
 } from './chat-queries'
-import { chatUiQueryKey, getChatUiState, setChatUiState } from './chat-ui'
+import {
+  chatUiQueryKey,
+  getChatUiState,
+  setChatUiState,
+} from './chat-ui'
+import type { WorkspaceViewMode } from './chat-ui'
+import type { ProjectInfo } from './types'
 import { ChatSidebar } from './components/chat-sidebar'
 import { ChatHeader } from './components/chat-header'
 import { ChatMessageList } from './components/chat-message-list'
 import { ChatComposer } from './components/chat-composer'
+import { PlanAIGraphView } from './components/planai-graph-view'
 import { GatewayStatusMessage } from './components/gateway-status-message'
 import { AutoplanInspector } from './components/autoplan-inspector'
-import type { AgentServiceInfo } from './components/autoplan-inspector'
+import type {
+  AgentServiceInfo,
+  InspectorTab,
+} from './components/autoplan-inspector'
 import { MobileAntigravityWorkbench } from './components/mobile-antigravity-workbench'
 import type { MobileStageView } from './components/mobile-antigravity-workbench'
 import {
@@ -67,6 +77,11 @@ type AgentsApiResponse = {
   default_service?: string
 }
 
+type ProjectsApiResponse = {
+  success?: boolean
+  projects?: Array<ProjectInfo>
+}
+
 type QueueStatsResponse = {
   success?: boolean
   counts?: Record<string, number>
@@ -88,11 +103,11 @@ export function ChatScreen({
   const [creatingSession, setCreatingSession] = useState(false)
   const [isRedirecting, setIsRedirecting] = useState(false)
   const [newChatService, setNewChatService] = useState<string>('')
+  const [newChatProjectId, setNewChatProjectId] = useState<string>('')
+  const [newChatMode, setNewChatMode] = useState<'single' | 'team'>('single')
   const [busyDemoService, setBusyDemoService] = useState<string | null>(null)
   const [dispatchError, setDispatchError] = useState<string>('')
-  const [inspectorTab, setInspectorTab] = useState<'queue' | 'agents' | 'runs'>(
-    'queue',
-  )
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('queue')
   const { headerRef, composerRef, mainRef, pinGroupMinHeight, headerHeight } =
     useChatMeasurements()
   const [waitingForResponse, setWaitingForResponse] = useState(
@@ -142,6 +157,16 @@ export function ChatScreen({
     refetchInterval: 8000,
   })
 
+  const projectsQuery = useQuery({
+    queryKey: ['autoplan', 'projects'],
+    queryFn: async (): Promise<ProjectsApiResponse> => {
+      const res = await fetch('/api/autoplan/projects')
+      if (!res.ok) throw new Error(await readError(res))
+      return (await res.json()) as ProjectsApiResponse
+    },
+    refetchInterval: 10000,
+  })
+
   const queueStatsQuery = useQuery({
     queryKey: ['autoplan', 'queue-stats'],
     queryFn: async (): Promise<QueueStatsResponse> => {
@@ -158,6 +183,27 @@ export function ChatScreen({
   const selectedService = isNewChat
     ? newChatService || defaultService
     : activeSession?.service || defaultService
+
+  const projects = projectsQuery.data?.projects ?? []
+  const defaultProjectId = projects[0]?.id ?? 'autoplan'
+  const activeProjectId = isNewChat
+    ? newChatProjectId || defaultProjectId
+    : activeSession?.projectId || newChatProjectId || defaultProjectId
+  const activeProject = useMemo(
+    () => projects.find((p) => p.id === activeProjectId) ?? projects[0],
+    [activeProjectId, projects],
+  )
+  const activeProjectName = activeProject?.name ?? ''
+
+  const sessionMode: 'single' | 'team' = isNewChat
+    ? newChatMode
+    : activeSession?.mode === 'team'
+      ? 'team'
+      : 'single'
+
+  const activeSvcInfo = services.find((s) => s.service === selectedService)
+  const canDispatchSelected = activeSvcInfo ? activeSvcInfo.dispatch_ready : true
+
   const chiefLlmStatus = queueStatsQuery.data?.chief?.llm_status ?? ''
   const chiefLlmConfigured = Boolean(
     queueStatsQuery.data?.chief?.llm_configured,
@@ -201,6 +247,7 @@ export function ChatScreen({
   }, [gatewayStatusQuery])
   const isSidebarCollapsed = uiQuery.data.isSidebarCollapsed
   const isInspectorOpen = uiQuery.data.isInspectorOpen
+  const workspaceView = uiQuery.data.workspaceView
   const mobileView = uiQuery.data.mobileView
   const mobileDetailOpen = uiQuery.data.mobileDetailOpen
 
@@ -228,6 +275,22 @@ export function ChatScreen({
   const refreshAgents = useCallback(() => {
     void agentsQuery.refetch()
   }, [agentsQuery])
+
+  const refreshProjects = useCallback(() => {
+    void projectsQuery.refetch()
+  }, [projectsQuery])
+
+  useEffect(() => {
+    const onLiveEvent = () => {
+      void projectsQuery.refetch()
+      void queueStatsQuery.refetch()
+      void sessionsQuery.refetch()
+    }
+    window.addEventListener('autoplan:event', onLiveEvent)
+    return () => {
+      window.removeEventListener('autoplan:event', onLiveEvent)
+    }
+  }, [projectsQuery, queueStatsQuery, sessionsQuery])
 
   const hideUi = shouldRedirectToNew || isRedirecting
 
@@ -344,12 +407,62 @@ export function ChatScreen({
     ],
   )
 
+  const handleSelectMode = useCallback(
+    async (nextMode: 'single' | 'team') => {
+      setDispatchError('')
+      setNewChatMode(nextMode)
+      if (isNewChat) return
+      const sessionKeyTarget =
+        forcedSessionKey ||
+        resolvedSessionKey ||
+        activeSessionKey ||
+        activeFriendlyId
+      try {
+        const res = await fetch('/api/sessions', {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            sessionKey: sessionKeyTarget,
+            friendlyId: activeFriendlyId,
+            mode: nextMode,
+          }),
+        })
+        if (!res.ok) throw new Error(await readError(res))
+        await queryClient.invalidateQueries({ queryKey: chatQueryKeys.sessions })
+      } catch (err) {
+        setDispatchError(err instanceof Error ? err.message : String(err))
+      }
+    },
+    [
+      activeFriendlyId,
+      activeSessionKey,
+      forcedSessionKey,
+      isNewChat,
+      queryClient,
+      resolvedSessionKey,
+    ],
+  )
+
+  const handleSelectProject = useCallback((projectId: string) => {
+    setNewChatProjectId(projectId)
+  }, [])
+
+  const handleChangeWorkspaceView = useCallback(
+    (nextMode: WorkspaceViewMode) => {
+      setChatUiState(queryClient, function updateView(state) {
+        return { ...state, workspaceView: nextMode }
+      })
+    },
+    [queryClient],
+  )
+
   function sendMessage(
     sessionKey: string,
     friendlyId: string,
     body: string,
     skipOptimistic = false,
     attachments?: Array<AttachmentFile>,
+    overrides?: { mode?: 'single' | 'team'; projectId?: string },
   ) {
     setDispatchError('')
     let optimisticClientId = ''
@@ -378,6 +491,9 @@ export function ChatScreen({
     setWaitingForResponse(true)
     setPinToTop(true)
 
+    const effectiveMode = overrides?.mode ?? sessionMode
+    const effectiveProjectId = overrides?.projectId ?? activeProjectId
+
     const attachmentsPayload = attachments?.map((a) => ({
       mimeType: a.file.type,
       content: a.base64,
@@ -390,6 +506,8 @@ export function ChatScreen({
         sessionKey,
         friendlyId,
         service: selectedService,
+        mode: effectiveMode,
+        projectId: effectiveProjectId,
         message: body,
         thinking: settings.thinkingLevel,
         idempotencyKey: randomUUID(),
@@ -400,12 +518,16 @@ export function ChatScreen({
         if (!res.ok) throw new Error(await readError(res))
         const payload = (await res.json().catch(() => ({}))) as {
           runId?: string
+          workflowId?: string
         }
         if (
           typeof payload.runId === 'string' &&
           payload.runId.trim().length > 0
         ) {
           startRun(payload.runId.trim())
+        }
+        if (effectiveMode === 'team' && workspaceView === 'workbench') {
+          handleChangeWorkspaceView('split')
         }
         refreshHistory()
         window.dispatchEvent(new CustomEvent('autoplan:event'))
@@ -439,14 +561,20 @@ export function ChatScreen({
   }
 
   const createSessionForMessage = useCallback(
-    async (serviceOverride?: string) => {
+    async (opts?: {
+      serviceOverride?: string
+      projectIdOverride?: string
+      modeOverride?: 'single' | 'team'
+    }) => {
       setCreatingSession(true)
       try {
         const res = await fetch('/api/sessions', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            service: serviceOverride || selectedService,
+            service: opts?.serviceOverride || selectedService,
+            projectId: opts?.projectIdOverride || activeProjectId,
+            mode: opts?.modeOverride || sessionMode,
           }),
         })
         if (!res.ok) throw new Error(await readError(res))
@@ -469,12 +597,57 @@ export function ChatScreen({
         }
 
         await queryClient.invalidateQueries({ queryKey: chatQueryKeys.sessions })
+        void projectsQuery.refetch()
         return { sessionKey, friendlyId }
       } finally {
         setCreatingSession(false)
       }
     },
-    [queryClient, selectedService],
+    [activeProjectId, projectsQuery, queryClient, selectedService, sessionMode],
+  )
+
+  const handleCreateSessionInProject = useCallback(
+    async (projectId: string) => {
+      setDispatchError('')
+      setNewChatProjectId(projectId)
+      try {
+        const proj = projects.find((p) => p.id === projectId)
+        const svc = proj?.default_service || selectedService
+        const created = await createSessionForMessage({
+          projectIdOverride: projectId,
+          serviceOverride: svc,
+          modeOverride: sessionMode,
+        })
+        setRecentSession(created.friendlyId)
+        clearHistoryMessages(
+          queryClient,
+          created.friendlyId,
+          created.sessionKey,
+        )
+        if (isMobile) {
+          setChatUiState(queryClient, function enterSession(state) {
+            return { ...state, mobileView: 'session', mobileDetailOpen: false }
+          })
+        }
+        await sessionsQuery.refetch()
+        navigate({
+          to: '/chat/$sessionKey',
+          params: { sessionKey: created.friendlyId },
+        })
+      } catch (err) {
+        setDispatchError(err instanceof Error ? err.message : String(err))
+      }
+    },
+    [
+      createSessionForMessage,
+      isMobile,
+      navigate,
+      projects,
+      queryClient,
+      selectedService,
+      sessionMode,
+      sessionsQuery,
+    ],
   )
 
   const handleRunSimpleTask = useCallback(
@@ -491,7 +664,11 @@ export function ChatScreen({
         let navigateFriendlyId = ''
 
         if (isNewChat) {
-          const created = await createSessionForMessage(targetSvc)
+          const created = await createSessionForMessage({
+            serviceOverride: targetSvc,
+            projectIdOverride: activeProjectId,
+            modeOverride: 'single',
+          })
           targetSessionKey = created.sessionKey
           navigateFriendlyId = created.friendlyId
           setRecentSession(created.friendlyId)
@@ -538,6 +715,7 @@ export function ChatScreen({
     },
     [
       activeFriendlyId,
+      activeProjectId,
       activeSessionKey,
       createSessionForMessage,
       forcedSessionKey,
@@ -567,7 +745,12 @@ export function ChatScreen({
         setWaitingForResponse(true)
         setPinToTop(true)
 
-        createSessionForMessage()
+        const targetMode = sessionMode
+        const targetProject = activeProjectId
+        createSessionForMessage({
+          projectIdOverride: targetProject,
+          modeOverride: targetMode,
+        })
           .then(({ sessionKey, friendlyId }) => {
             setRecentSession(friendlyId)
             stashPendingSend({
@@ -576,6 +759,8 @@ export function ChatScreen({
               message: body,
               optimisticMessage,
               attachments,
+              mode: targetMode,
+              projectId: targetProject,
             })
             if (onSessionResolved) {
               onSessionResolved({ sessionKey, friendlyId })
@@ -610,10 +795,18 @@ export function ChatScreen({
         resolvedSessionKey ||
         activeSessionKey ||
         activeFriendlyId
-      sendMessage(sessionKeyForSend, activeFriendlyId, body, false, attachments)
+      sendMessage(
+        sessionKeyForSend,
+        activeFriendlyId,
+        body,
+        false,
+        attachments,
+        { mode: sessionMode, projectId: activeProjectId },
+      )
     },
     [
       activeFriendlyId,
+      activeProjectId,
       activeSessionKey,
       createSessionForMessage,
       forcedSessionKey,
@@ -623,22 +816,10 @@ export function ChatScreen({
       queryClient,
       resolvedSessionKey,
       selectedService,
+      sessionMode,
       settings.thinkingLevel,
     ],
   )
-
-  const startNewChat = useCallback(() => {
-    setWaitingForResponse(false)
-    setPinToTop(false)
-    setDispatchError('')
-    clearHistoryMessages(queryClient, 'new', 'new')
-    navigate({ to: '/new' })
-    if (isMobile) {
-      setChatUiState(queryClient, function collapse(state) {
-        return { ...state, isSidebarCollapsed: true }
-      })
-    }
-  }, [isMobile, navigate, queryClient])
 
   const handleToggleSidebarCollapse = useCallback(() => {
     setChatUiState(queryClient, function toggle(state) {
@@ -696,34 +877,13 @@ export function ChatScreen({
     [queryClient],
   )
 
-  const handleMobileCreateSessionForService = useCallback(
-    async (targetService: string) => {
-      setDispatchError('')
-      try {
-        setNewChatService(targetService)
-        const created = await createSessionForMessage(targetService)
-        setRecentSession(created.friendlyId)
-        setChatUiState(queryClient, function enterSession(state) {
-          return { ...state, mobileView: 'session', mobileDetailOpen: false }
-        })
-        await sessionsQuery.refetch()
-        navigate({
-          to: '/chat/$sessionKey',
-          params: { sessionKey: created.friendlyId },
-        })
-      } catch (err) {
-        setDispatchError(err instanceof Error ? err.message : String(err))
-      }
-    },
-    [createSessionForMessage, navigate, queryClient, sessionsQuery],
-  )
-
   const handleRefreshAll = useCallback(() => {
     void sessionsQuery.refetch()
+    void projectsQuery.refetch()
     void agentsQuery.refetch()
     void queueStatsQuery.refetch()
     refreshHistory()
-  }, [agentsQuery, queueStatsQuery, refreshHistory, sessionsQuery])
+  }, [agentsQuery, projectsQuery, queueStatsQuery, refreshHistory, sessionsQuery])
 
   const historyLoading = historyQuery.isLoading || isRedirecting
   const showGatewayDown = Boolean(gatewayStatusError)
@@ -823,23 +983,22 @@ export function ChatScreen({
   const sidebar = (
     <ChatSidebar
       sessions={sessions}
+      projects={projects}
+      activeProjectId={activeProjectId}
+      defaultProjectId={defaultProjectId}
       activeFriendlyId={activeFriendlyId}
       creatingSession={creatingSession}
-      onCreateSession={startNewChat}
+      onCreateSessionInProject={(pid) => void handleCreateSessionInProject(pid)}
+      onSelectProject={handleSelectProject}
+      onProjectsChanged={refreshProjects}
       isCollapsed={isMobile ? false : isSidebarCollapsed}
       onToggleCollapse={handleToggleSidebarCollapse}
       onSelectSession={handleSelectSession}
       onActiveSessionDelete={handleActiveSessionDelete}
       hideBrandHeader={!isMobile}
-      services={services}
-      selectedService={selectedService}
-      onSelectService={(svc) => void handleSelectService(svc)}
-      chiefLlmConfigured={chiefLlmConfigured}
-      chiefLlmStatus={chiefLlmStatus}
-      needsReviewCount={needsReviewCount}
-      onFocusOrchestratorQueue={handleFocusOrchestratorQueue}
-      onRunSimpleTask={() => void handleRunSimpleTask()}
-      runningSimpleTask={busyDemoService !== null}
+      onStartDemo={() => void handleRunSimpleTask()}
+      startingDemo={busyDemoService !== null}
+      canDispatchDemo={canDispatchSelected}
     />
   )
 
@@ -851,6 +1010,14 @@ export function ChatScreen({
     return (
       <MobileAntigravityWorkbench
         sessions={sessions}
+        projects={projects}
+        activeProjectId={activeProjectId}
+        defaultProjectId={defaultProjectId}
+        onSelectProject={handleSelectProject}
+        onProjectsChanged={refreshProjects}
+        onCreateSessionInProject={handleCreateSessionInProject}
+        sessionMode={sessionMode}
+        onSelectMode={(m) => void handleSelectMode(m)}
         activeFriendlyId={activeFriendlyId}
         activeTitle={activeTitle}
         activeCanonicalKey={activeCanonicalKey}
@@ -875,7 +1042,6 @@ export function ChatScreen({
         busyDemoService={busyDemoService}
         onSelectService={handleSelectService}
         onRunSimpleTask={handleRunSimpleTask}
-        onCreateSessionForService={handleMobileCreateSessionForService}
         onSendMessage={send}
         onExportMarkdown={() => exportConversation('markdown')}
         onRefreshAll={handleRefreshAll}
@@ -893,6 +1059,7 @@ export function ChatScreen({
     <div className="flex h-dvh flex-col overflow-hidden bg-surface text-primary-900">
       <ChatHeader
         activeTitle={activeTitle}
+        activeProjectName={activeProjectName}
         wrapperRef={headerRef}
         showSidebarButton={false}
         onOpenSidebar={handleOpenSidebar}
@@ -904,6 +1071,11 @@ export function ChatScreen({
         usedTokens={activeSession?.totalTokens}
         maxTokens={activeSession?.contextTokens}
         needsReviewCount={needsReviewCount}
+        chiefLlmConfigured={chiefLlmConfigured}
+        chiefLlmStatus={chiefLlmStatus}
+        onFocusOrchestratorQueue={handleFocusOrchestratorQueue}
+        workspaceView={workspaceView}
+        onChangeWorkspaceView={handleChangeWorkspaceView}
         inspectorOpen={isInspectorOpen}
         onToggleInspector={handleToggleInspector}
       />
@@ -936,7 +1108,51 @@ export function ChatScreen({
             </div>
           ) : null}
 
-          {hideUi ? null : (
+          {hideUi ? null : workspaceView === 'graph' ? (
+            <PlanAIGraphView
+              activeProjectId={activeProjectId}
+              projects={projects}
+              sessionKey={activeCanonicalKey}
+            />
+          ) : workspaceView === 'split' ? (
+            <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
+              <div className="h-[46%] min-h-[250px] shrink-0 border-b border-primary-200 overflow-hidden">
+                <PlanAIGraphView
+                  activeProjectId={activeProjectId}
+                  projects={projects}
+                  sessionKey={activeCanonicalKey}
+                  compact
+                />
+              </div>
+              <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
+                <ChatMessageList
+                  messages={displayMessages}
+                  loading={historyLoading}
+                  empty={historyEmpty}
+                  notice={gatewayNotice}
+                  noticePosition="end"
+                  waitingForResponse={waitingForResponse}
+                  sessionKey={activeCanonicalKey}
+                  pinToTop={pinToTop}
+                  pinGroupMinHeight={pinGroupMinHeight}
+                  headerHeight={headerHeight}
+                  contentStyle={stableContentStyle}
+                />
+                <ChatComposer
+                  onSubmit={send}
+                  isLoading={sending}
+                  disabled={sending}
+                  wrapperRef={composerRef}
+                  services={services}
+                  selectedService={selectedService}
+                  onSelectService={(svc) => void handleSelectService(svc)}
+                  sessionMode={sessionMode}
+                  onSelectMode={(m) => void handleSelectMode(m)}
+                  activeProjectName={activeProjectName}
+                />
+              </div>
+            </div>
+          ) : (
             <>
               <ChatMessageList
                 messages={displayMessages}
@@ -956,6 +1172,12 @@ export function ChatScreen({
                 isLoading={sending}
                 disabled={sending}
                 wrapperRef={composerRef}
+                services={services}
+                selectedService={selectedService}
+                onSelectService={(svc) => void handleSelectService(svc)}
+                sessionMode={sessionMode}
+                onSelectMode={(m) => void handleSelectMode(m)}
+                activeProjectName={activeProjectName}
               />
             </>
           )}
@@ -966,6 +1188,7 @@ export function ChatScreen({
             <AutoplanInspector
               services={services}
               chiefLlmStatus={chiefLlmStatus}
+              activeProjectId={activeProjectId}
               onRunSimpleTask={handleRunSimpleTask}
               busyDemoService={busyDemoService}
               onRefreshAgents={refreshAgents}

@@ -112,8 +112,12 @@ export function useChatStream({
           if (!parsed.event) return
           if (
             parsed.event === 'queue_updated' ||
+            parsed.event === 'queue_item_created' ||
             parsed.event === 'run_started' ||
-            parsed.event === 'run_updated'
+            parsed.event === 'run_updated' ||
+            parsed.event === 'planai_workflow_updated' ||
+            parsed.event === 'projects_updated' ||
+            parsed.event === 'evolution_rule_learned'
           ) {
             window.dispatchEvent(
               new CustomEvent('autoplan:event', { detail: parsed }),

@@ -49,6 +49,8 @@ export type SessionSummary = {
   service?: string
   model?: string
   cwd?: string
+  projectId?: string
+  mode?: 'single' | 'team'
   updatedAt?: number
   lastMessage?: GatewayMessage | null
   friendlyId?: string
@@ -75,6 +77,8 @@ export type SessionMeta = {
   service?: string
   model?: string
   cwd?: string
+  projectId?: string
+  mode?: 'single' | 'team'
   updatedAt?: number
   lastMessage?: GatewayMessage | null
   totalTokens?: number
@@ -86,4 +90,27 @@ export type PathsPayload = {
   stateDir: string
   sessionsDir: string
   storePath: string
+}
+
+export type ProjectInfo = {
+  id: string
+  name: string
+  repo_path: string
+  default_branch: string
+  test_command: string
+  default_service: string
+  description?: string
+  exists?: boolean
+  is_git_repo?: boolean
+  session_count?: number
+  active_run_count?: number
+  open_review_count?: number
+  workflow_count?: number
+}
+
+export type DiscoveredRepo = {
+  name: string
+  repo_path: string
+  default_branch: string
+  already_registered: boolean
 }

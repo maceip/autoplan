@@ -1,13 +1,29 @@
 import type { QueryClient } from '@tanstack/react-query'
 
+export type WorkspaceViewMode = 'workbench' | 'graph' | 'split'
+
 export type ChatUiState = {
   isSidebarCollapsed: boolean
   isInspectorOpen: boolean
   mobileView: 'sessions' | 'session'
   mobileDetailOpen: boolean
+  workspaceView: WorkspaceViewMode
 }
 
 const INSPECTOR_STORAGE_KEY = 'webclaw:inspector-open'
+
+function readInitialWorkspaceView(): WorkspaceViewMode {
+  if (typeof window === 'undefined') return 'workbench'
+  try {
+    const param = new URLSearchParams(window.location.search).get('view')
+    if (param === 'graph' || param === 'split' || param === 'workbench') {
+      return param
+    }
+  } catch {
+    // ignore URL errors
+  }
+  return 'workbench'
+}
 
 function readStoredInspectorOpen(): boolean {
   if (typeof window === 'undefined') return true
@@ -26,6 +42,7 @@ const defaultChatUiState: ChatUiState = {
   isInspectorOpen: true,
   mobileView: 'sessions',
   mobileDetailOpen: false,
+  workspaceView: 'workbench',
 }
 
 export const chatUiQueryKey = ['chat', 'ui'] as const
@@ -36,12 +53,14 @@ export function getChatUiState(queryClient: QueryClient): ChatUiState {
     return {
       ...defaultChatUiState,
       isInspectorOpen: readStoredInspectorOpen(),
+      workspaceView: readInitialWorkspaceView(),
       ...(cached as Partial<ChatUiState>),
     }
   }
   return {
     ...defaultChatUiState,
     isInspectorOpen: readStoredInspectorOpen(),
+    workspaceView: readInitialWorkspaceView(),
   }
 }
 

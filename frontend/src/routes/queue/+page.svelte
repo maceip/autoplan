@@ -326,7 +326,7 @@
 					onclick={() => void runDemoTask()}
 					class="border border-neutral-100 bg-neutral-100 px-3 py-1 font-bold text-neutral-950 disabled:opacity-40"
 				>
-					{spinningDemo ? 'Spinning up…' : 'Run Simple Task'}
+					{spinningDemo ? 'Starting…' : 'Start Demo'}
 				</button>
 			{/if}
 			<button
@@ -338,7 +338,8 @@
 			>
 				{voiceListening ? 'Listening…' : voiceSupported ? 'Voice command' : 'Voice unsupported in this browser'}
 			</button>
-			<a class="underline" href="/">Workflow editor</a>
+			<a class="underline" href="/planai-editor">PlanAI Editor</a>
+			<a class="underline" href="/">Workbench</a>
 		</span>
 	</header>
 

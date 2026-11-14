@@ -1,12 +1,11 @@
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  PencilEdit02Icon,
   Search01Icon,
   Settings01Icon,
   SidebarLeft01Icon,
 } from '@hugeicons/core-free-icons'
 import { AnimatePresence, motion } from 'motion/react'
-import { memo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useChatSettings } from '../hooks/use-chat-settings'
 import { useDeleteSession } from '../hooks/use-delete-session'
@@ -15,10 +14,8 @@ import { useSessionShortcuts } from '../hooks/use-session-shortcuts'
 import { SettingsDialog } from './settings-dialog'
 import { SessionRenameDialog } from './sidebar/session-rename-dialog'
 import { SessionDeleteDialog } from './sidebar/session-delete-dialog'
-import { SidebarSessions } from './sidebar/sidebar-sessions'
 import { CommandSessionDialog } from './command-session'
-import type { AgentServiceInfo } from './autoplan-inspector'
-import type { SessionMeta } from '../types'
+import type { DiscoveredRepo, ProjectInfo, SessionMeta } from '../types'
 import {
   TooltipContent,
   TooltipProvider,
@@ -31,48 +28,52 @@ import { WebClawIconBig } from '@/components/icons/webclaw-big'
 
 type ChatSidebarProps = {
   sessions: Array<SessionMeta>
+  projects: Array<ProjectInfo>
+  activeProjectId: string
+  defaultProjectId: string
   activeFriendlyId: string
   creatingSession: boolean
-  onCreateSession: () => void
+  onCreateSessionInProject: (projectId: string) => void
+  onSelectProject?: (projectId: string) => void
+  onProjectsChanged?: () => void
   isCollapsed: boolean
   onToggleCollapse: () => void
   onSelectSession?: () => void
   onActiveSessionDelete?: () => void
   hideBrandHeader?: boolean
-  services?: Array<AgentServiceInfo>
-  selectedService?: string
-  onSelectService?: (service: string) => void
-  chiefLlmConfigured?: boolean
-  chiefLlmStatus?: string
-  needsReviewCount?: number
-  onFocusOrchestratorQueue?: () => void
-  onRunSimpleTask?: () => void
-  runningSimpleTask?: boolean
+  onStartDemo?: () => void
+  startingDemo?: boolean
+  canDispatchDemo?: boolean
+}
+
+function sessionDisplayLabel(s: SessionMeta): string {
+  return (
+    s.label?.trim() ||
+    s.title?.trim() ||
+    s.derivedTitle?.trim() ||
+    s.friendlyId
+  )
 }
 
 function ChatSidebarComponent({
   sessions,
+  projects,
+  activeProjectId,
+  defaultProjectId,
   activeFriendlyId,
   creatingSession,
-  onCreateSession,
+  onCreateSessionInProject,
+  onSelectProject,
+  onProjectsChanged,
   isCollapsed,
   onToggleCollapse,
   onSelectSession,
   onActiveSessionDelete,
   hideBrandHeader = false,
-  services = [],
-  selectedService = '',
-  onSelectService,
-  chiefLlmConfigured = false,
-  chiefLlmStatus = '',
-  needsReviewCount = 0,
-  onFocusOrchestratorQueue,
-  onRunSimpleTask,
-  runningSimpleTask = false,
+  onStartDemo,
+  startingDemo = false,
+  canDispatchDemo = true,
 }: ChatSidebarProps) {
-  const activeSvcInfo = services.find((s) => s.service === selectedService)
-  const canDispatchSelected = activeSvcInfo ? activeSvcInfo.dispatch_ready : true
-  const chiefModeLabel = chiefLlmConfigured ? 'live' : 'triage'
   const {
     settingsOpen,
     setSettingsOpen,
@@ -100,16 +101,106 @@ function ChatSidebarComponent({
   const [deleteFriendlyId, setDeleteFriendlyId] = useState<string | null>(null)
   const [deleteSessionTitle, setDeleteSessionTitle] = useState('')
   const [searchDialogOpen, setSearchDialogOpen] = useState(false)
+
+  // Add Project drawer state
+  const [addProjectOpen, setAddProjectOpen] = useState(false)
+  const [discoveredRepos, setDiscoveredRepos] = useState<Array<DiscoveredRepo>>(
+    [],
+  )
+  const [newProjName, setNewProjName] = useState('')
+  const [newProjPath, setNewProjPath] = useState('')
+  const [newProjBranch, setNewProjBranch] = useState('main')
+  const [newProjTestCmd, setNewProjTestCmd] = useState('')
+  const [projBusy, setProjBusy] = useState(false)
+  const [projError, setProjError] = useState('')
+
   const navigate = useNavigate()
 
   useSessionShortcuts({
-    onNewSession: onCreateSession,
+    onNewSession: () =>
+      onCreateSessionInProject(activeProjectId || defaultProjectId),
     onSearchSessions: () => setSearchDialogOpen(true),
   })
 
-  function handleSearchDialogOpenChange(nextOpen: boolean) {
-    setSearchDialogOpen(nextOpen)
+  const loadDiscoveredRepos = useCallback(async () => {
+    try {
+      const res = await fetch('/api/autoplan/projects/discover')
+      const data = (await res.json()) as {
+        success?: boolean
+        repositories?: Array<DiscoveredRepo>
+      }
+      if (res.ok && data.repositories) {
+        setDiscoveredRepos(data.repositories)
+      }
+    } catch {
+      // ignore discovery errors
+    }
+  }, [])
+
+  useEffect(() => {
+    if (addProjectOpen) {
+      void loadDiscoveredRepos()
+    }
+  }, [addProjectOpen, loadDiscoveredRepos])
+
+  async function registerProject(payload: {
+    name: string
+    repo_path: string
+    default_branch?: string
+    test_command?: string
+  }) {
+    setProjBusy(true)
+    setProjError('')
+    try {
+      const res = await fetch('/api/autoplan/projects', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const body = (await res.json()) as {
+        success?: boolean
+        project?: ProjectInfo
+        error?: string
+      }
+      if (!res.ok || body.success === false) {
+        throw new Error(body.error || `HTTP ${res.status}`)
+      }
+      setNewProjName('')
+      setNewProjPath('')
+      setNewProjTestCmd('')
+      setAddProjectOpen(false)
+      onProjectsChanged?.()
+      if (body.project?.id) {
+        onSelectProject?.(body.project.id)
+      }
+      void loadDiscoveredRepos()
+    } catch (err) {
+      setProjError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setProjBusy(false)
+    }
   }
+
+  const groupedProjects = useMemo(() => {
+    const fallbackId = defaultProjectId || projects[0]?.id || 'default'
+    const buckets = new Map<string, Array<SessionMeta>>()
+    for (const p of projects) {
+      buckets.set(p.id, [])
+    }
+    for (const s of sessions) {
+      const pid = s.projectId && buckets.has(s.projectId) ? s.projectId : fallbackId
+      const existing = buckets.get(pid)
+      if (existing) {
+        existing.push(s)
+      } else {
+        buckets.set(pid, [s])
+      }
+    }
+    return projects.map((proj) => ({
+      project: proj,
+      sessions: buckets.get(proj.id) || [],
+    }))
+  }, [defaultProjectId, projects, sessions])
 
   function handleSearchSelect(session: SessionMeta) {
     setSearchDialogOpen(false)
@@ -122,9 +213,7 @@ function ChatSidebarComponent({
 
   function handleOpenRename(session: SessionMeta) {
     setRenameSessionKey(session.key)
-    setRenameSessionTitle(
-      session.label || session.title || session.derivedTitle || '',
-    )
+    setRenameSessionTitle(sessionDisplayLabel(session))
     setRenameDialogOpen(true)
   }
 
@@ -139,12 +228,7 @@ function ChatSidebarComponent({
   function handleOpenDelete(session: SessionMeta) {
     setDeleteSessionKey(session.key)
     setDeleteFriendlyId(session.friendlyId)
-    setDeleteSessionTitle(
-      session.label ||
-        session.title ||
-        session.derivedTitle ||
-        session.friendlyId,
-    )
+    setDeleteSessionTitle(sessionDisplayLabel(session))
     setDeleteDialogOpen(true)
   }
 
@@ -161,17 +245,12 @@ function ChatSidebarComponent({
     setDeleteFriendlyId(null)
   }
 
-  const asideProps = {
-    className:
-      'border-r border-primary-200 h-full overflow-hidden bg-primary-100 flex flex-col',
-  }
-
   return (
     <motion.aside
       initial={false}
       animate={{ width: isCollapsed ? 48 : 300 }}
       transition={transition}
-      className={asideProps.className}
+      className="border-r border-primary-200 h-full overflow-hidden bg-primary-100 flex flex-col"
     >
       {!hideBrandHeader ? (
         <motion.div
@@ -223,268 +302,360 @@ function ChatSidebarComponent({
         </motion.div>
       ) : null}
 
-      {!isCollapsed ? (
-        <div
-          data-testid="sidebar-routing-strip"
-          className="mx-2 mt-2.5 mb-2 flex flex-col gap-1.5 rounded-xl border border-primary-200 bg-surface/80 p-1.5 text-xs"
-        >
-          {services.length > 0 && onSelectService ? (
-            <div className="relative flex h-8 w-full items-center rounded-lg border border-primary-300 bg-primary-100 px-2.5 hover:border-primary-400 transition-colors">
-              <span
-                className={cn(
-                  'size-2 shrink-0 rounded-full',
-                  canDispatchSelected ? 'bg-[#7aae66]' : 'bg-primary-500',
-                )}
-                aria-hidden="true"
+      {/* Collapsed Rail Quick Search & New Session */}
+      {isCollapsed ? (
+        <div className="flex flex-col items-center gap-1.5 pt-2.5">
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            disabled={creatingSession}
+            title="New session in active project"
+            aria-label="New session in active project"
+            onClick={() =>
+              onCreateSessionInProject(activeProjectId || defaultProjectId)
+            }
+          >
+            +
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            title="Search sessions"
+            aria-label="Search sessions"
+            onClick={() => setSearchDialogOpen(true)}
+          >
+            <HugeiconsIcon icon={Search01Icon} size={18} strokeWidth={1.5} />
+          </Button>
+        </div>
+      ) : (
+        <>
+          {/* Projects Header Bar */}
+          <div className="flex items-center justify-between px-3 pt-3 pb-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">
+              Projects ({projects.length})
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                data-testid="sidebar-search-button"
+                aria-label="Search sessions"
+                title="Search sessions (⌘K)"
+                onClick={() => setSearchDialogOpen(true)}
+                className="flex size-6 items-center justify-center rounded-md text-primary-600 hover:bg-primary-200 hover:text-primary-950"
+              >
+                <HugeiconsIcon icon={Search01Icon} size={14} strokeWidth={1.6} />
+              </button>
+              <button
+                type="button"
+                data-testid="add-project-button"
+                aria-expanded={addProjectOpen}
+                onClick={() => {
+                  setProjError('')
+                  setAddProjectOpen((prev) => !prev)
+                }}
+                className="flex h-6 items-center gap-1 rounded-md border border-primary-300 bg-surface px-2 text-[11px] font-medium text-primary-900 hover:bg-primary-200"
+              >
+                <span>+ Project</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Add / Discover Git Project Drawer */}
+          {addProjectOpen ? (
+            <div
+              data-testid="add-project-panel"
+              className="mx-2.5 mb-2 rounded-xl border border-primary-300 bg-surface p-2.5 text-xs space-y-2"
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-primary-950">
+                  Register Git Project
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAddProjectOpen(false)}
+                  className="text-[11px] text-primary-600 hover:text-primary-900"
+                >
+                  Close
+                </button>
+              </div>
+
+              {projError ? (
+                <div className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] text-red-500">
+                  {projError}
+                </div>
+              ) : null}
+
+              <input
+                type="text"
+                data-testid="project-name-input"
+                value={newProjName}
+                onChange={(e) => setNewProjName(e.target.value)}
+                placeholder="Project name (optional)"
+                className="h-7 w-full rounded-md border border-primary-300 bg-primary-100 px-2 text-xs text-primary-950 outline-none"
               />
-              <select
-                aria-label="Lead agent service"
-                data-testid="agent-service-selector"
-                value={selectedService}
-                onChange={(e) => onSelectService(e.target.value)}
-                className="h-full w-full cursor-pointer appearance-none bg-transparent pl-2 pr-5 text-xs font-medium text-primary-950 outline-none"
+              <input
+                type="text"
+                data-testid="project-path-input"
+                value={newProjPath}
+                onChange={(e) => setNewProjPath(e.target.value)}
+                placeholder="/absolute/path/to/git/repo"
+                className="h-7 w-full rounded-md border border-primary-300 bg-primary-100 px-2 font-mono text-[11px] text-primary-950 outline-none"
+              />
+              <div className="grid grid-cols-2 gap-1.5">
+                <input
+                  type="text"
+                  data-testid="project-branch-input"
+                  value={newProjBranch}
+                  onChange={(e) => setNewProjBranch(e.target.value)}
+                  placeholder="main"
+                  className="h-7 rounded-md border border-primary-300 bg-primary-100 px-2 font-mono text-[11px] text-primary-950 outline-none"
+                />
+                <input
+                  type="text"
+                  data-testid="project-test-cmd-input"
+                  value={newProjTestCmd}
+                  onChange={(e) => setNewProjTestCmd(e.target.value)}
+                  placeholder="Test cmd (e.g. pytest)"
+                  className="h-7 rounded-md border border-primary-300 bg-primary-100 px-2 font-mono text-[11px] text-primary-950 outline-none"
+                />
+              </div>
+              <button
+                type="button"
+                data-testid="project-submit-button"
+                disabled={!newProjPath.trim() || projBusy}
+                onClick={() =>
+                  void registerProject({
+                    name: newProjName.trim(),
+                    repo_path: newProjPath.trim(),
+                    default_branch: newProjBranch.trim() || 'main',
+                    test_command: newProjTestCmd.trim(),
+                  })
+                }
+                className="h-7 w-full rounded-md bg-primary-900 text-xs font-medium text-surface disabled:opacity-40"
               >
-                {services.map((svc) => (
-                  <option
-                    key={svc.service}
-                    value={svc.service}
-                    className="bg-surface text-primary-900"
-                  >
-                    {svc.display_name}
-                    {svc.mode === 'observe_only' ? ' (observe)' : ''}
-                  </option>
-                ))}
-              </select>
-              <svg
-                viewBox="0 0 16 16"
-                className="pointer-events-none absolute right-2 size-3.5 text-primary-600"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.75}
-                aria-hidden="true"
-              >
-                <path d="M4 6l4 4 4-4" />
-              </svg>
+                {projBusy ? 'Registering…' : 'Register Project'}
+              </button>
+
+              {discoveredRepos.filter((r) => !r.already_registered).length >
+              0 ? (
+                <div className="border-t border-primary-200 pt-1.5 space-y-1">
+                  <div className="text-[10px] font-medium uppercase tracking-wide text-primary-600">
+                    Discovered Local Git Repos
+                  </div>
+                  <div className="max-h-28 overflow-y-auto space-y-1">
+                    {discoveredRepos
+                      .filter((r) => !r.already_registered)
+                      .slice(0, 8)
+                      .map((repo) => (
+                        <div
+                          key={repo.repo_path}
+                          className="flex items-center justify-between gap-1.5 rounded border border-primary-200 px-2 py-1"
+                        >
+                          <div className="min-w-0">
+                            <div className="truncate font-medium text-primary-900">
+                              {repo.name}
+                            </div>
+                            <div className="truncate font-mono text-[10px] text-primary-600">
+                              {repo.repo_path}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            data-testid={`discover-add-${repo.name}`}
+                            disabled={projBusy}
+                            onClick={() =>
+                              void registerProject({
+                                name: repo.name,
+                                repo_path: repo.repo_path,
+                                default_branch: repo.default_branch,
+                              })
+                            }
+                            className="shrink-0 rounded border border-primary-300 bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium hover:bg-primary-200"
+                          >
+                            + Add
+                          </button>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              data-testid="orchestrator-role-chip"
-              onClick={onFocusOrchestratorQueue}
-              title={`Chief of Staff orchestrator (${chiefLlmStatus || 'deterministic triage'}) — open review queue`}
-              className="flex h-7 min-w-0 flex-1 items-center justify-between gap-1.5 rounded-lg border border-primary-200 bg-primary-100 px-2.5 text-xs font-medium text-primary-900 hover:bg-primary-200/80 transition-colors"
-            >
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span
-                  className={cn(
-                    'size-2 shrink-0 rounded-full',
-                    chiefLlmConfigured ? 'bg-[#268bd2]' : 'bg-[#7aae66]',
-                  )}
-                  aria-hidden="true"
-                />
-                <span className="truncate text-primary-950">Chief</span>
-                <span className="text-[11px] text-primary-600">
-                  {chiefModeLabel}
-                </span>
-              </span>
-              {needsReviewCount > 0 ? (
-                <span
-                  data-testid="orchestrator-review-badge"
-                  className="shrink-0 rounded-full bg-[#268bd2]/20 px-1.5 py-px font-mono text-[10px] font-semibold text-primary-950 tabular-nums"
+          {/* Project-Grouped Sessions Tree */}
+          <div
+            data-testid="sidebar-projects-list"
+            className="flex-1 min-h-0 overflow-y-auto px-2 pb-2 space-y-2.5"
+          >
+            {groupedProjects.map(({ project, sessions: projSessions }) => {
+              const isProjActive = project.id === activeProjectId
+              return (
+                <section
+                  key={project.id}
+                  data-testid={`project-group-${project.id}`}
+                  className="space-y-0.5"
                 >
-                  {needsReviewCount}
-                </span>
-              ) : null}
-            </button>
+                  <div
+                    className={cn(
+                      'flex h-8 items-center justify-between rounded-lg px-2 transition-colors',
+                      isProjActive
+                        ? 'bg-primary-200/60 text-primary-950'
+                        : 'text-primary-700 hover:bg-primary-200/40',
+                    )}
+                  >
+                    <button
+                      type="button"
+                      data-testid={`project-select-${project.id}`}
+                      onClick={() => onSelectProject?.(project.id)}
+                      title={project.repo_path}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    >
+                      <svg
+                        viewBox="0 0 18 18"
+                        className="size-4 shrink-0 text-primary-600"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={1.5}
+                        aria-hidden="true"
+                      >
+                        <path d="M2.25 5A1.5 1.5 0 0 1 3.75 3.5h3l1.45 1.5h6.05A1.5 1.5 0 0 1 15.75 6.5v6.5a1.5 1.5 0 0 1-1.5 1.5H3.75a1.5 1.5 0 0 1-1.5-1.5V5Z" />
+                      </svg>
+                      <span className="truncate text-[13px] font-medium">
+                        {project.name}
+                      </span>
+                      {(project.open_review_count ?? 0) > 0 ? (
+                        <span className="shrink-0 rounded-full bg-[#268bd2]/20 px-1.5 py-px font-mono text-[10px] font-semibold text-primary-900">
+                          {project.open_review_count}
+                        </span>
+                      ) : null}
+                    </button>
 
-            {onRunSimpleTask ? (
-              <button
-                type="button"
-                data-testid="header-run-simple-task"
-                disabled={!canDispatchSelected || runningSimpleTask}
-                onClick={onRunSimpleTask}
-                title={
-                  canDispatchSelected
-                    ? 'Spin up a real isolated agent run and route commit to Chief review queue'
-                    : activeSvcInfo?.auth_status ||
-                      'Selected service is observe-only'
-                }
-                className="flex h-7 shrink-0 items-center rounded-lg border border-[#268bd2]/40 bg-[#268bd2]/15 px-2.5 text-xs font-medium text-primary-950 hover:bg-[#268bd2]/25 transition-colors disabled:opacity-35 disabled:pointer-events-none"
-              >
-                {runningSimpleTask ? 'Spinning up…' : '+ Simple Task'}
-              </button>
-            ) : null}
+                    <button
+                      type="button"
+                      data-testid={`project-new-session-${project.id}`}
+                      disabled={creatingSession}
+                      aria-label={`New session in ${project.name}`}
+                      title={`New session in ${project.name}`}
+                      onClick={() => onCreateSessionInProject(project.id)}
+                      className="flex size-6 shrink-0 items-center justify-center rounded-md text-sm font-medium text-primary-700 hover:bg-primary-300/70 hover:text-primary-950 disabled:opacity-40"
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  <div className="pl-3 space-y-0.5">
+                    {projSessions.length === 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => onCreateSessionInProject(project.id)}
+                        className="w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] text-primary-500 hover:bg-primary-200/40 hover:text-primary-800"
+                      >
+                        + Start session in {project.name}
+                      </button>
+                    ) : (
+                      projSessions.map((session) => {
+                        const isActive =
+                          session.friendlyId === activeFriendlyId
+                        return (
+                          <div
+                            key={session.key}
+                            className={cn(
+                              'group flex h-8 items-center justify-between gap-1 rounded-lg px-2 text-xs transition-colors',
+                              isActive
+                                ? 'bg-surface font-medium text-primary-950 shadow-2xs'
+                                : 'text-primary-800 hover:bg-primary-200/50',
+                            )}
+                          >
+                            <Link
+                              to="/chat/$sessionKey"
+                              params={{ sessionKey: session.friendlyId }}
+                              data-testid={`sidebar-session-${session.friendlyId}`}
+                              onClick={() => {
+                                onSelectProject?.(project.id)
+                                onSelectSession?.()
+                              }}
+                              className="flex min-w-0 flex-1 items-center gap-1.5 py-1"
+                            >
+                              <span className="truncate">
+                                {sessionDisplayLabel(session)}
+                              </span>
+                              {session.mode === 'team' ? (
+                                <span className="shrink-0 rounded bg-[#268bd2]/20 px-1 py-px font-mono text-[9px] font-semibold uppercase text-primary-900">
+                                  Team
+                                </span>
+                              ) : null}
+                            </Link>
+
+                            <div className="hidden items-center gap-0.5 group-hover:flex">
+                              <button
+                                type="button"
+                                aria-label="Rename session"
+                                onClick={() => handleOpenRename(session)}
+                                className="rounded px-1 py-0.5 text-[10px] text-primary-600 hover:bg-primary-200 hover:text-primary-950"
+                              >
+                                ✎
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="Delete session"
+                                onClick={() => handleOpenDelete(session)}
+                                className="rounded px-1 py-0.5 text-[10px] text-primary-600 hover:bg-red-500/20 hover:text-red-500"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                </section>
+              )
+            })}
           </div>
-        </div>
-      ) : (
-        <div className="flex justify-center pt-2 pb-1">
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            title="Expand sidebar for orchestrator & lead-agent routing"
-            aria-label="Expand sidebar for orchestrator & lead-agent routing"
-            className="flex size-8 items-center justify-center rounded-lg border border-primary-200 bg-surface/80 hover:bg-primary-200/70"
-          >
-            <span
-              className={cn(
-                'size-2 rounded-full',
-                canDispatchSelected ? 'bg-[#7aae66]' : 'bg-primary-500',
-              )}
-            />
-          </button>
-        </div>
+        </>
       )}
-
-      <div className="px-2 mb-3 gap-0.5 flex flex-col">
-        <motion.div
-          layout
-          transition={{ layout: transition }}
-          className="w-full"
-        >
-          <Button
-            disabled={creatingSession}
-            variant="ghost"
-            size="sm"
-            onClick={onCreateSession}
-            onMouseUp={onSelectSession}
-            className="group w-full pl-1.5 justify-start transition-colors duration-0"
-          >
-            <HugeiconsIcon
-              icon={PencilEdit02Icon}
-              size={20}
-              strokeWidth={1.5}
-              className="min-w-5"
-            />
-            <AnimatePresence initial={false} mode="wait">
-              {!isCollapsed && (
-                <motion.span
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={transition}
-                  className="overflow-hidden whitespace-nowrap"
-                >
-                  New Session
-                </motion.span>
-              )}
-            </AnimatePresence>
-            {!isCollapsed ? (
-              <span className="ms-auto inline-flex items-center gap-1 text-[14px] text-primary-600 opacity-0 transition-none group-hover:opacity-100">
-                <kbd className="font-sans">⇧</kbd>
-                <kbd className="font-sans">⌘</kbd>
-                <kbd className="font-sans">O</kbd>
-              </span>
-            ) : null}
-          </Button>
-        </motion.div>
-        <motion.div
-          layout
-          transition={{ layout: transition }}
-          className="w-full"
-        >
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setSearchDialogOpen(true)}
-            className="group w-full pl-1.5 justify-start transition-colors duration-0"
-          >
-            <HugeiconsIcon
-              icon={Search01Icon}
-              size={20}
-              strokeWidth={1.5}
-              className="min-w-5"
-            />
-            <AnimatePresence initial={false} mode="wait">
-              {!isCollapsed && (
-                <motion.span
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={transition}
-                  className="overflow-hidden whitespace-nowrap"
-                >
-                  Search sessions
-                </motion.span>
-              )}
-            </AnimatePresence>
-            {!isCollapsed ? (
-              <span className="ms-auto inline-flex items-center gap-1 text-[14px] text-primary-600 opacity-0 transition-none group-hover:opacity-100">
-                <kbd className="font-sans">⌘</kbd>
-                <kbd className="font-sans">K</kbd>
-              </span>
-            ) : null}
-          </Button>
-        </motion.div>
-      </div>
 
       <CommandSessionDialog
         sessions={sessions}
         open={searchDialogOpen}
-        onOpenChange={handleSearchDialogOpenChange}
+        onOpenChange={setSearchDialogOpen}
         onSelect={handleSearchSelect}
       />
 
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <AnimatePresence initial={false}>
-          {!isCollapsed && (
-            <motion.div
-              key="content"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={transition}
-              className="pt-0 flex flex-col w-full min-h-0 h-full"
-            >
-              <div className="flex-1 min-h-0">
-                <SidebarSessions
-                  sessions={sessions}
-                  activeFriendlyId={activeFriendlyId}
-                  onSelect={onSelectSession}
-                  onRename={handleOpenRename}
-                  onDelete={handleOpenDelete}
-                />
-              </div>
-            </motion.div>
+      {/* Bottom Utility Footer: Settings + Secondary 'Start Demo' Utility */}
+      <div className="flex items-center justify-between gap-1.5 border-t border-primary-200 bg-primary-100 px-2 py-2.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleOpenSettings}
+          title={isCollapsed ? 'Settings' : undefined}
+          className={cn(
+            'justify-start pl-1.5',
+            isCollapsed ? 'w-full justify-center px-0' : 'flex-1',
           )}
-        </AnimatePresence>
-      </div>
-
-      <div className="px-2 py-3 border-t border-primary-200 bg-primary-100">
-        <motion.div
-          layout
-          transition={{ layout: transition }}
-          className="w-full"
         >
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleOpenSettings}
-            title={isCollapsed ? 'Settings' : undefined}
-            className="w-full justify-start pl-1.5"
+          <HugeiconsIcon
+            icon={Settings01Icon}
+            size={18}
+            strokeWidth={1.5}
+            className="min-w-4"
+          />
+          {!isCollapsed ? <span>Settings</span> : null}
+        </Button>
+
+        {!isCollapsed && onStartDemo ? (
+          <button
+            type="button"
+            data-testid="start-demo-button"
+            disabled={!canDispatchDemo || startingDemo}
+            onClick={onStartDemo}
+            title="Run isolated self-contained verification demo in a scratch git repo"
+            className="h-7 shrink-0 rounded-lg border border-primary-300 bg-surface px-2.5 text-[11px] font-medium text-primary-800 hover:bg-primary-200 hover:text-primary-950 disabled:opacity-40 disabled:pointer-events-none"
           >
-            <HugeiconsIcon
-              icon={Settings01Icon}
-              size={20}
-              strokeWidth={1.5}
-              className="min-w-5"
-            />
-            <AnimatePresence initial={false} mode="wait">
-              {!isCollapsed && (
-                <motion.span
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={transition}
-                  className="overflow-hidden whitespace-nowrap"
-                >
-                  Settings
-                </motion.span>
-              )}
-            </AnimatePresence>
-          </Button>
-        </motion.div>
+            {startingDemo ? 'Starting…' : 'Start Demo'}
+          </button>
+        ) : null}
       </div>
 
       <SettingsDialog
@@ -517,46 +688,6 @@ function ChatSidebarComponent({
   )
 }
 
-function areSessionsEqual(
-  prevSessions: Array<SessionMeta>,
-  nextSessions: Array<SessionMeta>,
-): boolean {
-  if (prevSessions === nextSessions) return true
-  if (prevSessions.length !== nextSessions.length) return false
-  for (let i = 0; i < prevSessions.length; i += 1) {
-    const prev = prevSessions[i]
-    const next = nextSessions[i]
-    if (prev.key !== next.key) return false
-    if (prev.friendlyId !== next.friendlyId) return false
-    if (prev.service !== next.service) return false
-    if (prev.label !== next.label) return false
-    if (prev.title !== next.title) return false
-    if (prev.derivedTitle !== next.derivedTitle) return false
-    if (prev.updatedAt !== next.updatedAt) return false
-  }
-  return true
-}
-
-function areSidebarPropsEqual(
-  prevProps: ChatSidebarProps,
-  nextProps: ChatSidebarProps,
-): boolean {
-  if (prevProps.activeFriendlyId !== nextProps.activeFriendlyId) return false
-  if (prevProps.creatingSession !== nextProps.creatingSession) return false
-  if (prevProps.isCollapsed !== nextProps.isCollapsed) return false
-  if (prevProps.hideBrandHeader !== nextProps.hideBrandHeader) return false
-  if (prevProps.selectedService !== nextProps.selectedService) return false
-  if (prevProps.chiefLlmConfigured !== nextProps.chiefLlmConfigured) {
-    return false
-  }
-  if (prevProps.chiefLlmStatus !== nextProps.chiefLlmStatus) return false
-  if (prevProps.needsReviewCount !== nextProps.needsReviewCount) return false
-  if (prevProps.runningSimpleTask !== nextProps.runningSimpleTask) return false
-  if (prevProps.services !== nextProps.services) return false
-  if (!areSessionsEqual(prevProps.sessions, nextProps.sessions)) return false
-  return true
-}
-
-const MemoizedChatSidebar = memo(ChatSidebarComponent, areSidebarPropsEqual)
+const MemoizedChatSidebar = memo(ChatSidebarComponent)
 
 export { MemoizedChatSidebar as ChatSidebar }

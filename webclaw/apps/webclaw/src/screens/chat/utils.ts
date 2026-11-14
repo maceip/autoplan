@@ -98,6 +98,16 @@ export function normalizeSessions(
         typeof session.service === 'string' ? session.service : undefined,
       model: typeof session.model === 'string' ? session.model : undefined,
       cwd: typeof session.cwd === 'string' ? session.cwd : undefined,
+      projectId:
+        typeof session.projectId === 'string' && session.projectId.trim().length > 0
+          ? session.projectId.trim()
+          : undefined,
+      mode:
+        session.mode === 'team'
+          ? 'team'
+          : session.mode === 'single'
+            ? 'single'
+            : undefined,
       updatedAt:
         typeof session.updatedAt === 'number' ? session.updatedAt : undefined,
       lastMessage: session.lastMessage ?? null,

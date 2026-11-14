@@ -25,6 +25,7 @@ type UseChatPendingSendInput = {
     body: string,
     skipOptimistic: boolean,
     attachments?: Array<AttachmentFile>,
+    overrides?: { mode?: 'single' | 'team'; projectId?: string },
   ) => void
 }
 
@@ -98,6 +99,7 @@ export function useChatPendingSend({
       pending.message,
       true,
       pending.attachments,
+      { mode: pending.mode, projectId: pending.projectId },
     )
   }, [
     activeFriendlyId,
