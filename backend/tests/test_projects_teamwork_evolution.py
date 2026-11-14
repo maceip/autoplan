@@ -78,7 +78,10 @@ def test_multi_project_registry_discover_and_external_repo_landing(
     agy_exec = bin_dir / "agy_ext_cli"
     agy_exec.write_text(
         "#!/usr/bin/env python3\n"
-        "import json, pathlib\n"
+        "import json, pathlib, sys\n"
+        "if '--version' in sys.argv:\n"
+        "    print('2.0.0-test')\n"
+        "    sys.exit(0)\n"
         "pathlib.Path('feature_alpha.txt').write_text('alpha external project worktree verified\\n')\n"
         "print(json.dumps({'conversation_id': 'conv_ext_1', 'status': 'SUCCESS', 'response': 'Added feature_alpha.txt in external_alpha.'}))\n",
         encoding="utf-8",
@@ -191,7 +194,10 @@ def test_planai_multi_agent_teamwork_graph_and_svelteflow_projection(
     agy_exec = bin_dir / "agy_team_cli"
     agy_exec.write_text(
         "#!/usr/bin/env python3\n"
-        "import json, pathlib\n"
+        "import json, pathlib, sys\n"
+        "if '--version' in sys.argv:\n"
+        "    print('2.0.0-test')\n"
+        "    sys.exit(0)\n"
         "pathlib.Path('src/impl_module.py').write_text('TEAM_IMPL_READY = True\\n')\n"
         "print(json.dumps({'conversation_id': 'conv_team_agy', 'status': 'SUCCESS', 'response': 'Implemented src/impl_module.py cleanly.'}))\n",
         encoding="utf-8",
