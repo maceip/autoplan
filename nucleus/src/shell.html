@@ -1,0 +1,1061 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nucleus · PlanAI Multi-Project & Multi-Agent Workbench</title>
+    <style>
+      :root {
+        --bg-deep: #002028;
+        --bg-surface: #002b36;
+        --bg-elevated: #073642;
+        --bg-card: #0c3540;
+        --border-subtle: #133b45;
+        --border-strong: #1e444e;
+        --fg-primary: #e6f0f2;
+        --fg-body: #c9d8db;
+        --fg-muted: #839496;
+        --fg-dim: #586e75;
+        --accent-blue: #268bd2;
+        --accent-green: #7aae66;
+        --accent-amber: #b58900;
+        --accent-red: #dc322f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg-deep);
+        color: var(--fg-body);
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter',
+          system-ui, sans-serif;
+        font-size: 12px;
+        user-select: none;
+      }
+
+      .app-root {
+        display: flex;
+        flex-direction: column;
+        width: 100vw;
+        height: 100vh;
+      }
+
+      /* Native macOS hiddenInset Titlebar */
+      .titlebar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 40px;
+        padding-left: 78px;
+        padding-right: 12px;
+        background: var(--bg-deep);
+        border-bottom: 1px solid var(--border-subtle);
+        -webkit-app-region: drag;
+        flex-shrink: 0;
+        gap: 12px;
+      }
+
+      .no-drag {
+        -webkit-app-region: no-drag;
+      }
+
+      .brand-cluster {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .brand-icon {
+        width: 20px;
+        height: 20px;
+        object-fit: contain;
+      }
+
+      .brand-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--fg-primary);
+        letter-spacing: -0.01em;
+      }
+
+      .brand-pill {
+        padding: 2px 6px;
+        border-radius: 5px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-strong);
+        color: var(--fg-muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+      }
+
+      .mode-switcher {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        padding: 2px;
+        border-radius: 8px;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-strong);
+      }
+
+      .mode-btn {
+        appearance: none;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--fg-muted);
+        font-size: 11px;
+        font-weight: 500;
+        padding: 4px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.12s ease;
+        white-space: nowrap;
+      }
+
+      .mode-btn:hover {
+        color: var(--fg-primary);
+      }
+
+      .mode-btn.active {
+        background: var(--bg-card);
+        border-color: #27535e;
+        color: var(--fg-primary);
+      }
+
+      .titlebar-right {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .chip-btn {
+        appearance: none;
+        border: 1px solid var(--border-strong);
+        background: var(--bg-surface);
+        color: var(--fg-body);
+        font-size: 11px;
+        padding: 4px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+
+      .chip-btn:hover {
+        background: var(--bg-card);
+        color: var(--fg-primary);
+      }
+
+      /* Workspace Body: Left Project Activity Rail + Main Viewport */
+      .workspace {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .project-rail {
+        width: 196px;
+        background: var(--bg-deep);
+        border-right: 1px solid var(--border-subtle);
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+        overflow: hidden;
+      }
+
+      .rail-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 10px 6px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--fg-dim);
+      }
+
+      .rail-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 4px 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      .proj-item {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 7px 8px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--fg-muted);
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .proj-item:hover {
+        background: var(--bg-surface);
+        color: var(--fg-body);
+      }
+
+      .proj-item.active {
+        background: var(--bg-card);
+        border-color: var(--border-strong);
+        color: var(--fg-primary);
+      }
+
+      .proj-item-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+      }
+
+      .proj-name {
+        font-size: 12px;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .proj-badges {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+      }
+
+      .proj-meta {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        color: var(--fg-dim);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .rail-footer {
+        border-top: 1px solid var(--border-subtle);
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        font-size: 10px;
+        color: var(--fg-dim);
+      }
+
+      /* Main Content Area */
+      .viewport {
+        flex: 1;
+        min-width: 0;
+        min-height: 0;
+        position: relative;
+        background: var(--bg-surface);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .frame-view {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: var(--bg-surface);
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      /* Chromium Prompt API Console View */
+      .prompt-console {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px 24px;
+        user-select: text;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-strong);
+        border-radius: 12px;
+        padding: 14px 16px;
+      }
+
+      .card h3 {
+        margin: 0 0 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--fg-primary);
+      }
+
+      .kv-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 4px 0;
+        border-bottom: 1px solid rgba(30, 68, 78, 0.5);
+        font-size: 11px;
+      }
+
+      .kv-row:last-child {
+        border-bottom: 0;
+      }
+
+      .kv-key {
+        color: var(--fg-muted);
+      }
+
+      .kv-val {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--fg-primary);
+        text-align: right;
+      }
+
+      .prompt-textarea {
+        width: 100%;
+        min-height: 74px;
+        border-radius: 8px;
+        border: 1px solid var(--border-strong);
+        background: var(--bg-deep);
+        color: var(--fg-primary);
+        padding: 10px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        resize: vertical;
+        outline: none;
+      }
+
+      .action-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .primary-btn {
+        appearance: none;
+        border: 1px solid #359be0;
+        background: var(--accent-blue);
+        color: #002028;
+        font-weight: 600;
+        font-size: 12px;
+        padding: 7px 14px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+
+      .primary-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .output-box {
+        margin-top: 10px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: var(--bg-deep);
+        border: 1px solid var(--border-subtle);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        color: var(--fg-body);
+        min-height: 44px;
+      }
+
+      /* Bottom Status Bar */
+      .statusbar {
+        height: 25px;
+        background: var(--bg-deep);
+        border-top: 1px solid var(--border-subtle);
+        padding: 0 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10.5px;
+        color: var(--fg-muted);
+        flex-shrink: 0;
+      }
+
+      .status-group {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        margin-right: 5px;
+      }
+
+      .dot.ok {
+        background: var(--accent-green);
+      }
+
+      .dot.warn {
+        background: var(--accent-amber);
+      }
+
+      .dot.err {
+        background: var(--accent-red);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-root" data-testid="nucleus-app-root">
+      <header class="titlebar" data-testid="nucleus-titlebar">
+        <div class="brand-cluster">
+          <img class="brand-icon" src="/icon.png" alt="" />
+          <span class="brand-title">Nucleus</span>
+          <span class="brand-pill" id="chrome-version-pill">Chromium</span>
+        </div>
+
+        <nav class="mode-switcher no-drag" data-testid="nucleus-view-switcher">
+          <button
+            type="button"
+            class="mode-btn active"
+            data-mode="workbench"
+            data-testid="nucleus-mode-workbench"
+          >
+            Workbench (3-Col)
+          </button>
+          <button
+            type="button"
+            class="mode-btn"
+            data-mode="graph"
+            data-testid="nucleus-mode-graph"
+          >
+            PlanAI Graph
+          </button>
+          <button
+            type="button"
+            class="mode-btn"
+            data-mode="split"
+            data-testid="nucleus-mode-split"
+          >
+            Split View
+          </button>
+          <button
+            type="button"
+            class="mode-btn"
+            data-mode="editor"
+            data-testid="nucleus-mode-editor"
+          >
+            SvelteFlow Editor
+          </button>
+          <button
+            type="button"
+            class="mode-btn"
+            data-mode="prompt-api"
+            data-testid="nucleus-mode-prompt-api"
+          >
+            Chromium Prompt API
+          </button>
+        </nav>
+
+        <div class="titlebar-right no-drag">
+          <button
+            type="button"
+            class="chip-btn"
+            id="reload-frame-btn"
+            data-testid="nucleus-reload-button"
+          >
+            Reload View
+          </button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside class="project-rail" data-testid="nucleus-project-rail">
+          <div class="rail-header">
+            <span>Projects</span>
+            <button
+              type="button"
+              class="chip-btn"
+              id="refresh-projects-btn"
+              style="padding: 1px 6px; font-size: 10px"
+            >
+              ↻
+            </button>
+          </div>
+          <div class="rail-list" id="project-rail-list"></div>
+          <div class="rail-footer" id="rail-brain-summary">
+            <div>PlanAI Evolution: loading…</div>
+          </div>
+        </aside>
+
+        <main class="viewport">
+          <iframe
+            id="workbench-frame"
+            data-testid="nucleus-workbench-frame"
+            class="frame-view"
+            title="AutoPlan 3-Column Workbench & PlanAI Graph"
+          ></iframe>
+
+          <iframe
+            id="editor-frame"
+            data-testid="nucleus-editor-frame"
+            class="frame-view hidden"
+            title="PlanAI SvelteFlow Graph Editor"
+          ></iframe>
+
+          <section
+            id="prompt-api-view"
+            data-testid="nucleus-prompt-api-view"
+            class="prompt-console hidden"
+          >
+            <div class="grid-2">
+              <div class="card">
+                <h3>Chromium Blink window.LanguageModel Runtime</h3>
+                <div class="kv-row">
+                  <span class="kv-key">Electron / Chromium</span>
+                  <span class="kv-val" id="diag-versions">—</span>
+                </div>
+                <div class="kv-row">
+                  <span class="kv-key">Secure Origin Context</span>
+                  <span class="kv-val" id="diag-secure">—</span>
+                </div>
+                <div class="kv-row">
+                  <span class="kv-key">window.LanguageModel API</span>
+                  <span class="kv-val" id="diag-lm-present">—</span>
+                </div>
+                <div class="kv-row">
+                  <span class="kv-key"
+                    >LanguageModel.availability()</span
+                  >
+                  <span
+                    class="kv-val"
+                    id="diag-lm-availability"
+                    data-testid="nucleus-lm-availability"
+                    >probing…</span
+                  >
+                </div>
+                <div class="kv-row">
+                  <span class="kv-key">Local AI Utility Backend</span>
+                  <span class="kv-val" id="diag-mlx-model">—</span>
+                </div>
+              </div>
+
+              <div class="card">
+                <h3>Gemini Nano Investigation & PlanAI Bridge</h3>
+                <div class="kv-row">
+                  <span class="kv-key">OptGuide Gemini Nano Weights</span>
+                  <span class="kv-val" id="diag-nano-weights">checking…</span>
+                </div>
+                <div class="kv-row">
+                  <span class="kv-key">Unbranded Chromium Auto-Download</span>
+                  <span class="kv-val"
+                    >Unavailable (Google API keys omitted)</span
+                  >
+                </div>
+                <div class="kv-row">
+                  <span class="kv-key">AutoPlan Python Bridge Client</span>
+                  <span
+                    class="kv-val"
+                    id="diag-bridge-client"
+                    data-testid="nucleus-bridge-client"
+                    >connecting…</span
+                  >
+                </div>
+                <div class="kv-row">
+                  <span class="kv-key">Bridged PlanAI Worker Calls</span>
+                  <span
+                    class="kv-val"
+                    id="diag-bridged-count"
+                    data-testid="nucleus-bridged-count"
+                    >0</span
+                  >
+                </div>
+                <div class="kv-row">
+                  <span class="kv-key">Last Inference Latency</span>
+                  <span class="kv-val" id="diag-last-latency">—</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h3>
+                1. Direct Renderer Test —
+                <code>await (await window.LanguageModel.create()).prompt(...)</code>
+              </h3>
+              <textarea
+                id="direct-prompt-input"
+                data-testid="nucleus-prompt-input"
+                class="prompt-textarea"
+              >Summarize in one sentence how PlanAI JoinedTaskWorker joins parallel sub-agent branches.</textarea>
+              <div class="action-row">
+                <button
+                  type="button"
+                  id="run-direct-prompt-btn"
+                  data-testid="nucleus-run-prompt-test"
+                  class="primary-btn"
+                >
+                  Run window.LanguageModel.prompt()
+                </button>
+                <span id="direct-prompt-meta" style="color: var(--fg-muted)"></span>
+              </div>
+              <div
+                id="direct-prompt-output"
+                data-testid="nucleus-prompt-output"
+                class="output-box"
+              >Ready.</div>
+            </div>
+
+            <div class="card">
+              <h3>
+                2. Full Python PlanAI LLM Core Round-Trip —
+                <code>POST /api/llm/test-prompt</code> → Chromium
+                <code>window.LanguageModel</code> → Metal MLX → PlanAI
+              </h3>
+              <div class="action-row" style="margin-top: 0">
+                <button
+                  type="button"
+                  id="run-backend-roundtrip-btn"
+                  data-testid="nucleus-run-backend-roundtrip"
+                  class="primary-btn"
+                >
+                  Test PlanAI Python → Chromium Prompt API Bridge
+                </button>
+                <span
+                  id="roundtrip-meta"
+                  style="color: var(--fg-muted)"
+                ></span>
+              </div>
+              <div
+                id="roundtrip-output"
+                data-testid="nucleus-roundtrip-output"
+                class="output-box"
+              >Ready.</div>
+            </div>
+          </section>
+        </main>
+      </div>
+
+      <footer class="statusbar" data-testid="nucleus-status-bar">
+        <div class="status-group">
+          <span id="status-lm">
+            <span class="dot warn"></span>window.LanguageModel: probing…
+          </span>
+          <span id="status-bridge">
+            <span class="dot warn"></span>PlanAI Bridge: connecting…
+          </span>
+          <span id="status-nano">
+            OptGuide Gemini Nano: unbranded Chromium (using registerLocalAIHandler + Metal MLX)
+          </span>
+        </div>
+        <div class="status-group">
+          <span id="status-telemetry">Calls: 0</span>
+        </div>
+      </footer>
+    </div>
+
+    <script>
+      (async function initNucleusShell() {
+        const runtime = await window.nucleusDesktop.getRuntimeInfo();
+        const backendUrl = runtime.backendUrl;
+        const webclawUrl = runtime.webclawUrl;
+
+        document.getElementById('chrome-version-pill').textContent =
+          `Electron ${runtime.electronVersion} · Chrome ${runtime.chromeVersion.split('.')[0]}`;
+        document.getElementById('diag-versions').textContent =
+          `Electron ${runtime.electronVersion} / Chromium ${runtime.chromeVersion}`;
+        document.getElementById('diag-secure').textContent = String(
+          window.isSecureContext
+        );
+        document.getElementById('diag-lm-present').textContent =
+          typeof window.LanguageModel !== 'undefined'
+            ? 'present (Blink AIPromptAPI)'
+            : 'missing';
+        document.getElementById('diag-mlx-model').textContent =
+          `${runtime.mlxModel} (127.0.0.1:${runtime.mlxPort})`;
+
+        const workbenchFrame = document.getElementById('workbench-frame');
+        const editorFrame = document.getElementById('editor-frame');
+        const promptApiView = document.getElementById('prompt-api-view');
+
+        let currentMode = 'workbench';
+        let activeProjectId = '';
+        let bridgedCalls = 0;
+        let bridgeClientId = '';
+        let lmAvailability = 'unavailable';
+
+        function updateFrames(forceReload = false) {
+          if (currentMode === 'prompt-api') {
+            workbenchFrame.classList.add('hidden');
+            editorFrame.classList.add('hidden');
+            promptApiView.classList.remove('hidden');
+            return;
+          }
+          promptApiView.classList.add('hidden');
+          if (currentMode === 'editor') {
+            workbenchFrame.classList.add('hidden');
+            editorFrame.classList.remove('hidden');
+            const target = `${backendUrl}/planai-editor`;
+            if (forceReload || !editorFrame.src) {
+              editorFrame.src = target;
+            }
+            return;
+          }
+          editorFrame.classList.add('hidden');
+          workbenchFrame.classList.remove('hidden');
+          const target = `${webclawUrl}/new?view=${encodeURIComponent(currentMode)}`;
+          if (forceReload || workbenchFrame.dataset.mode !== currentMode) {
+            workbenchFrame.dataset.mode = currentMode;
+            workbenchFrame.src = target;
+          }
+        }
+
+        document.querySelectorAll('.mode-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            document
+              .querySelectorAll('.mode-btn')
+              .forEach((b) => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentMode = btn.dataset.mode || 'workbench';
+            updateFrames(false);
+          });
+        });
+
+        document
+          .getElementById('reload-frame-btn')
+          .addEventListener('click', () => updateFrames(true));
+
+        updateFrames(true);
+
+        // Check Chromium window.LanguageModel availability
+        async function refreshLanguageModelAvailability() {
+          if (typeof window.LanguageModel === 'undefined') {
+            lmAvailability = 'unavailable';
+          } else {
+            try {
+              lmAvailability = await window.LanguageModel.availability();
+            } catch (err) {
+              lmAvailability = `error: ${err.message || err}`;
+            }
+          }
+          document.getElementById('diag-lm-availability').textContent =
+            lmAvailability;
+          const ok = lmAvailability === 'available';
+          document.getElementById('status-lm').innerHTML =
+            `<span class="dot ${ok ? 'ok' : 'err'}"></span>window.LanguageModel: ${lmAvailability}`;
+          return lmAvailability;
+        }
+
+        await refreshLanguageModelAvailability();
+
+        // Load Projects & Evolution Summary into Left Rail
+        async function loadProjectsAndBrain() {
+          try {
+            const [pRes, eRes, lRes] = await Promise.all([
+              fetch(`${backendUrl}/api/projects`),
+              fetch(`${backendUrl}/api/evolution/status`),
+              fetch(`${backendUrl}/api/llm/status`),
+            ]);
+            if (pRes.ok) {
+              const pData = await pRes.json();
+              const projects = pData.projects || [];
+              if (!activeProjectId && projects[0]) {
+                activeProjectId = projects[0].id;
+              }
+              const listEl = document.getElementById('project-rail-list');
+              listEl.innerHTML = '';
+              projects.forEach((proj) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.dataset.testid = `nucleus-rail-project-${proj.id}`;
+                btn.className =
+                  'proj-item' + (proj.id === activeProjectId ? ' active' : '');
+                const reviews = proj.open_review_count || 0;
+                const runs = proj.active_run_count || 0;
+                btn.innerHTML = `
+                  <div class="proj-item-top">
+                    <span class="proj-name">📁 ${proj.name}</span>
+                    <span class="proj-badges">${runs > 0 ? `⚡${runs}` : ''} ${reviews > 0 ? `⚑${reviews}` : ''}</span>
+                  </div>
+                  <div class="proj-meta">${proj.default_branch || 'main'} · ${proj.session_count || 0} sess</div>
+                `;
+                btn.addEventListener('click', () => {
+                  activeProjectId = proj.id;
+                  loadProjectsAndBrain();
+                });
+                listEl.appendChild(btn);
+              });
+            }
+            if (eRes.ok) {
+              const eData = await eRes.json();
+              document.getElementById('rail-brain-summary').innerHTML = `
+                <div style="color: var(--fg-body); font-weight: 600">Brain Gen v${eData.active_generation || 1}</div>
+                <div>${eData.rules_count || 0} active guardrail rules</div>
+              `;
+            }
+            if (lRes.ok) {
+              const lData = await lRes.json();
+              const nano = lData.gemini_nano_investigation || {};
+              document.getElementById('diag-nano-weights').textContent =
+                nano.weights_present
+                  ? `Found (${nano.weights_path})`
+                  : '0 bytes in Chrome OptGuideOnDeviceModel';
+            }
+          } catch {
+            // Backend may still be starting
+          }
+        }
+
+        document
+          .getElementById('refresh-projects-btn')
+          .addEventListener('click', () => void loadProjectsAndBrain());
+        await loadProjectsAndBrain();
+        setInterval(loadProjectsAndBrain, 6000);
+
+        window.nucleusDesktop.onTelemetry((payload) => {
+          if (payload && payload.type === 'prompt_completed') {
+            document.getElementById('diag-last-latency').textContent =
+              `${payload.latencyMs}ms (${payload.tokens} tok)`;
+          }
+        });
+
+        // Direct Renderer window.LanguageModel.prompt() button
+        document
+          .getElementById('run-direct-prompt-btn')
+          .addEventListener('click', async () => {
+            const btn = document.getElementById('run-direct-prompt-btn');
+            const outEl = document.getElementById('direct-prompt-output');
+            const metaEl = document.getElementById('direct-prompt-meta');
+            const text = document
+              .getElementById('direct-prompt-input')
+              .value.trim();
+            if (!text) return;
+            btn.disabled = true;
+            outEl.textContent =
+              'Creating Chromium window.LanguageModel session & prompting local Metal MLX…';
+            const t0 = performance.now();
+            try {
+              const session = await window.LanguageModel.create();
+              try {
+                const reply = await session.prompt(text);
+                const ms = Math.round(performance.now() - t0);
+                outEl.textContent = reply;
+                metaEl.textContent = `${ms}ms · contextUsage ${session.contextUsage}/${session.contextWindow}`;
+              } finally {
+                session.destroy();
+              }
+            } catch (err) {
+              outEl.textContent = `Error: ${err.message || err}`;
+            } finally {
+              btn.disabled = false;
+            }
+          });
+
+        // Full Python PlanAI LLM Core -> Chromium Bridge Round-Trip button
+        document
+          .getElementById('run-backend-roundtrip-btn')
+          .addEventListener('click', async () => {
+            const btn = document.getElementById('run-backend-roundtrip-btn');
+            const outEl = document.getElementById('roundtrip-output');
+            const metaEl = document.getElementById('roundtrip-meta');
+            btn.disabled = true;
+            outEl.textContent =
+              'Dispatching POST /api/llm/test-prompt to Python PlanAI LLM Core…';
+            const t0 = performance.now();
+            try {
+              const res = await fetch(`${backendUrl}/api/llm/test-prompt`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                  prompt:
+                    'Confirm in one concise sentence that Python PlanAI LLM Core routed through Nucleus Chromium window.LanguageModel.',
+                }),
+              });
+              const data = await res.json();
+              const ms = Math.round(performance.now() - t0);
+              if (!res.ok || data.success === false) {
+                throw new Error(data.error || `HTTP ${res.status}`);
+              }
+              outEl.textContent = data.reply;
+              metaEl.textContent = `Provider: ${data.provider_used} · ${ms}ms`;
+            } catch (err) {
+              outEl.textContent = `Error: ${err.message || err}`;
+            } finally {
+              btn.disabled = false;
+            }
+          });
+
+        // Continuous Chromium -> Python PlanAI LLM Bridge Worker Loop
+        async function executeBridgedRequest(reqItem) {
+          const started = performance.now();
+          try {
+            const msgs = Array.isArray(reqItem.messages)
+              ? reqItem.messages
+              : [];
+            const initialPrompts = [];
+            let finalUserPrompt = '';
+            for (let i = 0; i < msgs.length; i++) {
+              const m = msgs[i];
+              const role =
+                m.role === 'system' ||
+                m.role === 'assistant' ||
+                m.role === 'user'
+                  ? m.role
+                  : 'user';
+              const contentText = String(m.content || '');
+              if (i === msgs.length - 1 && role === 'user') {
+                finalUserPrompt = contentText;
+              } else if (contentText.trim()) {
+                initialPrompts.push({ role, content: contentText });
+              }
+            }
+            if (!finalUserPrompt && initialPrompts.length > 0) {
+              const popped = initialPrompts.pop();
+              finalUserPrompt = popped.content;
+            }
+
+            const session = await window.LanguageModel.create(
+              initialPrompts.length > 0 ? { initialPrompts } : undefined
+            );
+            try {
+              const promptOpts = {};
+              if (reqItem.response_constraint) {
+                promptOpts.responseConstraint = reqItem.response_constraint;
+              }
+              const content = await session.prompt(finalUserPrompt, promptOpts);
+              const latencyMs = Math.round(performance.now() - started);
+              bridgedCalls += 1;
+              document.getElementById('diag-bridged-count').textContent =
+                String(bridgedCalls);
+              document.getElementById('diag-last-latency').textContent =
+                `${latencyMs}ms`;
+              document.getElementById('status-telemetry').textContent =
+                `Calls: ${bridgedCalls} · Last: ${latencyMs}ms`;
+
+              await fetch(`${backendUrl}/api/llm/chromium-bridge/respond`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                  request_id: reqItem.request_id,
+                  content,
+                  metrics: {
+                    latency_ms: latencyMs,
+                    context_usage: session.contextUsage,
+                  },
+                }),
+              });
+            } finally {
+              session.destroy();
+            }
+          } catch (err) {
+            await fetch(`${backendUrl}/api/llm/chromium-bridge/respond`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                request_id: reqItem.request_id,
+                error: err.message || String(err),
+              }),
+            }).catch(() => {});
+          }
+        }
+
+        async function runBridgeLoop() {
+          while (true) {
+            try {
+              const avail = await refreshLanguageModelAvailability();
+              if (!bridgeClientId) {
+                const regRes = await fetch(
+                  `${backendUrl}/api/llm/chromium-bridge/register`,
+                  {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({
+                      app_name: 'Nucleus',
+                      chrome_version: runtime.chromeVersion,
+                      electron_version: runtime.electronVersion,
+                      language_model_availability: avail,
+                      local_backend_model: runtime.mlxModel,
+                    }),
+                  }
+                );
+                if (regRes.ok) {
+                  const regData = await regRes.json();
+                  bridgeClientId = regData?.client?.client_id || '';
+                  document.getElementById('diag-bridge-client').textContent =
+                    bridgeClientId || 'connected';
+                  document.getElementById('status-bridge').innerHTML =
+                    `<span class="dot ok"></span>PlanAI Bridge: ${bridgeClientId}`;
+                }
+              }
+
+              if (bridgeClientId) {
+                const pollRes = await fetch(
+                  `${backendUrl}/api/llm/chromium-bridge/poll?client_id=${encodeURIComponent(
+                    bridgeClientId
+                  )}&timeout=6`
+                );
+                if (pollRes.ok) {
+                  const pollData = await pollRes.json();
+                  if (pollData.request && pollData.request.request_id) {
+                    await executeBridgedRequest(pollData.request);
+                  }
+                } else if (pollRes.status === 404) {
+                  bridgeClientId = '';
+                }
+              } else {
+                await new Promise((r) => setTimeout(r, 2000));
+              }
+            } catch {
+              document.getElementById('status-bridge').innerHTML =
+                `<span class="dot err"></span>PlanAI Bridge: reconnecting…`;
+              bridgeClientId = '';
+              await new Promise((r) => setTimeout(r, 2500));
+            }
+          }
+        }
+
+        // Periodic heartbeat so bridge stays active during idle periods
+        setInterval(async () => {
+          if (!bridgeClientId) return;
+          try {
+            await fetch(`${backendUrl}/api/llm/chromium-bridge/heartbeat`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                client_id: bridgeClientId,
+                language_model_availability: lmAvailability,
+              }),
+            });
+          } catch {
+            // handled by poll loop
+          }
+        }, 12000);
+
+        void runBridgeLoop();
+      })();
+    </script>
+  </body>
+</html>

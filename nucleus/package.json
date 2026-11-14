@@ -1,0 +1,16 @@
+{
+  "name": "nucleus-autoplan",
+  "productName": "Nucleus",
+  "version": "0.2.0",
+  "description": "Nucleus macOS Desktop Workbench (Electron Chromium 156 + LanguageModel Prompt API + PlanAI Multi-Project & Multi-Agent Teamwork)",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "pack:macos": "electron-packager . Nucleus --platform=darwin --arch=arm64 --out=dist --icon=assets/icon.icns --ignore=\"^/dist\" --overwrite"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^45.3.2",
+    "ws": "^8.23.0"
+  }
+}
