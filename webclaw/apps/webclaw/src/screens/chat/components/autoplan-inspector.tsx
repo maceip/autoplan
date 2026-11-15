@@ -125,7 +125,23 @@ type EvolutionStatusPayload = {
 
 type EvolutionSubTab = 'rules' | 'memories' | 'skills'
 
-export type InspectorTab = 'queue' | 'agents' | 'runs' | 'evolution'
+export type InspectorTab = 'queue' | 'agents' | 'runs' | 'evolution' | 'handoff'
+
+type HandoffDocument = {
+  ts: number
+  from_node: string
+  to_node: string
+  task_type: string
+  round_num: number
+  payload: Record<string, unknown>
+}
+
+type HandoffWorkflow = {
+  id: string
+  session_key?: string
+  state?: string
+  result?: { handoffs?: Array<HandoffDocument> }
+}
 
 type AutoplanInspectorProps = {
   services: Array<AgentServiceInfo>
@@ -138,6 +154,7 @@ type AutoplanInspectorProps = {
   onRunFinished?: (runId: string) => void
   activeTab?: InspectorTab
   onTabChange?: (tab: InspectorTab) => void
+  sessionKey?: string
 }
 
 const DEFAULT_WIDTH = 360
@@ -171,6 +188,7 @@ export function AutoplanInspector({
   onRunFinished,
   activeTab,
   onTabChange,
+  sessionKey = '',
 }: AutoplanInspectorProps) {
   const [internalTab, setInternalTab] = useState<InspectorTab>('queue')
   const tab = activeTab ?? internalTab
@@ -182,6 +200,46 @@ export function AutoplanInspector({
     [onTabChange],
   )
   const [width, setWidth] = useState<number>(DEFAULT_WIDTH)
+  const [handoffWorkflow, setHandoffWorkflow] =
+    useState<HandoffWorkflow | null>(null)
+  const handoffCountRef = useRef<{ wfId: string; count: number } | null>(null)
+
+  useEffect(() => {
+    if (!sessionKey || sessionKey === 'new') {
+      setHandoffWorkflow(null)
+      handoffCountRef.current = null
+      return
+    }
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/autoplan/planai/workflows?limit=30')
+        if (!res.ok) return
+        const data = (await res.json()) as { workflows?: Array<HandoffWorkflow> }
+        const wf =
+          (data.workflows || []).find((w) => w.session_key === sessionKey) ||
+          null
+        if (cancelled) return
+        setHandoffWorkflow(wf)
+        const count = wf?.result?.handoffs?.length ?? 0
+        const prev = handoffCountRef.current
+        if (wf && prev && prev.wfId === wf.id && count > prev.count) {
+          setInternalTab('handoff')
+          onTabChange?.('handoff')
+        }
+        handoffCountRef.current = wf ? { wfId: wf.id, count } : null
+      } catch {
+        // transient poll error; next tick retries
+      }
+    }
+    void poll()
+    const iv = window.setInterval(() => void poll(), 1200)
+    return () => {
+      cancelled = true
+      window.clearInterval(iv)
+    }
+  }, [sessionKey, onTabChange])
+  const handoffDocs = handoffWorkflow?.result?.handoffs ?? []
   const [items, setItems] = useState<Array<QueueItem>>([])
   const [runs, setRuns] = useState<Array<AgentRun>>([])
   const [showCompleted, setShowCompleted] = useState<boolean>(false)
@@ -562,6 +620,13 @@ export function AutoplanInspector({
                 activeRunsCount > 0 ? `Agents (${activeRunsCount})` : 'Agents',
               ],
               ['evolution', 'inspector-tab-evolution', 'Rules'],
+              [
+                'handoff',
+                'inspector-tab-handoff',
+                handoffDocs.length > 0
+                  ? `Handoff (${handoffDocs.length})`
+                  : 'Handoff',
+              ],
             ] as const
           ).map(([id, testId, label]) => {
             const isActive =
@@ -592,6 +657,60 @@ export function AutoplanInspector({
             className="border-b border-red-500/40 bg-red-500/10 px-3 py-1.5 text-red-500"
           >
             {inspectorError}
+          </div>
+        ) : null}
+
+        {tab === 'handoff' ? (
+          <div
+            data-testid="handoff-panel"
+            className="flex flex-1 flex-col gap-3 min-h-0 overflow-y-auto p-3"
+          >
+            {handoffDocs.length === 0 ? (
+              <div
+                data-testid="handoff-empty"
+                className="text-xs text-primary-600"
+              >
+                No handoff documents for this session yet. Start a Team run to
+                see each typed Task passed between blocks.
+              </div>
+            ) : (
+              [...handoffDocs]
+                .map((doc, idx) => ({ doc, idx }))
+                .reverse()
+                .map(({ doc, idx }) => (
+                  <div
+                    key={`${doc.ts}-${idx}`}
+                    data-testid={`handoff-doc-${idx}`}
+                    className={cn(
+                      'rounded-lg border border-primary-400 bg-primary-50 transition-shadow',
+                      idx === handoffDocs.length - 1
+                        ? 'shadow-[0_0_0_1px_rgba(56,189,248,0.7),0_0_22px_rgba(56,189,248,0.55)]'
+                        : 'shadow-[0_0_12px_rgba(56,189,248,0.28)]',
+                    )}
+                  >
+                    <div className="flex items-baseline justify-between gap-2 border-b border-primary-200 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-semibold text-primary-950">
+                          {doc.from_node} → {doc.to_node}
+                        </div>
+                        <div
+                          data-testid={`handoff-doc-type-${idx}`}
+                          className="font-mono text-[11px] text-primary-700"
+                        >
+                          {doc.task_type}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right text-[11px] text-primary-600 tabular-nums">
+                        <div>#{idx + 1} · round {doc.round_num}</div>
+                        <div>{new Date(doc.ts * 1000).toLocaleTimeString()}</div>
+                      </div>
+                    </div>
+                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11px] leading-relaxed text-primary-900">
+                      {JSON.stringify(doc.payload, null, 2)}
+                    </pre>
+                  </div>
+                ))
+            )}
           </div>
         ) : null}
 

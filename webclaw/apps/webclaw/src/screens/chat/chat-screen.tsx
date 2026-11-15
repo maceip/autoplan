@@ -1206,6 +1206,7 @@ export function ChatScreen({
               onRunFinished={finishRun}
               activeTab={inspectorTab}
               onTabChange={setInspectorTab}
+              sessionKey={activeCanonicalKey}
             />
           </div>
         ) : null}
