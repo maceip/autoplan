@@ -19,7 +19,7 @@ def tex(name, w, h, seed=0.0):
 # ------------------------------------------------------------------ 01
 def slide1():
     s = Slide(1, "Title & provocation")
-    s.frame("STANFORD UIST 2014  →  AUTOPLAN 2026", "01 / 06")
+    s.frame("STANFORD UIST 2014  →  AUTOPLAN 2026", "01 / 07")
 
     # colour panel on the right, exactly as the theme's title master
     s.pic(tex("yellow", 940, 1080), 980, 0, 940, 1080)
@@ -36,7 +36,7 @@ def slide1():
            F_SANS, 26, "#B4B4B4", line=1.42)
 
     s.rule(M, 806, 690, WHITE, 0.18, 1.0)
-    label(s, M, 826, 690, "AUTOPLAN KEYNOTE  ·  6 SLIDES  ·  12 MINUTES", DIM, 16, 0.18)
+    label(s, M, 826, 690, "AUTOPLAN KEYNOTE  ·  7 SLIDES  ·  14 MINUTES", DIM, 16, 0.18)
 
     s.notes = (
         "OPEN (0:00) — Ten years ago at UIST 2014, Stanford's Flash Teams asked how you "
@@ -59,7 +59,7 @@ def slide1():
 # ------------------------------------------------------------------ 02
 def slide2():
     s = Slide(2, "The 10-year audit")
-    s.frame("THE 10-YEAR AUDIT", "02 / 06")
+    s.frame("THE 10-YEAR AUDIT", "02 / 07")
 
     eyebrow(s, M, 148, "TRIAGE")
     s.text(M, 184, 1300, "What is obsolete.", F_DISPLAY, 72, WHITE, line=1.02, track=-0.012)
@@ -136,7 +136,7 @@ def slide2():
 # ------------------------------------------------------------------ 03
 def slide3():
     s = Slide(3, "Deterministic verification gates")
-    s.frame("THE 2014 BLIND SPOT", "03 / 06")
+    s.frame("THE 2014 BLIND SPOT", "03 / 07")
 
     eyebrow(s, M, 148, "CLOSING THE GAP")
     headline(s, 186, "Deterministic verification\nat every boundary", 74, WHITE, w=1200, line=1.02)
@@ -217,7 +217,7 @@ def slide3():
 # ------------------------------------------------------------------ 04
 def slide4():
     s = Slide(4, "Pillar I — handoffs & leadership")
-    s.frame("AUTOPLAN  ·  PILLAR I", "04 / 06")
+    s.frame("AUTOPLAN  ·  PILLAR I", "04 / 07")
 
     eyebrow(s, M, 148, "STRUCTURED HANDOFFS")
     headline(s, 186, "Distributed leadership,\nzero shared transcripts", 70, WHITE, w=1240, line=1.02)
@@ -305,7 +305,7 @@ def slide4():
 # ------------------------------------------------------------------ 05
 def slide5():
     s = Slide(5, "Pillar II — dynamic elasticity")
-    s.frame("AUTOPLAN  ·  PILLAR II", "05 / 06")
+    s.frame("AUTOPLAN  ·  PILLAR II", "05 / 07")
 
     eyebrow(s, M, 148, "DYNAMIC ELASTICITY")
     headline(s, 186, "Fork / join across worktrees", 70, WHITE, w=1500, line=1.02)
@@ -394,10 +394,104 @@ def slide5():
     return s
 
 
+
 # ------------------------------------------------------------------ 06
 def slide6():
-    s = Slide(6, "Synthesis & demo cue")
-    s.frame("LONG LIVE FLASHTEAMS", "06 / 06")
+    s = Slide(6, "State of the art — Jetski")
+    s.frame("LET'S CHECK THE FRONTIER", "06 / 07")
+
+    eyebrow(s, M, 148, "THE FRONTIER CHECK")
+    s.text(M, 180, 1420, "Let's check the frontier.", F_DISPLAY, 64, WHITE, line=1.08, track=-0.012)
+    s.text(M, 250, 1420, "Were we close?", F_DISPLAY, 64, YELLOW, line=1.08, track=-0.012)
+    s.text(M, 332, 1280,
+           "We reverse-engineered Antigravity's agent runtime — internal name Jetski — "
+           "to check which of the four primitives actually shipped as code.",
+           F_SANS, 23, "#A6A6A6", line=1.32)
+
+    ty = 430
+    colx = (M, 168, 636, 1540)
+    label(s, colx[0], ty, 50, "#", DIM, 15, 0.18)
+    label(s, colx[1], ty, 440, "FLASH TEAMS  ·  2014", DIM, 15, 0.18)
+    label(s, colx[2], ty, 860, "JETSKI  ·  WHAT THE BINARY DOES", YELLOW, 15, 0.18)
+    label(s, colx[3], ty, 250, "STATUS", DIM, 15, 0.18)
+    s.rule(M, ty + 30, W - 2 * M, WHITE, 0.30, 1.0)
+
+    rows = [
+        ("01", "Typed I/O contracts",
+         "SubagentSpec{Role, SystemPrompt, Workspace} + typed stage_artifact file",
+         "Only the artifact crosses the boundary, never the upstream reasoning trace.",
+         "SHIPPED", GREEN),
+        ("02", "Automated composition",
+         "Stage DAG with goal_template · decide_spawn table · re-partition past 32 nodes",
+         "A language model compiles the graph from a template; no STRIPS planner derives it.",
+         "PARTIAL", YELLOW),
+        ("03", "Structured handoffs",
+         "HandoffStep / HandbackStep / ReviewStep + handoff.md, BRIEFING.md",
+         "Escalation ladder Retry / Replace / Degrade; self-succession at 16 spawns.",
+         "SHIPPED", GREEN),
+        ("04", "Dynamic elasticity",
+         "Battle Mode best-of-N · ForkConversation · swarm lanes 1/3/5/9",
+         "Tournament tree [32,16,8,5,1]; invoke_subagent dispatches in batches of 16.",
+         "SHIPPED", GREEN),
+    ]
+
+    y = ty + 46
+    for i, (num, name, mono, desc, status, col) in enumerate(rows):
+        s.text(colx[0], y + 2, 50, num, F_DISPLAY, 23, "#6E6E6E", track=-0.02)
+        s.text(colx[1], y, 440, name, F_SANS, 23, WHITE, bold=True)
+        s.text(colx[2], y - 2, 860, mono, F_MONO, 16, "#C9C9C9", line=1.3)
+        s.text(colx[2], y + 26, 860, desc, F_SANS, 18, "#8E8E8E", line=1.3)
+        s.rect(colx[3], y + 4, 12, 12, fill=col)
+        s.text(colx[3] + 22, y - 2, 200, status, F_MONO, 15, col, track=0.14)
+        s.rule(M, y + 80, W - 2 * M, WHITE, 0.10 if i < 3 else 0.30, 1.0)
+        y += 92
+
+    # takeaway
+    s.rect(M, 852, 8, 92, fill=YELLOW)
+    s.text(M + 34, 848, 1600,
+           "Three of four shipped as code. The gap is real: Jetski assembles pipelines "
+           "from prompt-level stage DAGs and a spawn heuristic; no STRIPS planner "
+           "synthesises the graph.",
+           F_DISPLAY, 27, WHITE, line=1.26, track=-0.004)
+
+    s.notes = (
+        "FRAME (0:00) — Flash Teams / Foundry proposed four mechanisms for assembling "
+        "ephemeral expert teams. We asked which remain evergreen, so we reverse-engineered "
+        "the Antigravity agent runtime — internal name Jetski — and three of the four are "
+        "in production code under different names.\n\n"
+        "1. TYPED I/O (0:15) — Flash Teams' block is required inputs plus role plus "
+        "outputs. Jetski: SubagentSpec carries Role (a 2–5 word job title), SystemPrompt "
+        "and Workspace mode; stage output is a typed file stage_artifact_<stage>_<task>.md "
+        "consumed via {stage_artifact.<stage_name>} substitution. Only the artifact "
+        "crosses the boundary — exactly the context-pollution defence the paper argued "
+        "for.\n\n"
+        "2. STRIPS PLANNING (0:40) — This is the honest gap. Pipeline templates define a "
+        "stage DAG with goal_template substitution; decide_spawn implements the "
+        "When-to-Spawn decision table; planexecute gates on enter/exit plan mode; "
+        "teamwork_layer recursively partitions a level past 32 nodes. DAG synthesis "
+        "exists, but a language model compiles it from a template — no STRIPS planner "
+        "derives it. Say this plainly; it is the point of the slide.\n\n"
+        "3. STRUCTURED HANDOFFS (1:05) — HandoffStep / HandbackStep / ReviewStep with "
+        "handoff.md, BRIEFING.md and progress.md as shared state, an escalation ladder "
+        "Retry then Replace then Degrade, and self-succession at 16 spawns. Concise state "
+        "summary plus verifiable diff plus open questions is exactly the contract.\n\n"
+        "4. FORK / JOIN (1:25) — Battle Mode is literally best-of-N, with "
+        "ForkConversation, per-arm workspace cloning, and merge strategies SAFE_MERGE / "
+        "MERGE_WITH_CONFLICTS / OVERWRITE / DISCARD. Swarm lanes are sized 1/3/5/9, "
+        "aggregation runs a mandatory tournament tree [32,16,8,5,1], and invoke_subagent "
+        "dispatches in batches of 16.\n\n"
+        "BOTTOM LINE — The 2014 vision was right about the primitives. What changed is "
+        "that the planner became a language model and the block became a typed subagent "
+        "spec, and elasticity is now cheap enough to run best-of-N by default.\n\n"
+        "BEAT SHEET — 90s. Do not oversell: 3 of 4, and the missing one is the planner."
+    )
+    return s
+
+
+# ------------------------------------------------------------------ 07
+def slide7():
+    s = Slide(7, "Synthesis & demo cue")
+    s.frame("LONG LIVE FLASHTEAMS", "07 / 07")
 
     eyebrow(s, M, 148, "SYNTHESIS")
     headline(s, 186, "FlashTeams is dead.\nLong live FlashHandoff.", 74, WHITE, w=1300, line=1.02)
@@ -414,7 +508,7 @@ def slide6():
         ("BOUNDARY TRUST", "Implicit human sanity check",
          "VerificationGate + PolicyGuardian + CriticWorker"),
     ]
-    ty = 378
+    ty = 366
     colx = (M, 620, 1180)
     label(s, colx[0], ty, 400, "DIMENSION", DIM, 16, 0.18)
     label(s, colx[1], ty, 540, "STANFORD FOUNDRY  ·  UIST 2014", DIM, 16, 0.18)
@@ -426,19 +520,19 @@ def slide6():
         s.text(colx[0], y + 8, 460, dim, F_MONO, 19, "#B0B0B0", track=0.10, caps=True)
         s.text(colx[1], y + 4, 520, old, F_SANS, 22, "#7C7C7C", line=1.26)
         s.text(colx[2], y + 4, 600, new, F_SANS, 22, "#EDEDED", line=1.26)
-        y += 68
+        y += 64
         s.rule(M, y - 16, W - 2 * M, WHITE, 0.12 if i < 4 else 0.30, 1.0)
 
     # takeaway
-    s.rect(M, 758, 8, 96, fill=YELLOW)
-    s.text(M + 34, 754, 1620,
+    s.rect(M, 716, 8, 92, fill=YELLOW)
+    s.text(M + 34, 712, 1640,
            "Stop building multi-agent systems as giant group chats. Keep stateless typed "
            "handoffs and elastic fork/join DAGs, then replace human boundary judgement "
            "with deterministic gates.",
-           F_DISPLAY, 28, WHITE, line=1.26, track=-0.004)
+           F_DISPLAY, 26, WHITE, line=1.26, track=-0.004)
 
     # live workbench callout — three columns of the running app
-    label(s, M, 852, 700, "LIVE DEMO  ·  POST /API/PLANAI/TEAMWORK", YELLOW, 15, 0.18)
+    label(s, M, 830, 700, "LIVE DEMO  ·  POST /API/PLANAI/TEAMWORK", YELLOW, 15, 0.18)
     panels = [
         ("PROJECT RAIL", "goal, run history,\npaused workflows"),
         ("LIVE FORK / JOIN DAG", "SvelteFlow lanes, x2\nrevision badges"),
@@ -446,9 +540,9 @@ def slide6():
     ]
     px, pw, gap = M, 552, 20
     for name, desc in panels:
-        s.rect(px, 882, pw, 88, fill="#0C0C0C", line=WHITE, lw=1.0)
-        s.text(px + 18, 898, pw - 36, name, F_MONO, 16, WHITE, track=0.14, caps=True)
-        s.text(px + 18, 924, pw - 36, desc, F_SANS, 17, "#8E8E8E", line=1.28)
+        s.rect(px, 858, pw, 88, fill="#0C0C0C", line=WHITE, lw=1.0)
+        s.text(px + 18, 874, pw - 36, name, F_MONO, 16, WHITE, track=0.14, caps=True)
+        s.text(px + 18, 900, pw - 36, desc, F_SANS, 17, "#8E8E8E", line=1.28)
         px += pw + gap
 
     s.notes = (
@@ -473,4 +567,4 @@ def slide6():
 
 
 def all_slides():
-    return [slide1(), slide2(), slide3(), slide4(), slide5(), slide6()]
+    return [slide1(), slide2(), slide3(), slide4(), slide5(), slide6(), slide7()]
