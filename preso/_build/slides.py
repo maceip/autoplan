@@ -16,6 +16,15 @@ def tex(name, w, h, seed=0.0):
     return p
 
 
+def texb(name, w, h, period, contrast=0.30, seed=0.0):
+    """Texture sized for a small block: rib period scaled to the block height."""
+    p = os.path.join(TEX, f"{name}_b{w}x{h}_{period}_{contrast}.png")
+    if not os.path.exists(p):
+        texture.build(name, w, h, seed=seed, period=period,
+                      contrast=contrast, softness=0.5).save(p)
+    return p
+
+
 # ------------------------------------------------------------------ 01
 def slide1():
     s = Slide(1, "Title & provocation")
@@ -30,13 +39,10 @@ def slide1():
     s.text(M, 436, 800, "Long live FlashTeams.", F_DISPLAY, 52, YELLOW, track=-0.012)
 
     s.text(M, 552, 690,
-           "Ten years after Retelny et al. compressed a multi-week software "
-           "schedule into eighteen hours with a crowd of strangers — what, "
-           "if anything, still matters now that the crowd is a model?",
+           "Ten years ago Retelny et al. shipped an Android app in eighteen hours "
+           "with a crowd of strangers. The crowd is gone. The question isn't.",
            F_SANS, 26, "#B4B4B4", line=1.42)
 
-    s.rule(M, 806, 690, WHITE, 0.18, 1.0)
-    label(s, M, 826, 690, "AUTOPLAN KEYNOTE  ·  7 SLIDES  ·  14 MINUTES", DIM, 16, 0.18)
 
     s.notes = (
         "OPEN (0:00) — Ten years ago at UIST 2014, Stanford's Flash Teams asked how you "
@@ -64,42 +70,42 @@ def slide2():
     eyebrow(s, M, 148, "TRIAGE")
     s.text(M, 184, 1300, "What is obsolete.", F_DISPLAY, 72, WHITE, line=1.02, track=-0.012)
     s.text(M, 256, 1300, "What is worth keeping.", F_DISPLAY, 72, YELLOW, line=1.02, track=-0.012)
+    s.text(M, 342, 1300, "Four survived the decade. The paper never said who checks the work.",
+           F_SANS, 23, "#8E8E8E")
 
     # ---- left: discard
     x = M
-    s.rect(x, 386, 26, 26, fill=MAGENTA)
-    label(s, x + 44, 386, 500, "DISCARD", MAGENTA, 20, 0.22)
-    s.text(x, 424, 720, "Human coordination friction", F_DISPLAY, 40, WHITE, track=-0.01)
+    s.pic(texb("magenta", 34, 34, 18, 0.26), x, 394, 34, 34)
+    label(s, x + 44, 398, 500, "DISCARD", MAGENTA, 20, 0.22)
+    s.text(x, 436, 720, "Human coordination friction", F_DISPLAY, 40, WHITE, track=-0.01)
 
-    s.rule(x, 500, 740, WHITE, 0.18, 1.0)
-    s.text(x, 522, 740, "Labor & latency economics", F_SANS, 30, WHITE, bold=True)
-    s.text(x, 564, 740,
+    s.rule(x, 512, 740, WHITE, 0.18, 1.0)
+    s.text(x, 534, 740, "Labor & latency economics", F_SANS, 30, WHITE, bold=True)
+    s.text(x, 576, 740,
            "Recruiting at $25–$30/hr, juggling timezones, surviving mid-task "
            "dropouts, celebrating ~18-hour turnarounds.",
            F_SANS, 24, "#A6A6A6", line=1.36)
-    s.text(x, 650, 740, "→  sub-second spin-up · token-marginal cost · API retry",
-           F_MONO, 19, MAGENTA, track=0.02)
+    s.text(x, 662, 740, "Now it is a timeout and a retry.", F_MONO, 19, MAGENTA, track=0.02)
 
-    s.rule(x, 714, 740, WHITE, 0.18, 1.0)
-    s.text(x, 736, 740, "Human-centric Foundry UI", F_SANS, 30, WHITE, bold=True)
-    s.text(x, 778, 740,
-           "Gantt timelines and morale briefs so contractors feel oriented "
-           "without meetings.",
+    s.rule(x, 726, 740, WHITE, 0.18, 1.0)
+    s.text(x, 748, 740, "Human-centric Foundry UI", F_SANS, 30, WHITE, bold=True)
+    s.text(x, 790, 740,
+           "Gantt charts and morale briefs so contractors felt oriented "
+           "without a meeting.",
            F_SANS, 24, "#A6A6A6", line=1.36)
-    s.text(x, 864, 740, "→  agents need state machines, not status decks",
-           F_MONO, 19, MAGENTA, track=0.02)
+    s.text(x, 876, 740, "Agents do not need to feel oriented.", F_MONO, 19, MAGENTA, track=0.02)
 
-    s.vrule(896, 386, 556, WHITE, 0.16, 1.0)
+    s.vrule(896, 398, 556, WHITE, 0.16, 1.0)
 
     # ---- right: keep
     x = 960
-    s.rect(x, 386, 26, 26, fill=GREEN)
-    label(s, x + 44, 386, 500, "KEEP", GREEN, 20, 0.22)
-    s.text(x, 424, 800, "Four computational primitives", F_DISPLAY, 40, WHITE, track=-0.01)
+    s.pic(texb("green", 34, 34, 18, 0.26), x, 394, 34, 34)
+    label(s, x + 44, 398, 500, "KEEP", GREEN, 20, 0.22)
+    s.text(x, 436, 800, "Four computational primitives", F_DISPLAY, 40, WHITE, track=-0.01)
 
     items = [
         ("01", "Typed I/O contracts",
-         "Sub-agents as typed functions. Downstream ingests the schema — never the upstream reasoning."),
+         "A sub-agent is a typed function. Downstream reads the schema, never the reasoning."),
         ("02", "Automated team composition",
          "STRIPS pre/post-conditions compile a custom DAG instead of a hardcoded pipeline."),
         ("03", "Structured handoffs & leadership",
@@ -107,12 +113,12 @@ def slide2():
         ("04", "Dynamic elasticity (fork / join)",
          "Instant parallel fan-out for multi-perspective work, then merge-back synthesis."),
     ]
-    y = 502
+    y = 516
     for num, t, d in items:
         s.text(x, y - 4, 70, num, F_DISPLAY, 34, GREEN, track=-0.02)
         s.text(x + 78, y - 2, 780, t, F_SANS, 28, WHITE, bold=True)
         s.text(x + 78, y + 38, 780, d, F_SANS, 21, "#9E9E9E", line=1.30)
-        y += 122
+        y += 118
         if num != "04":
             s.rule(x, y - 26, 856, WHITE, 0.12, 1.0)
 
@@ -146,8 +152,8 @@ def slide3():
            "Typed handoffs without deterministic gates\njust accelerate cascading hallucination.",
            F_DISPLAY, 40, YELLOW, line=1.18, track=-0.005)
     s.text(M + 34, 480, 1100,
-           "The FlashHandoff law.  2014 trusted a human expert to notice a broken "
-           "handoff; a stochastic model will not.",
+           "The FlashHandoff law.  2014 assumed a human would catch a broken handoff. "
+           "A model will not.",
            F_SANS, 22, "#9E9E9E", line=1.3)
 
     # ---------------- gate diagram
@@ -160,10 +166,10 @@ def slide3():
     arrow_h(s, M + 310, 548, gy + gh // 2, WHITE, 0.5)
 
     # gate
-    s.rect(560, gy - 14, 372, gh + 28, fill="#121200", line=YELLOW, lw=2.0)
-    s.text(584, gy + 2, 320, "DETERMINISTIC GATE", F_MONO, 19, YELLOW, track=0.16, caps=True)
+    s.pic(texb("yellow", 372, gh + 28, 48, 0.24), 560, gy - 14, 372, gh + 28)
+    s.text(584, gy + 2, 320, "DETERMINISTIC GATE", F_MONO, 19, BLACK, track=0.16, caps=True)
     s.text(584, gy + 36, 330, "tests · AST + secret scan\n· PolicyGuardian A–M",
-           F_SANS, 21, "#DCDCDC", line=1.32)
+           F_SANS, 21, "#201E00", line=1.32)
 
     arrow_h(s, 942, 1108, gy + gh // 2, WHITE, 0.5)
 
@@ -196,6 +202,7 @@ def slide3():
         cx += 560
 
     s.notes = (
+        "BRIDGE — Four bones survived. This is the one the paper never wrote down.\n\n"
         "THE WALL (0:00) — Most multi-agent frameworks today reinvent Flash Teams badly "
         "and hit a wall. Why? Because in 2014, when an upstream designer handed off a "
         "broken wireframe, a human engineer implicitly spotted the nonsense.\n\n"
@@ -222,8 +229,8 @@ def slide4():
     eyebrow(s, M, 148, "STRUCTURED HANDOFFS")
     headline(s, 186, "Distributed leadership,\nzero shared transcripts", 70, WHITE, w=1240, line=1.02)
     s.text(M, 330, 1200,
-           "Typed artifacts travel forward; explicit escalation travels backward. "
-           "No worker ever ingests another worker's reasoning.",
+           "Artifacts go forward. Escalations come back. No worker ever reads "
+           "another worker's reasoning.",
            F_SANS, 24, "#A6A6A6", line=1.34)
 
     # ---------------- chain
@@ -282,6 +289,7 @@ def slide4():
         cx += 560
 
     s.notes = (
+        "BRIDGE — Every boundary now has a gate. The next question is what crosses it.\n\n"
         "STATELESS CONTEXT TRANSFER (0:00) — In AutoPlan, sub-agents share zero "
         "conversation memory. SubtaskFanOutWorker emits a SubAgentDirectiveTask "
         "containing only the role objective, the repo base branch, and disjoint "
@@ -310,8 +318,8 @@ def slide5():
     eyebrow(s, M, 148, "DYNAMIC ELASTICITY")
     headline(s, 186, "Fork / join across worktrees", 70, WHITE, w=1500, line=1.02)
     s.text(M, 276, 1300,
-           "Sub-second spin-up turns the 2014 crowd's human branching into parallel "
-           "worktree fan-out — with deterministic merge-back.",
+           "The crowd branched in hours. Agents branch in milliseconds. "
+           "Merging is still the hard part.",
            F_SANS, 24, "#A6A6A6", line=1.34)
 
     # ---------------- fan-out diagram
@@ -326,13 +334,14 @@ def slide5():
     label(s, 410, top + 20, 214, "FAN-OUT", WHITE, 16, 0.14)
     s.text(410, top + 46, 214, "SubAgentHub · max 128", F_MONO, 16, "#C9C9C9")
 
-    lanes = [("subagent_1", "Claude · backend"), ("subagent_2", "Codex · frontend"),
-             ("subagent_N", "Gemini · tests")]
-    for i, (n, r) in enumerate(lanes):
+    lanes = [("subagent_1", "Claude · backend", "blue", WHITE, "#D8ECFB"),
+             ("subagent_2", "Codex · frontend", "orange", "#1A0C02", "#3A1E06"),
+             ("subagent_N", "Gemini · tests", "green", "#06180B", "#14401C")]
+    for i, (n, r, col, fg, sub) in enumerate(lanes):
         yy = 372 + i * 76
-        s.rect(700, yy, 310, 64, fill="#0E0E0E", line=WHITE, lw=1.0)
-        s.text(718, yy + 9, 274, n, F_MONO, 18, WHITE)
-        s.text(718, yy + 34, 274, r, F_SANS, 17, "#8E8E8E")
+        s.pic(texb(col, 310, 64, 36, 0.24), 700, yy, 310, 64)
+        s.text(718, yy + 9, 274, n, F_MONO, 18, fg)
+        s.text(718, yy + 34, 274, r, F_SANS, 17, sub)
         s.arrow(646, mid, 696, yy + 32, WHITE, 0.34, 1.4, 7)
 
     card(s, 1056, top, 250, bh)
@@ -373,6 +382,7 @@ def slide5():
         cx += 560
 
     s.notes = (
+        "BRIDGE — One planner, one fan-out. Now let the fan-out run at the same time.\n\n"
         "ON-DEMAND FORK (0:00) — Where Foundry needed 15–30 minutes to recruit parallel "
         "human contractors, AutoPlan's decide_spawn evaluates task complexity in "
         "microseconds and SubtaskFanOutWorker dynamically mutates the live SvelteFlow "
@@ -404,8 +414,8 @@ def slide6():
     s.text(M, 180, 1420, "Check the frontier.", F_DISPLAY, 64, WHITE, line=1.08, track=-0.012)
     s.text(M, 250, 1420, "Were we close?", F_DISPLAY, 64, YELLOW, line=1.08, track=-0.012)
     s.text(M, 332, 1280,
-           "We reverse-engineered Antigravity's agent runtime — internal name Jetski — "
-           "to check which of the four primitives actually shipped as code.",
+           "We took apart Antigravity's agent runtime, Jetski, to see which of the "
+           "four primitives actually shipped.",
            F_SANS, 23, "#A6A6A6", line=1.32)
 
     ty = 430
@@ -449,12 +459,13 @@ def slide6():
     # takeaway
     s.rect(M, 852, 8, 92, fill=YELLOW)
     s.text(M + 34, 848, 1600,
-           "Three of four shipped as code. The gap is real: Jetski assembles pipelines "
-           "from prompt-level stage DAGs and a spawn heuristic; no STRIPS planner "
-           "synthesises the graph.",
+           "Three of four shipped. The one that did not is the interesting one: "
+           "Jetski builds its pipeline from a prompt template and a spawn heuristic. "
+           "No planner derives it.",
            F_DISPLAY, 27, WHITE, line=1.26, track=-0.004)
 
     s.notes = (
+        "BRIDGE — That is our stack. Time to check it against someone else's.\n\n"
         "FRAME (0:00) — Flash Teams / Foundry proposed four mechanisms for assembling "
         "ephemeral expert teams. We asked which remain evergreen, so we reverse-engineered "
         "the Antigravity agent runtime — internal name Jetski — and three of the four are "
@@ -523,27 +534,15 @@ def slide7():
         y += 64
         s.rule(M, y - 16, W - 2 * M, WHITE, 0.12 if i < 4 else 0.30, 1.0)
 
-    # takeaway
-    s.rect(M, 716, 8, 92, fill=YELLOW)
-    s.text(M + 34, 712, 1640,
-           "Stop building multi-agent systems as giant group chats. Keep stateless typed "
-           "handoffs and elastic fork/join DAGs, then replace human boundary judgement "
-           "with deterministic gates.",
-           F_DISPLAY, 26, WHITE, line=1.26, track=-0.004)
-
-    # live workbench callout — three columns of the running app
-    label(s, M, 830, 700, "LIVE DEMO  ·  POST /API/PLANAI/TEAMWORK", YELLOW, 15, 0.18)
-    panels = [
-        ("PROJECT RAIL", "goal, run history,\npaused workflows"),
-        ("LIVE FORK / JOIN DAG", "SvelteFlow lanes, x2\nrevision badges"),
-        ("GATE REVIEW", "diff + PolicyGuardian,\ntrajectory revert"),
-    ]
-    px, pw, gap = M, 552, 20
-    for name, desc in panels:
-        s.rect(px, 858, pw, 88, fill="#0C0C0C", line=WHITE, lw=1.0)
-        s.text(px + 18, 874, pw - 36, name, F_MONO, 16, WHITE, track=0.14, caps=True)
-        s.text(px + 18, 900, pw - 36, desc, F_SANS, 17, "#8E8E8E", line=1.28)
-        px += pw + gap
+    # close: full-bleed colour field, black type — the theme's own move
+    s.pic(texb("yellow", 1920, 190, 58, 0.24), 0, 756, 1920, 190)
+    s.text(M, 782, 1660,
+           "Stop building multi-agent systems as group chats. Keep the typed handoffs "
+           "and the fork/join. Put a gate where the human used to stand.",
+           F_DISPLAY, 27, BLACK, line=1.24, track=-0.004)
+    s.text(M, 868, 1500,
+           "DEMO  ·  POST /API/PLANAI/TEAMWORK  ·  fork, gate, x2 badge, merge",
+           F_MONO, 16, "#2A2800", track=0.14, caps=True)
 
     s.notes = (
         "THESIS (0:00) — Group chats don't ship software; typed DAGs with deterministic "

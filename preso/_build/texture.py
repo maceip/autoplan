@@ -62,11 +62,12 @@ SPECS = {
 }
 
 
-def build(name, w, h, seed=0.0):
-    color, ang, period, warp = SPECS[name]
-    im = pattern(color, w, h, angle_deg=ang, period=period, warp_px=warp,
-                 contrast=0.40, spec=0.18, softness=0.7, seed=seed)
-    return vignette(im, 0.10)
+def build(name, w, h, seed=0.0, period=None, contrast=0.40, softness=0.7):
+    color, ang, base_period, warp = SPECS[name]
+    per = period if period is not None else base_period
+    im = pattern(color, w, h, angle_deg=ang, period=per, warp_px=warp,
+                 contrast=contrast, spec=0.18, softness=softness, seed=seed)
+    return vignette(im, 0.08)
 
 
 if __name__ == "__main__":

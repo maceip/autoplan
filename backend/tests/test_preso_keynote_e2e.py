@@ -21,10 +21,10 @@ def test_keynote_archive_and_html_manifest_present() -> None:
     assert (PRESO_DIR / "index.html").is_file()
 
     header = json.loads((PRESO_DIR / "assets" / "header.json").read_text(encoding="utf-8"))
-    assert header["slideCount"] == 6
+    assert header["slideCount"] == 8
     assert header["slideWidth"] == 1920
     assert header["slideHeight"] == 1080
-    assert len(header["slideList"]) == 6
+    assert len(header["slideList"]) == 8
 
     for sid in header["slideList"]:
         slide_dir = PRESO_DIR / "assets" / sid
@@ -57,7 +57,7 @@ def test_keynote_html_player_playwright_navigation() -> None:
             box = stage.bounding_box()
             assert box is not None and box["width"] > 0 and box["height"] > 0
 
-            for expected_idx in range(1, 6):
+            for expected_idx in range(1, 8):
                 page.keyboard.press("ArrowRight")
                 page.wait_for_function(
                     "(idx) => window.location.hash === '#' + idx",
@@ -68,7 +68,7 @@ def test_keynote_html_player_playwright_navigation() -> None:
                 assert step_box is not None and step_box["width"] > 0 and step_box["height"] > 0
 
             page.keyboard.press("ArrowLeft")
-            page.wait_for_function("() => window.location.hash === '#4'", timeout=10_000)
+            page.wait_for_function("() => window.location.hash === '#6'", timeout=10_000)
 
             browser.close()
         httpd.shutdown()
