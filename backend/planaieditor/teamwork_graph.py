@@ -927,6 +927,22 @@ class TeamworkOrchestrator:
             if wf_row:
                 orchestrator._on_event("planai_workflow_updated", {"workflow": wf_row})
 
+        def record_handoff(from_node: str, to_node: str, handoff_task: Task) -> None:
+            """Persist the exact typed Task payload passed across a block boundary."""
+            entry = {
+                "ts": time.time(),
+                "from_node": from_node,
+                "to_node": to_node,
+                "task_type": type(handoff_task).__name__,
+                "round_num": int(getattr(handoff_task, "round_num", round_num) or round_num),
+                "payload": handoff_task.model_dump(mode="json"),
+            }
+            with state_lock:
+                result_meta.setdefault("handoffs", []).append(entry)
+                wf_row = orchestrator.store.update_workflow(wf_id, result=result_meta)
+            if wf_row:
+                orchestrator._on_event("planai_workflow_updated", {"workflow": wf_row})
+
         def _build_team_plan_from_parsed(
             task: ProjectContextTask,
             parsed: Optional[LLMTeamPlanTask],
@@ -1345,6 +1361,7 @@ class TeamworkOrchestrator:
                         max_rounds=task.max_rounds,
                         existing_queue_item_id=task.existing_queue_item_id,
                     )
+                    record_handoff("SubtaskFanOutWorker", f"subagent_{idx + 1}", directive)
                     self.publish_work(directive, input_task=task)
                 update_graph_state(
                     "SubtaskFanOutWorker",
@@ -1575,6 +1592,7 @@ class TeamworkOrchestrator:
                     max_rounds=task.max_rounds,
                     existing_queue_item_id=task.existing_queue_item_id,
                 )
+                record_handoff(lane_id, "TeamSynthesisJoiner", out_task)
                 self.publish_work(out_task, input_task=task)
                 update_graph_state(
                     "MultiAgentDispatchWorker",
@@ -1953,6 +1971,7 @@ class TeamworkOrchestrator:
                 max_rounds=task.max_rounds,
                 existing_queue_item_id=task.existing_queue_item_id,
             )
+            record_handoff("CriticWorker", "ChiefEscalationSink", critiqued)
             worker_self.publish_work(critiqued, input_task=task)
             update_graph_state(
                 "CriticWorker",
