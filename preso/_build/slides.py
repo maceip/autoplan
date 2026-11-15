@@ -398,10 +398,10 @@ def slide5():
 # ------------------------------------------------------------------ 06
 def slide6():
     s = Slide(6, "State of the art — Jetski")
-    s.frame("LET'S CHECK THE FRONTIER", "06 / 07")
+    s.frame("FRONTIER CHECK", "06 / 07")
 
-    eyebrow(s, M, 148, "THE FRONTIER CHECK")
-    s.text(M, 180, 1420, "Let's check the frontier.", F_DISPLAY, 64, WHITE, line=1.08, track=-0.012)
+    eyebrow(s, M, 148, "STATE OF THE ART")
+    s.text(M, 180, 1420, "Check the frontier.", F_DISPLAY, 64, WHITE, line=1.08, track=-0.012)
     s.text(M, 250, 1420, "Were we close?", F_DISPLAY, 64, YELLOW, line=1.08, track=-0.012)
     s.text(M, 332, 1280,
            "We reverse-engineered Antigravity's agent runtime — internal name Jetski — "
