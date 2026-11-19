@@ -1,147 +1,131 @@
-@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:opsz,wght@8..120,400..800&family=JetBrains+Mono:wght@400;500&display=swap');
-@import 'tailwindcss';
+@layer reset, theme, base, astryx-base, astryx-theme, components, utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:opsz,wght@8..120,400..800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
 @source "../../../node_modules/streamdown/dist/*.js";
+@import "@astryxdesign/core/reset.css";
+@import "@astryxdesign/core/astryx.css";
+@import "@astryxdesign/theme-neutral/theme.css";
+@import "@astryxdesign/theme-stone/theme.css";
+@import "@astryxdesign/theme-matcha/theme.css";
+@import "@astryxdesign/theme-butter/theme.css";
+@import "@astryxdesign/theme-chocolate/theme.css";
+@import "@astryxdesign/core/tailwind-theme.css";
+@import "tailwindcss/utilities.css" layer(utilities);
 
-.root {
-  isolation: isolate;
-}
+@custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
 
-@custom-variant dark (&:where(.dark, .dark *));
-
-@theme {
+@theme reference inline {
   --color-transparent: transparent;
   --color-current: currentColor;
-  --color-surface: var(--color-white);
-  --color-ink: var(--color-black);
+  --color-ink: var(--color-text-primary);
+  --color-surface-dim: var(--color-background-body);
+  --color-surface-deep: var(--color-background-body);
+  --color-ag-accent: var(--color-accent);
+  --color-ag-green: var(--color-success);
 
-  --color-primary-50: oklch(0.992 0.002 80);
-  --color-primary-100: oklch(0.9821 0 89.88);
-  --color-primary-200: oklch(0.9461 0 89.88);
-  --color-primary-300: oklch(0.95 0.004 80);
-  --color-primary-400: oklch(0.875 0.005 80);
-  --color-primary-500: oklch(0.785 0.006 80);
-  --color-primary-600: oklch(0.67 0.007 80);
-  --color-primary-700: oklch(0.56 0.006 80);
-  --color-primary-800: oklch(0.45 0.005 80);
-  --color-primary-900: oklch(0.35 0.004 80);
-  --color-primary-950: oklch(0.25 0.003 80);
-  --font-sans:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu',
-    'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
-  --font-serif: 'EB Garamond', serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --color-primary-50: var(--color-background-body);
+  --color-primary-100: var(--color-background-surface);
+  --color-primary-200: var(--color-background-muted);
+  --color-primary-300: var(--color-border);
+  --color-primary-400: var(--color-border-emphasized);
+  --color-primary-500: var(--color-text-disabled);
+  --color-primary-600: var(--color-text-secondary);
+  --color-primary-700: var(--color-text-secondary);
+  --color-primary-800: var(--color-text-primary);
+  --color-primary-900: var(--color-text-primary);
+  --color-primary-950: var(--color-text-primary);
+
+  --font-serif: 'EB Garamond', Georgia, serif;
 }
 
-.dark {
-  color-scheme: dark;
-  --color-primary-50: #06303b;
-  --color-primary-100: #0c3540;
-  --color-primary-200: #133b45;
-  --color-primary-300: #1e444e;
-  --color-primary-400: #3a5860;
-  --color-primary-500: #586e75;
-  --color-primary-600: #6b8184;
-  --color-primary-700: #839496;
-  --color-primary-800: #93a1a1;
-  --color-primary-900: #c9d8db;
-  --color-primary-950: #e6f0f2;
+@layer base {
+  html,
+  body {
+    margin: 0;
+    background-color: var(--color-background-body);
+    color: var(--color-text-primary);
+    font-family:
+      var(--font-family-body, 'Inter'), -apple-system, BlinkMacSystemFont,
+      'Segoe UI', Roboto, sans-serif;
+    max-width: 100vw;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior: none;
+  }
 
-  --color-surface: #002b36;
-  --color-surface-dim: #002028;
-  --color-surface-deep: #002028;
-  --color-ink: #e6f0f2;
-  --color-ag-accent: #268bd2;
-  --color-ag-green: #7aae66;
-}
-
-.light {
-  color-scheme: light;
-}
-
-.system {
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  .system {
-    color-scheme: dark;
-    --color-primary-50: #06303b;
-    --color-primary-100: #0c3540;
-    --color-primary-200: #133b45;
-    --color-primary-300: #1e444e;
-    --color-primary-400: #3a5860;
-    --color-primary-500: #586e75;
-    --color-primary-600: #6b8184;
-    --color-primary-700: #839496;
-    --color-primary-800: #93a1a1;
-    --color-primary-900: #c9d8db;
-    --color-primary-950: #e6f0f2;
-    --color-surface: #002b36;
-    --color-surface-dim: #002028;
-    --color-surface-deep: #002028;
-    --color-ink: #e6f0f2;
-    --color-ag-accent: #268bd2;
-    --color-ag-green: #7aae66;
+  code {
+    font-family:
+      var(--font-family-code, 'JetBrains Mono'), Menlo, Monaco, Consolas,
+      'Courier New', monospace;
   }
 }
 
-html,
-body {
-  @apply m-0 font-sans;
-  max-width: 100vw;
-  overflow-x: hidden;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  overscroll-behavior: none;
-}
+@layer components {
+  .root {
+    isolation: isolate;
+    max-width: 100vw;
+    overflow-x: hidden;
+    background-color: var(--color-background-body);
+    color: var(--color-text-primary);
+  }
 
-.root {
-  max-width: 100vw;
-  overflow-x: hidden;
-}
+  .astryx-glass-dock {
+    background: color-mix(in oklch, var(--color-background-card) 88%, transparent);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-container);
+    box-shadow: var(--shadow-med);
+  }
 
-.inline-code {
-  background: var(--color-primary-100);
-  border: 1px solid var(--color-primary-200);
-  border-radius: 0.375rem;
-  color: var(--color-primary-800);
-  font-family:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', 'Courier New', monospace;
-  font-size: 0.9em;
-  padding: 0.1rem 0.375rem;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
+  .astryx-card-subtle {
+    background: var(--color-background-card);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-container);
+    box-shadow: var(--shadow-low);
+  }
 
-.code-block {
-  max-width: 100%;
-  min-width: 0;
-}
+  .inline-code {
+    background: var(--color-background-muted);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-inner);
+    color: var(--color-text-primary);
+    font-family:
+      var(--font-family-code, 'JetBrains Mono'), ui-monospace, SFMono-Regular,
+      Menlo, Monaco, Consolas, 'Courier New', monospace;
+    font-size: 0.875em;
+    padding: 0.1rem 0.375rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 
-.code-block pre,
-.code-block .shiki {
-  background: transparent !important;
-  margin: 0;
-  max-width: 100%;
-  overflow-x: auto;
-  min-width: 0;
-  width: 100%;
-}
+  .code-block {
+    max-width: 100%;
+    min-width: 0;
+  }
 
-.code-block pre code,
-.code-block .shiki code {
-  display: block;
-  font-size: 0.875rem;
-  line-height: 1.5;
-  min-width: 0;
-  max-width: 100%;
-  width: 0;
-}
+  .code-block pre,
+  .code-block .shiki {
+    background: transparent !important;
+    margin: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    min-width: 0;
+    width: 100%;
+  }
 
-code {
-  font-family:
-    'JetBrains Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
+  .code-block pre code,
+  .code-block .shiki code {
+    display: block;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    min-width: 0;
+    max-width: 100%;
+    width: 0;
+  }
 }
 
 @keyframes shimmer {

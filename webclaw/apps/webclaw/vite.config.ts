@@ -20,6 +20,9 @@ const config = defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  ssr: {
+    noExternal: [/@astryxdesign/, '@stylexjs/stylex'],
+  },
   plugins: [
     // devtools(),
     // this is the plugin that enables path aliases

@@ -5,36 +5,56 @@ import {
   createRootRoute,
 } from '@tanstack/react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { AstryxWorkbenchProvider } from '../lib/astryx-theme'
 
 import appCss from '../styles.css?url'
 
 const themeScript = `
 (() => {
   try {
-    const stored = localStorage.getItem('chat-settings')
-    let theme = 'dark'
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      const storedTheme = parsed?.state?.settings?.theme
-      if (storedTheme === 'light' || storedTheme === 'dark' || storedTheme === 'system') {
-        theme = storedTheme
+    let colorMode = 'dark'
+    let themeSlug = 'neutral'
+    const astryxStored = localStorage.getItem('autoplan-astryx-prefs')
+    if (astryxStored) {
+      const parsed = JSON.parse(astryxStored)
+      if (parsed?.colorMode === 'light' || parsed?.colorMode === 'dark' || parsed?.colorMode === 'system') {
+        colorMode = parsed.colorMode
+      }
+      if (['neutral', 'stone', 'matcha', 'butter', 'chocolate'].includes(parsed?.themeSlug)) {
+        themeSlug = parsed.themeSlug
+      }
+    } else {
+      const stored = localStorage.getItem('chat-settings')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        const storedTheme = parsed?.state?.settings?.theme
+        if (storedTheme === 'light' || storedTheme === 'dark' || storedTheme === 'system') {
+          colorMode = storedTheme
+        }
       }
     }
     const root = document.documentElement
     const media = window.matchMedia('(prefers-color-scheme: dark)')
     const apply = () => {
+      const resolved = colorMode === 'system' ? (media.matches ? 'dark' : 'light') : colorMode
+      root.setAttribute('data-astryx-theme', themeSlug)
+      root.setAttribute('data-theme', resolved)
       root.classList.remove('light', 'dark', 'system')
-      root.classList.add(theme)
-      if (theme === 'system' && media.matches) {
+      root.classList.add(colorMode)
+      if (colorMode === 'system' && resolved === 'dark') {
         root.classList.add('dark')
       }
+      root.style.colorScheme = resolved
     }
     apply()
     media.addEventListener('change', () => {
-      if (theme === 'system') apply()
+      if (colorMode === 'system') apply()
     })
   } catch {
-    document.documentElement.classList.add('dark')
+    const root = document.documentElement
+    root.setAttribute('data-astryx-theme', 'neutral')
+    root.setAttribute('data-theme', 'dark')
+    root.classList.add('dark')
   }
 })()
 `
@@ -58,7 +78,7 @@ export const Route = createRootRoute({
       },
       {
         name: 'theme-color',
-        content: '#002b36',
+        content: '#141413',
       },
       {
         property: 'og:title',
@@ -120,14 +140,22 @@ const queryClient = new QueryClient()
 function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Outlet />
+      <AstryxWorkbenchProvider>
+        <Outlet />
+      </AstryxWorkbenchProvider>
     </QueryClientProvider>
   )
 }
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      data-astryx-theme="neutral"
+      data-theme="dark"
+      className="dark"
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <HeadContent />

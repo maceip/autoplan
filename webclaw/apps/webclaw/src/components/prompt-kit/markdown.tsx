@@ -95,7 +95,7 @@ const INITIAL_COMPONENTS: Record<string, React.ComponentType<any>> = {
   },
   blockquote: function BlockquoteComponent({ children }) {
     return (
-      <blockquote className="border-l-2 border-primary-300 pl-4 text-primary-900 italic">
+      <blockquote className="my-2 rounded-md border border-border bg-muted px-3.5 py-2 text-secondary italic">
         {children}
       </blockquote>
     )
