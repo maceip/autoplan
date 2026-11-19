@@ -188,10 +188,10 @@ async function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1480,
     height: 920,
-    minWidth: 1024,
-    minHeight: 680,
+    minWidth: 900,
+    minHeight: 560,
     title: 'Nucleus',
-    backgroundColor: '#002028',
+    backgroundColor: '#141413',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition:
       process.platform === 'darwin' ? { x: 14, y: 12 } : undefined,

@@ -43,10 +43,10 @@
 				{@const color = getColorForType(getId(item))}
 				{@const selected = isSelected(item)}
 				<div
-					class="group flex cursor-pointer items-center justify-between rounded p-2 shadow-sm transition-colors {selected
-						? 'border-l-6 border-blue-600 bg-blue-100/70'
-						: 'border-l-4 hover:bg-gray-100/50'}"
-					style={selected ? '' : `border-left-color: ${color}; background-color: ${color}1A;`}
+					class="group flex cursor-pointer items-center justify-between rounded-md border p-2 shadow-sm transition-colors {selected
+						? 'border-blue-600/50 bg-blue-100/70'
+						: 'border-gray-200 hover:bg-gray-100/50'}"
+					style={selected ? '' : `border-color: ${color}40; background-color: ${color}1A;`}
 					data-testid="list-item"
 					data-item-name={getName(item)}
 					onclick={() => onSelect(item)}

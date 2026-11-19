@@ -1,18 +1,55 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark" data-astryx-theme="neutral">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nucleus</title>
     <style>
       :root {
-        --bg-window: #002028;
-        --bg-surface: #002b36;
-        --bg-card: #0c3540;
-        --border-subtle: #133b45;
-        --fg-primary: #e6f0f2;
-        --fg-body: #c9d8db;
-        --fg-muted: #8ca3a8;
+        color-scheme: light dark;
+        --bg-window: light-dark(#f6f6f5, #141413);
+        --bg-surface: light-dark(#fafaf9, #191918);
+        --bg-card: light-dark(#ffffff, #222220);
+        --border-subtle: light-dark(#e4e4e2, #2b2b28);
+        --fg-primary: light-dark(#171717, #f4f4f2);
+        --fg-body: light-dark(#262626, #dfdfd9);
+        --fg-muted: light-dark(#6b6b66, #9c9c94);
+      }
+
+      :root[data-theme='light'] {
+        color-scheme: light;
+      }
+
+      :root[data-theme='dark'] {
+        color-scheme: dark;
+      }
+
+      :root[data-astryx-theme='stone'] {
+        --bg-window: light-dark(#eef1f5, #14171c);
+        --bg-surface: light-dark(#f5f6f8, #191d24);
+        --bg-card: light-dark(#ffffff, #222730);
+        --border-subtle: light-dark(#dce1e8, #2c3340);
+      }
+
+      :root[data-astryx-theme='matcha'] {
+        --bg-window: light-dark(#ebf2ea, #111813);
+        --bg-surface: light-dark(#f3f7f2, #161f18);
+        --bg-card: light-dark(#ffffff, #1e2921);
+        --border-subtle: light-dark(#d8e4d7, #29382d);
+      }
+
+      :root[data-astryx-theme='butter'] {
+        --bg-window: light-dark(#f5efdc, #1b1710);
+        --bg-surface: light-dark(#fbf7eb, #211c13);
+        --bg-card: light-dark(#ffffff, #2b2519);
+        --border-subtle: light-dark(#e8dfc4, #3a3222);
+      }
+
+      :root[data-astryx-theme='chocolate'] {
+        --bg-window: light-dark(#f0e7df, #181210);
+        --bg-surface: light-dark(#f8f3ef, #1f1714);
+        --bg-card: light-dark(#ffffff, #291f1b);
+        --border-subtle: light-dark(#e3d4c8, #382a25);
       }
 
       * {
@@ -28,11 +65,12 @@
         overflow: hidden;
         background: var(--bg-window);
         color: var(--fg-body);
-        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
-          sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter,
+          system-ui, sans-serif;
         font-size: 13px;
         -webkit-font-smoothing: antialiased;
         user-select: none;
+        transition: background-color 180ms ease, color 180ms ease;
       }
 
       .app-root {
@@ -78,27 +116,29 @@
 
       .nav-btn {
         appearance: none;
-        border: 0;
+        border: 1px solid transparent;
         background: transparent;
         color: var(--fg-muted);
         border-radius: 6px;
-        padding: 4px 9px;
+        padding: 4px 10px;
         font-size: 11.5px;
         font-weight: 500;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         gap: 6px;
+        transition: background-color 140ms ease, color 140ms ease;
       }
 
       .nav-btn:hover {
         color: var(--fg-primary);
-        background: rgba(255, 255, 255, 0.05);
+        background: var(--bg-card);
       }
 
       .nav-btn.active {
         background: var(--bg-card);
         color: var(--fg-primary);
+        border-color: var(--border-subtle);
       }
 
       .viewport {
@@ -138,6 +178,14 @@
           >
             Workbench
           </button>
+          <button
+            type="button"
+            class="nav-btn"
+            data-mode="plans"
+            data-testid="nucleus-mode-plans"
+          >
+            Plans
+          </button>
         </nav>
       </header>
 
@@ -152,16 +200,69 @@
     </div>
 
     <script>
-      (async () => {
+      (() => {
+        const root = document.documentElement;
         const wbFrame = document.getElementById('workbench-frame');
-        let webclawUrl = 'https://queue.secure.build';
-        if (window.nucleusDesktop) {
-          const info = await window.nucleusDesktop.getRuntimeInfo();
-          if (info && info.webclawUrl) webclawUrl = info.webclawUrl;
+        const workbenchBtn = document.querySelector('[data-mode="workbench"]');
+        const plansBtn = document.querySelector('[data-mode="plans"]');
+
+        function applyAstryxTheme(slug, resolvedMode) {
+          if (slug) root.setAttribute('data-astryx-theme', slug);
+          if (resolvedMode === 'light' || resolvedMode === 'dark') {
+            root.setAttribute('data-theme', resolvedMode);
+          }
         }
-        wbFrame.src = webclawUrl.endsWith('/new')
-          ? webclawUrl
-          : `${webclawUrl}/new`;
+
+        window.addEventListener('message', (event) => {
+          const msg = event?.data;
+          if (msg && msg.type === 'astryx:theme-changed') {
+            applyAstryxTheme(msg.themeSlug, msg.resolvedMode || msg.colorMode);
+          }
+        });
+
+        let baseUrl = 'https://queue.secure.build';
+
+        workbenchBtn?.addEventListener('click', () => {
+          workbenchBtn.classList.add('active');
+          plansBtn?.classList.remove('active');
+          wbFrame.src = `${baseUrl}/new`;
+        });
+
+        plansBtn?.addEventListener('click', () => {
+          plansBtn.classList.add('active');
+          workbenchBtn?.classList.remove('active');
+          wbFrame.src = `${baseUrl}/plans`;
+        });
+
+        (async () => {
+          if (window.nucleusDesktop) {
+            const info = await window.nucleusDesktop.getRuntimeInfo();
+            if (info && info.webclawUrl) {
+              baseUrl = String(info.webclawUrl).replace(/\/+$/, '').replace(/\/new$/, '');
+            }
+            if (info && info.backendUrl) {
+              try {
+                const res = await fetch(`${info.backendUrl}/api/ui/preferences`);
+                if (res.ok) {
+                  const data = await res.json();
+                  const p = data?.preferences;
+                  if (p) {
+                    const resolved =
+                      p.color_mode === 'system'
+                        ? window.matchMedia('(prefers-color-scheme: dark)').matches
+                          ? 'dark'
+                          : 'light'
+                        : p.color_mode;
+                    applyAstryxTheme(p.theme_slug, resolved);
+                  }
+                }
+              } catch {
+                // Ignore transient startup error
+              }
+            }
+          }
+          wbFrame.src = `${baseUrl}/new`;
+        })();
       })();
     </script>
   </body>

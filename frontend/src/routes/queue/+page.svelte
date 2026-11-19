@@ -271,6 +271,22 @@
 	}
 
 	onMount(() => {
+		void fetch(`${backendUrl || window.location.origin}/api/ui/preferences`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((data) => {
+				const p = data?.preferences;
+				if (!p) return;
+				const root = document.documentElement;
+				if (p.theme_slug) root.setAttribute('data-astryx-theme', p.theme_slug);
+				const resolved =
+					p.color_mode === 'system'
+						? window.matchMedia('(prefers-color-scheme: dark)').matches
+							? 'dark'
+							: 'light'
+						: p.color_mode || 'dark';
+				root.setAttribute('data-theme', resolved);
+			})
+			.catch(() => {});
 		voiceSupported =
 			typeof (window as unknown as Record<string, unknown>).SpeechRecognition === 'function' ||
 			typeof (window as unknown as Record<string, unknown>).webkitSpeechRecognition === 'function';
@@ -296,22 +312,24 @@
 	});
 </script>
 
-<div class="min-h-screen bg-neutral-950 font-mono text-neutral-100">
-	<header class="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-neutral-800 px-5 py-3">
-		<h1 class="text-lg font-bold tracking-tight">Chief of Staff Queue</h1>
-		<span data-testid="chief-llm-status" class="text-xs text-neutral-400">Chief LLM: {chiefStatus || 'loading…'}</span>
-		<span class="text-xs text-neutral-400">
+<div class="min-h-screen bg-[var(--ax-bg-body)] text-[var(--ax-fg-primary)]">
+	<header class="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-[var(--ax-border)] bg-[var(--ax-bg-surface)] px-5 py-3">
+		<h1 class="text-base font-semibold tracking-tight">Chief of Staff Queue</h1>
+		<span data-testid="chief-llm-status" class="rounded-full border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-2.5 py-0.5 text-xs text-[var(--ax-fg-secondary)]">
+			Chief LLM: {chiefStatus || 'loading…'}
+		</span>
+		<span class="flex flex-wrap items-center gap-2 text-xs text-[var(--ax-fg-secondary)]">
 			{#each Object.entries(counts).filter(([, n]) => n > 0) as [status, n]}
-				<span class="mr-3">{status}: <strong class="text-neutral-100">{n}</strong></span>
+				<span class="rounded-md bg-[var(--ax-bg-muted)] px-2 py-0.5">{status}: <strong class="text-[var(--ax-fg-primary)]">{n}</strong></span>
 			{/each}
 		</span>
-		<span class="ml-auto flex items-center gap-3 text-xs">
+		<span class="ml-auto flex flex-wrap items-center gap-2.5 text-xs">
 			{#if agentServices.length > 0}
 				<select
 					aria-label="Demo task agent"
 					data-testid="queue-agent-select"
 					bind:value={selectedDemoService}
-					class="border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs"
+					class="rounded-lg border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-2.5 py-1.5 text-xs text-[var(--ax-fg-primary)] outline-none"
 				>
 					{#each agentServices as svc}
 						<option value={svc.service} disabled={!svc.dispatch_ready}>
@@ -324,7 +342,7 @@
 					data-testid="queue-demo-task-button"
 					disabled={spinningDemo || !agentServices.find((s) => s.service === selectedDemoService)?.dispatch_ready}
 					onclick={() => void runDemoTask()}
-					class="border border-neutral-100 bg-neutral-100 px-3 py-1 font-bold text-neutral-950 disabled:opacity-40"
+					class="rounded-lg bg-[var(--ax-fg-primary)] px-3 py-1.5 font-semibold text-[var(--ax-bg-body)] shadow-xs transition-opacity hover:opacity-90 disabled:opacity-40"
 				>
 					{spinningDemo ? 'Starting…' : 'Start Demo'}
 				</button>
@@ -334,48 +352,48 @@
 				data-testid="voice-button"
 				disabled={!voiceSupported || !selectedItem}
 				onclick={startVoice}
-				class="border border-neutral-600 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
+				class="rounded-lg border border-[var(--ax-border-strong)] bg-[var(--ax-bg-card)] px-3 py-1.5 font-medium disabled:cursor-not-allowed disabled:opacity-40"
 			>
 				{voiceListening ? 'Listening…' : voiceSupported ? 'Voice command' : 'Voice unsupported in this browser'}
 			</button>
-			<a class="underline" href="/planai-editor">PlanAI Editor</a>
-			<a class="underline" href="/">Workbench</a>
+			<a class="rounded-lg border border-[var(--ax-border)] px-2.5 py-1.5 text-[var(--ax-fg-secondary)] hover:bg-[var(--ax-bg-muted)] hover:text-[var(--ax-fg-primary)]" href="/planai-editor">PlanAI Editor</a>
+			<a class="rounded-lg border border-[var(--ax-border)] px-2.5 py-1.5 text-[var(--ax-fg-secondary)] hover:bg-[var(--ax-bg-muted)] hover:text-[var(--ax-fg-primary)]" href="/">Workbench</a>
 		</span>
 	</header>
 
 	{#if errorMessage}
-		<div data-testid="queue-error" role="alert" class="border-b border-red-900 bg-red-950 px-5 py-2 text-sm text-red-200">
+		<div data-testid="queue-error" role="alert" class="border-b border-red-500/30 bg-red-500/15 px-5 py-2.5 text-sm text-red-400">
 			{errorMessage}
 		</div>
 	{/if}
 
 	{#if pendingVoice && selectedItem}
-		<div data-testid="voice-confirm" class="flex flex-wrap items-center gap-3 border-b border-amber-800 bg-amber-950 px-5 py-2 text-sm">
+		<div data-testid="voice-confirm" class="flex flex-wrap items-center gap-3 border-b border-amber-500/30 bg-amber-500/15 px-5 py-2.5 text-sm">
 			<span>Heard: "{pendingVoice.transcript}" → <strong>{pendingVoice.action}</strong> on "{selectedItem.title}"?</span>
 			<button
 				type="button"
 				data-testid="voice-confirm-yes"
-				class="border border-amber-500 px-3 py-1"
+				class="rounded-md bg-amber-500 px-3 py-1 text-xs font-semibold text-slate-950"
 				onclick={() => {
 					const pending = pendingVoice;
 					pendingVoice = null;
 					if (pending) void decide(pending.action, pending.note);
 				}}>Confirm</button
 			>
-			<button type="button" class="border border-neutral-600 px-3 py-1" onclick={() => (pendingVoice = null)}>Cancel</button>
+			<button type="button" class="rounded-md border border-[var(--ax-border-strong)] px-3 py-1 text-xs" onclick={() => (pendingVoice = null)}>Cancel</button>
 		</div>
 	{/if}
 
 	<div class="grid grid-cols-1 gap-0 lg:grid-cols-[420px_1fr]">
-		<section class="border-r border-neutral-800">
-			<div class="flex flex-wrap gap-1 border-b border-neutral-800 px-3 py-2">
+		<section class="border-r border-[var(--ax-border)] bg-[var(--ax-bg-surface)]">
+			<div class="flex flex-wrap gap-1.5 border-b border-[var(--ax-border)] px-3 py-2.5">
 				{#each STATUS_FILTERS as status}
 					<button
 						type="button"
 						data-testid={`filter-${status || 'all'}`}
-						class="border px-2 py-1 text-xs {statusFilter === status
-							? 'border-neutral-100 bg-neutral-100 text-neutral-950'
-							: 'border-neutral-700 text-neutral-300'}"
+						class="rounded-full border px-2.5 py-1 text-xs font-medium transition-colors {statusFilter === status
+							? 'border-[var(--ax-fg-primary)] bg-[var(--ax-fg-primary)] text-[var(--ax-bg-body)]'
+							: 'border-[var(--ax-border)] bg-[var(--ax-bg-card)] text-[var(--ax-fg-secondary)] hover:text-[var(--ax-fg-primary)]'}"
 						onclick={() => {
 							statusFilter = status;
 							void refreshList();
@@ -383,38 +401,38 @@
 					>
 				{/each}
 			</div>
-			<ul data-testid="queue-list" class="max-h-[60vh] overflow-y-auto">
+			<ul data-testid="queue-list" class="max-h-[60vh] divide-y divide-[var(--ax-border)] overflow-y-auto p-2 space-y-1">
 				{#each items as item}
 					<li>
 						<button
 							type="button"
 							data-testid={`queue-item-${item.id}`}
-							class="block w-full border-b border-neutral-900 px-3 py-2 text-left {item.id === selectedId
-								? 'bg-neutral-800'
-								: 'hover:bg-neutral-900'}"
+							class="block w-full rounded-xl border px-3 py-2.5 text-left transition-colors {item.id === selectedId
+								? 'border-[var(--ax-border-strong)] bg-[var(--ax-bg-card)] shadow-xs'
+								: 'border-transparent hover:bg-[var(--ax-bg-muted)]'}"
 							onclick={() => void selectItem(item.id)}
 						>
 							<span class="flex items-baseline justify-between gap-2">
-								<strong class="text-sm">{item.title}</strong>
-								<span class="text-xs font-bold">P{item.priority}</span>
+								<strong class="truncate text-sm font-semibold">{item.title}</strong>
+								<span class="shrink-0 rounded bg-[var(--ax-bg-muted)] px-1.5 py-0.5 text-[11px] font-semibold">P{item.priority}</span>
 							</span>
-							<span class="mt-0.5 block text-xs text-neutral-400">
+							<span class="mt-1 block truncate text-xs text-[var(--ax-fg-secondary)]">
 								{item.kind} · {item.status} · from {item.source_agent}
 							</span>
 						</button>
 					</li>
 				{:else}
-					<li class="px-3 py-6 text-sm text-neutral-500">Queue is empty for this filter.</li>
+					<li class="px-3 py-6 text-sm text-[var(--ax-fg-secondary)]">Queue is empty for this filter.</li>
 				{/each}
 			</ul>
 
-			<form onsubmit={submitForm} class="space-y-2 border-t border-neutral-800 px-3 py-3 text-xs">
-				<h2 class="text-sm font-bold">Submit work</h2>
-				<label class="block">Source agent
-					<input data-testid="submit-source" bind:value={form.source_agent} class="mt-1 w-full border border-neutral-700 bg-neutral-900 px-2 py-1.5" />
+			<form onsubmit={submitForm} class="space-y-2.5 border-t border-[var(--ax-border)] px-3.5 py-3.5 text-xs">
+				<h2 class="text-sm font-semibold">Submit work</h2>
+				<label class="block text-[var(--ax-fg-secondary)]">Source agent
+					<input data-testid="submit-source" bind:value={form.source_agent} class="mt-1 w-full rounded-lg border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-2.5 py-1.5 text-[var(--ax-fg-primary)] outline-none" />
 				</label>
-				<label class="block">Kind
-					<select data-testid="submit-kind" bind:value={form.kind} class="mt-1 w-full border border-neutral-700 bg-neutral-900 px-2 py-1.5">
+				<label class="block text-[var(--ax-fg-secondary)]">Kind
+					<select data-testid="submit-kind" bind:value={form.kind} class="mt-1 w-full rounded-lg border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-2.5 py-1.5 text-[var(--ax-fg-primary)] outline-none">
 						<option value="task">task</option>
 						<option value="code_change">code_change</option>
 						<option value="decision">decision</option>
@@ -422,113 +440,126 @@
 						<option value="idea">idea</option>
 					</select>
 				</label>
-				<label class="block">Title
-					<input data-testid="submit-title" bind:value={form.title} required class="mt-1 w-full border border-neutral-700 bg-neutral-900 px-2 py-1.5" />
+				<label class="block text-[var(--ax-fg-secondary)]">Title
+					<input data-testid="submit-title" bind:value={form.title} required class="mt-1 w-full rounded-lg border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-2.5 py-1.5 text-[var(--ax-fg-primary)] outline-none" />
 				</label>
-				<label class="block">Body
-					<textarea bind:value={form.body} rows="3" class="mt-1 w-full border border-neutral-700 bg-neutral-900 px-2 py-1.5"></textarea>
+				<label class="block text-[var(--ax-fg-secondary)]">Body
+					<textarea bind:value={form.body} rows="3" class="mt-1 w-full rounded-lg border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-2.5 py-1.5 text-[var(--ax-fg-primary)] outline-none"></textarea>
 				</label>
-				<label class="block">Repo path (code_change)
-					<input bind:value={form.repo_path} class="mt-1 w-full border border-neutral-700 bg-neutral-900 px-2 py-1.5" />
+				<label class="block text-[var(--ax-fg-secondary)]">Repo path (code_change)
+					<input bind:value={form.repo_path} class="mt-1 w-full rounded-lg border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-2.5 py-1.5 font-mono text-[var(--ax-fg-primary)] outline-none" />
 				</label>
 				<div class="grid grid-cols-2 gap-2">
-					<label class="block">Branch
-						<input bind:value={form.branch} class="mt-1 w-full border border-neutral-700 bg-neutral-900 px-2 py-1.5" />
+					<label class="block text-[var(--ax-fg-secondary)]">Branch
+						<input bind:value={form.branch} class="mt-1 w-full rounded-lg border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-2.5 py-1.5 font-mono text-[var(--ax-fg-primary)] outline-none" />
 					</label>
-					<label class="block">Target branch
-						<input bind:value={form.target_branch} class="mt-1 w-full border border-neutral-700 bg-neutral-900 px-2 py-1.5" />
+					<label class="block text-[var(--ax-fg-secondary)]">Target branch
+						<input bind:value={form.target_branch} class="mt-1 w-full rounded-lg border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-2.5 py-1.5 font-mono text-[var(--ax-fg-primary)] outline-none" />
 					</label>
 				</div>
-				<label class="block">Test command
-					<input bind:value={form.test_command} placeholder="pytest -q" class="mt-1 w-full border border-neutral-700 bg-neutral-900 px-2 py-1.5" />
+				<label class="block text-[var(--ax-fg-secondary)]">Test command
+					<input bind:value={form.test_command} placeholder="pytest -q" class="mt-1 w-full rounded-lg border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-2.5 py-1.5 font-mono text-[var(--ax-fg-primary)] outline-none" />
 				</label>
-				<label class="block">Demo URL (screenshot/video evidence)
-					<input bind:value={form.demo_url} placeholder="http://localhost:…" class="mt-1 w-full border border-neutral-700 bg-neutral-900 px-2 py-1.5" />
+				<label class="block text-[var(--ax-fg-secondary)]">Demo URL (screenshot/video evidence)
+					<input bind:value={form.demo_url} placeholder="http://localhost:…" class="mt-1 w-full rounded-lg border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-2.5 py-1.5 font-mono text-[var(--ax-fg-primary)] outline-none" />
 				</label>
-				<button type="submit" data-testid="submit-button" class="border border-neutral-100 bg-neutral-100 px-4 py-2 font-bold text-neutral-950">Submit to chief</button>
+				<button type="submit" data-testid="submit-button" class="rounded-lg bg-[var(--ax-fg-primary)] px-4 py-2 font-semibold text-[var(--ax-bg-body)] shadow-xs transition-opacity hover:opacity-90">Submit to chief</button>
 			</form>
 		</section>
 
-		<section data-testid="queue-detail" class="px-5 py-4">
+		<section data-testid="queue-detail" class="px-6 py-5">
 			{#if selectedItem}
-				<h2 class="text-xl font-bold">{selectedItem.title}</h2>
-				<p class="mt-1 text-xs text-neutral-400">
-					{selectedItem.kind} · status <strong class="text-neutral-100" data-testid="detail-status">{selectedItem.status}</strong>
-					· priority {selectedItem.priority} · from {selectedItem.source_agent}
-					{#if selectedItem.branch}· branch {selectedItem.branch} → {selectedItem.target_branch}{/if}
-				</p>
-				{#if selectedItem.recommendation}
-					<p class="mt-3 border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm">
-						<span class="font-bold">Chief recommendation:</span>
-						{selectedItem.recommendation}
-					</p>
-				{/if}
-				{#if selectedItem.body}
-					<pre class="mt-3 overflow-x-auto border border-neutral-800 px-3 py-2 text-xs whitespace-pre-wrap">{selectedItem.body}</pre>
-				{/if}
+				<div class="mx-auto max-w-4xl space-y-4">
+					<div>
+						<h2 class="text-xl font-semibold tracking-tight">{selectedItem.title}</h2>
+						<p class="mt-1 text-xs text-[var(--ax-fg-secondary)]">
+							{selectedItem.kind} · status <strong class="text-[var(--ax-fg-primary)]" data-testid="detail-status">{selectedItem.status}</strong>
+							· priority {selectedItem.priority} · from {selectedItem.source_agent}
+							{#if selectedItem.branch}· branch <span class="font-mono">{selectedItem.branch} → {selectedItem.target_branch}</span>{/if}
+						</p>
+					</div>
 
-				{#if testResult(selectedItem) !== null}
-					{@const test = testResult(selectedItem)}
-					<h3 class="mt-4 text-sm font-bold">
-						Test run: <span data-testid="test-exit-code">exit {String(test?.exit_code)}</span>
-						({test?.passed === true ? 'passed' : 'failed'}) — {String(test?.command)}
-					</h3>
-					<pre class="mt-1 max-h-48 overflow-auto border border-neutral-800 px-3 py-2 text-xs whitespace-pre-wrap">{String(test?.stdout_tail ?? '')}{String(test?.stderr_tail ?? '')}</pre>
-				{/if}
-
-				{#if selectedItem.evidence.screenshot || selectedItem.evidence.video}
-					<h3 class="mt-4 text-sm font-bold">Evidence <span class="font-normal text-neutral-500">(e toggles)</span></h3>
-					{#if evidenceExpanded}
-						<div class="mt-2 space-y-3">
-							{#if selectedItem.evidence.screenshot}
-								<img data-testid="evidence-screenshot" src={evidenceUrl(selectedItem.evidence.screenshot)} alt="Captured screenshot of the demo URL" class="max-w-full border border-neutral-800" />
-							{/if}
-							{#if selectedItem.evidence.video}
-								<video data-testid="evidence-video" src={evidenceUrl(selectedItem.evidence.video)} controls class="max-w-full border border-neutral-800">
-									<track kind="captions" />
-								</video>
-							{/if}
+					{#if selectedItem.recommendation}
+						<div class="rounded-xl border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-4 py-3 text-sm shadow-xs">
+							<span class="font-semibold">Chief recommendation:</span>
+							<span class="text-[var(--ax-fg-secondary)]"> {selectedItem.recommendation}</span>
 						</div>
 					{/if}
-				{/if}
+					{#if selectedItem.body}
+						<pre class="overflow-x-auto rounded-xl border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-4 py-3 font-mono text-xs whitespace-pre-wrap">{selectedItem.body}</pre>
+					{/if}
 
-				<div class="mt-5 flex flex-wrap gap-2 text-sm">
-					<button type="button" data-testid="approve-button" disabled={!canDecide('approve')} onclick={() => void decide('approve')} class="border border-green-500 px-4 py-2 font-bold disabled:cursor-not-allowed disabled:opacity-30">Approve (a)</button>
-					<button type="button" data-testid="request-changes-button" disabled={!canDecide('request_changes')} onclick={() => (showChangesForm = true)} class="border border-amber-500 px-4 py-2 font-bold disabled:cursor-not-allowed disabled:opacity-30">Request changes (x)</button>
-					<button type="button" data-testid="reject-button" disabled={!canDecide('reject')} onclick={() => void decide('reject')} class="border border-red-500 px-4 py-2 font-bold disabled:cursor-not-allowed disabled:opacity-30">Reject (r)</button>
-					<button type="button" data-testid="snooze-button" disabled={!canDecide('snooze')} onclick={() => void decide('snooze')} class="border border-neutral-500 px-4 py-2 font-bold disabled:cursor-not-allowed disabled:opacity-30">Snooze (s)</button>
-					{#if selectedItem.status === 'snoozed' || selectedItem.status === 'failed'}
-						<button type="button" data-testid="wake-button" onclick={() => void wake()} class="border border-neutral-100 px-4 py-2 font-bold">Wake / retry</button>
+					{#if testResult(selectedItem) !== null}
+						{@const test = testResult(selectedItem)}
+						<div class="rounded-xl border border-[var(--ax-border)] bg-[var(--ax-bg-card)] p-4">
+							<h3 class="text-sm font-semibold">
+								Test run: <span data-testid="test-exit-code">exit {String(test?.exit_code)}</span>
+								({test?.passed === true ? 'passed' : 'failed'}) — <span class="font-mono text-xs">{String(test?.command)}</span>
+							</h3>
+							<pre class="mt-2 max-h-48 overflow-auto rounded-lg border border-[var(--ax-border)] bg-[var(--ax-bg-surface)] px-3 py-2 font-mono text-xs whitespace-pre-wrap">{String(test?.stdout_tail ?? '')}{String(test?.stderr_tail ?? '')}</pre>
+						</div>
+					{/if}
+
+					{#if selectedItem.evidence.screenshot || selectedItem.evidence.video}
+						<h3 class="text-sm font-semibold">Evidence <span class="font-normal text-[var(--ax-fg-secondary)]">(e toggles)</span></h3>
+						{#if evidenceExpanded}
+							<div class="space-y-3">
+								{#if selectedItem.evidence.screenshot}
+									<img data-testid="evidence-screenshot" src={evidenceUrl(selectedItem.evidence.screenshot)} alt="Captured screenshot of the demo URL" class="max-w-full rounded-xl border border-[var(--ax-border)]" />
+								{/if}
+								{#if selectedItem.evidence.video}
+									<video data-testid="evidence-video" src={evidenceUrl(selectedItem.evidence.video)} controls class="max-w-full rounded-xl border border-[var(--ax-border)]">
+										<track kind="captions" />
+									</video>
+								{/if}
+							</div>
+						{/if}
+					{/if}
+
+					<div class="flex flex-wrap gap-2 pt-2 text-sm">
+						<button type="button" data-testid="approve-button" disabled={!canDecide('approve')} onclick={() => void decide('approve')} class="rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30">Approve (a)</button>
+						<button type="button" data-testid="request-changes-button" disabled={!canDecide('request_changes')} onclick={() => (showChangesForm = true)} class="rounded-lg border border-amber-500/50 bg-amber-500/15 px-4 py-2 font-semibold text-amber-400 hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-30">Request changes (x)</button>
+						<button type="button" data-testid="reject-button" disabled={!canDecide('reject')} onclick={() => void decide('reject')} class="rounded-lg border border-red-500/50 bg-red-500/15 px-4 py-2 font-semibold text-red-400 hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-30">Reject (r)</button>
+						<button type="button" data-testid="snooze-button" disabled={!canDecide('snooze')} onclick={() => void decide('snooze')} class="rounded-lg border border-[var(--ax-border-strong)] bg-[var(--ax-bg-card)] px-4 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-30">Snooze (s)</button>
+						{#if selectedItem.status === 'snoozed' || selectedItem.status === 'failed'}
+							<button type="button" data-testid="wake-button" onclick={() => void wake()} class="rounded-lg bg-[var(--ax-fg-primary)] px-4 py-2 font-semibold text-[var(--ax-bg-body)]">Wake / retry</button>
+						{/if}
+					</div>
+					{#if showChangesForm}
+						<div class="flex gap-2">
+							<input data-testid="changes-note" bind:value={changesNote} placeholder="What must change?" class="flex-1 rounded-lg border border-[var(--ax-border)] bg-[var(--ax-bg-card)] px-3 py-2 text-sm outline-none" />
+							<button type="button" data-testid="changes-submit" onclick={() => void decide('request_changes', changesNote)} class="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950">Send back</button>
+						</div>
+					{/if}
+					<p class="text-xs text-[var(--ax-fg-secondary)]">Keys: j/k move · a approve · x request changes · r reject · s snooze · e evidence</p>
+
+					{#if detail}
+						<div class="grid grid-cols-1 gap-4 pt-2 md:grid-cols-2">
+							<div class="rounded-xl border border-[var(--ax-border)] bg-[var(--ax-bg-card)] p-3.5">
+								<h3 class="text-sm font-semibold">Chief actions</h3>
+								<ul class="mt-2 space-y-1.5 text-xs text-[var(--ax-fg-secondary)]">
+									{#each detail.events as queueEvent}
+										<li>{new Date(queueEvent.created_at * 1000).toLocaleTimeString()} · <strong class="text-[var(--ax-fg-primary)]">{queueEvent.type}</strong> · {queueEvent.message}</li>
+									{:else}
+										<li>No chief actions recorded yet.</li>
+									{/each}
+								</ul>
+							</div>
+							<div class="rounded-xl border border-[var(--ax-border)] bg-[var(--ax-bg-card)] p-3.5">
+								<h3 class="text-sm font-semibold">Operator decisions</h3>
+								<ul class="mt-2 space-y-1.5 text-xs text-[var(--ax-fg-secondary)]">
+									{#each detail.decisions as decision}
+										<li>{new Date(decision.created_at * 1000).toLocaleTimeString()} · <strong class="text-[var(--ax-fg-primary)]">{decision.action}</strong> by {decision.actor}{decision.note ? ` · ${decision.note}` : ''}</li>
+									{:else}
+										<li>No decisions recorded yet.</li>
+									{/each}
+								</ul>
+							</div>
+						</div>
 					{/if}
 				</div>
-				{#if showChangesForm}
-					<div class="mt-3 flex gap-2">
-						<input data-testid="changes-note" bind:value={changesNote} placeholder="What must change?" class="flex-1 border border-neutral-700 bg-neutral-900 px-2 py-2 text-sm" />
-						<button type="button" data-testid="changes-submit" onclick={() => void decide('request_changes', changesNote)} class="border border-amber-500 px-4 py-2 text-sm font-bold">Send back</button>
-					</div>
-				{/if}
-				<p class="mt-3 text-xs text-neutral-500">Keys: j/k move · a approve · x request changes · r reject · s snooze · e evidence</p>
-
-				{#if detail}
-					<h3 class="mt-6 text-sm font-bold">Chief actions</h3>
-					<ul class="mt-1 space-y-1 text-xs text-neutral-300">
-						{#each detail.events as queueEvent}
-							<li>{new Date(queueEvent.created_at * 1000).toLocaleTimeString()} · <strong>{queueEvent.type}</strong> · {queueEvent.message}</li>
-						{:else}
-							<li class="text-neutral-500">No chief actions recorded yet.</li>
-						{/each}
-					</ul>
-					<h3 class="mt-4 text-sm font-bold">Operator decisions</h3>
-					<ul class="mt-1 space-y-1 text-xs text-neutral-300">
-						{#each detail.decisions as decision}
-							<li>{new Date(decision.created_at * 1000).toLocaleTimeString()} · <strong>{decision.action}</strong> by {decision.actor}{decision.note ? ` · ${decision.note}` : ''}</li>
-						{:else}
-							<li class="text-neutral-500">No decisions recorded yet.</li>
-						{/each}
-					</ul>
-				{/if}
 			{:else}
-				<p class="text-sm text-neutral-500">Select a queue item, or submit work for the chief.</p>
+				<p class="text-sm text-[var(--ax-fg-secondary)]">Select a queue item, or submit work for the chief.</p>
 			{/if}
 		</section>
 	</div>

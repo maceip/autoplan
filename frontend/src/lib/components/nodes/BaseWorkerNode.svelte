@@ -621,7 +621,7 @@
 						{/if}
 					</div>
 					{#if taskItem && taskNodeVisibility[type.className]}
-						<div class="mt-0.5 ml-2 border-l-2 border-gray-200 pl-2">
+						<div class="mt-0.5 ml-2 rounded border border-gray-200 bg-gray-50/70 px-2 py-1">
 							<TaskConfig
 								id={taskItem.id}
 								allowEditing={false}
@@ -747,7 +747,7 @@
 							{/if}
 						</div>
 						{#if entry && taskNodeVisibility[type]}
-							<div class="mt-0.5 ml-2 border-l-2 border-gray-200 pl-2">
+							<div class="mt-0.5 ml-2 rounded border border-gray-200 bg-gray-50/70 px-2 py-1">
 								<TaskConfig id={entry.id} allowEditing={false} embedded={true} styleClasses="p-0" />
 							</div>
 						{/if}

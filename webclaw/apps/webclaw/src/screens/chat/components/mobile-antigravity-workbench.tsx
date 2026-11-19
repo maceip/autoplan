@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { Layers } from 'lucide-react'
+import { ThemeAppearanceMenu } from '@/components/theme-appearance-menu'
 import { useChatSettings as useSidebarSettings } from '../hooks/use-chat-settings'
 import { SettingsDialog } from './settings-dialog'
 import { ChatMessageList } from './chat-message-list'
@@ -628,11 +630,11 @@ export function MobileAntigravityWorkbench({
     return (
       <div
         data-testid="mobile-sessions-screen"
-        className="flex h-dvh w-full flex-col overflow-hidden bg-[#002b36] text-[#c9d8db]"
+        className="flex h-dvh w-full flex-col overflow-hidden bg-surface text-primary"
       >
         <header
           data-testid="mobile-top-app-bar"
-          className="shrink-0 border-b border-[#133b45] bg-[#002b36]"
+          className="shrink-0 border-b border-border bg-surface"
         >
           <div className="flex h-12 items-center justify-between gap-2 px-3">
             <div
@@ -640,12 +642,13 @@ export function MobileAntigravityWorkbench({
               className="flex min-w-0 items-center gap-2"
             >
               <AutobotBrandMark size="md" />
-              <span className="truncate text-[15px] font-semibold tracking-tight text-[#e6f0f2]">
+              <span className="truncate text-[15px] font-semibold tracking-tight text-primary">
                 autobot
               </span>
             </div>
 
-            <div className="flex shrink-0 items-center gap-0.5 rounded-xl border border-[#133b45] bg-[#0c3540]/80 p-0.5">
+            <div className="flex shrink-0 items-center gap-0.5 rounded-xl border border-border bg-card/80 p-0.5">
+              <ThemeAppearanceMenu />
               <button
                 type="button"
                 data-testid="mobile-search-toggle"
@@ -653,10 +656,10 @@ export function MobileAntigravityWorkbench({
                 aria-pressed={searchOpen}
                 onClick={() => setSearchOpen((prev) => !prev)}
                 className={cn(
-                  'flex size-8 items-center justify-center rounded-lg text-[#839496]',
+                  'flex size-8 items-center justify-center rounded-lg text-secondary',
                   searchOpen
-                    ? 'bg-[#133b45] text-[#e6f0f2]'
-                    : 'active:bg-[#133b45]',
+                    ? 'bg-muted text-primary'
+                    : 'active:bg-muted',
                 )}
               >
                 <svg
@@ -677,7 +680,7 @@ export function MobileAntigravityWorkbench({
                 data-testid="mobile-settings-button"
                 aria-label="Open settings"
                 onClick={handleOpenSettings}
-                className="flex size-8 items-center justify-center rounded-lg text-[#839496] active:bg-[#133b45]"
+                className="flex size-8 items-center justify-center rounded-lg text-secondary active:bg-muted"
               >
                 <svg
                   viewBox="0 0 20 20"
@@ -703,7 +706,7 @@ export function MobileAntigravityWorkbench({
                   onRefreshAll()
                   void refreshQueueAndRuns()
                 }}
-                className="flex size-8 items-center justify-center rounded-lg text-[#839496] active:bg-[#133b45]"
+                className="flex size-8 items-center justify-center rounded-lg text-secondary active:bg-muted"
               >
                 <svg
                   viewBox="0 0 20 20"
@@ -734,11 +737,11 @@ export function MobileAntigravityWorkbench({
                   onChangeMobileView('session')
                   onChangeMobileDetailOpen(true)
                 }}
-                className="relative flex size-8 items-center justify-center rounded-lg text-[#839496] active:bg-[#133b45]"
+                className="relative flex size-8 items-center justify-center rounded-lg text-secondary active:bg-muted"
               >
                 <PanelFooterIcon />
                 {needsReviewCount > 0 || activeRunCount > 0 ? (
-                  <span className="absolute right-1 top-1 size-1.5 rounded-full bg-[#268bd2]" />
+                  <span className="absolute right-1 top-1 size-1.5 rounded-full bg-accent-bg" />
                 ) : null}
               </button>
             </div>
@@ -753,18 +756,37 @@ export function MobileAntigravityWorkbench({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Filter sessions…"
-              className="h-9 w-full rounded-xl border border-[#1e444e] bg-[#0c3540] px-3 text-sm text-[#c9d8db] placeholder:text-[#586e75] outline-none"
+              className="h-9 w-full rounded-xl border border-border bg-card px-3 text-sm text-primary placeholder:text-disabled outline-none"
             />
           </div>
         ) : null}
 
         <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-3">
+          <Link
+            to="/plans"
+            data-testid="mobile-plans-link"
+            className="mb-3 flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2.5 text-left transition-colors active:bg-muted"
+          >
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Layers className="size-4 shrink-0 text-accent" aria-hidden="true" />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-primary">
+                  Plans Portfolio
+                </div>
+                <div className="truncate text-[11px] text-secondary">
+                  All products &amp; pending gates
+                </div>
+              </div>
+            </div>
+            <span className="shrink-0 text-xs text-secondary">→</span>
+          </Link>
+
           {pinnedSessions.length > 0 ? (
             <section className="mb-4">
               <button
                 type="button"
                 onClick={() => setPinnedExpanded((prev) => !prev)}
-                className="flex w-full items-center gap-1.5 py-2 text-xs font-medium text-[#586e75]"
+                className="flex w-full items-center gap-1.5 py-2 text-xs font-medium text-disabled"
               >
                 <span>Pinned Conversations</span>
                 <span aria-hidden="true">{pinnedExpanded ? '▾' : '▸'}</span>
@@ -777,17 +799,17 @@ export function MobileAntigravityWorkbench({
                       type="button"
                       data-testid={`mobile-pinned-session-${session.friendlyId}`}
                       onClick={() => handleOpenSession(session)}
-                      className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left active:bg-[#0c3540]"
+                      className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left active:bg-muted"
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-[15px] text-[#839496]">
+                        <div className="truncate text-[15px] text-secondary">
                           {sessionDisplayTitle(session)}
                         </div>
-                        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-[#586e75]">
+                        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-disabled">
                           <span>{session.service || 'antigravity'}</span>
                         </div>
                       </div>
-                      <span className="shrink-0 text-xs text-[#586e75] tabular-nums">
+                      <span className="shrink-0 text-xs text-disabled tabular-nums">
                         {formatCompactAge(session.updatedAt)}
                       </span>
                     </button>
@@ -799,14 +821,14 @@ export function MobileAntigravityWorkbench({
 
           {/* Projects Section Header (matches Antigravity Mobile Screenshot 2) */}
           <div className="flex items-center justify-between py-2">
-            <span className="text-xs font-medium text-[#586e75]">Projects</span>
+            <span className="text-xs font-medium text-disabled">Projects</span>
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 data-testid="mobile-home-start-demo"
                 disabled={!canDispatchSelected || busyDemoService !== null}
                 onClick={() => void handleStartDemoTask(selectedService)}
-                className="rounded-lg border border-[#133b45] px-2 py-1 text-[11px] text-[#6b8184] active:bg-[#0c3540] disabled:opacity-35"
+                className="rounded-lg border border-border px-2 py-1 text-[11px] text-secondary active:bg-muted disabled:opacity-35"
               >
                 {busyDemoService ? 'Starting…' : 'Start Demo'}
               </button>
@@ -815,7 +837,7 @@ export function MobileAntigravityWorkbench({
                 data-testid="mobile-add-project-button"
                 aria-label="Add project"
                 onClick={() => setAddProjectOpen((prev) => !prev)}
-                className="flex items-center gap-1 rounded-lg border border-[#133b45] px-2 py-1 text-xs text-[#839496] active:bg-[#0c3540]"
+                className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-secondary active:bg-muted"
               >
                 <span>+ Project</span>
               </button>
@@ -825,9 +847,9 @@ export function MobileAntigravityWorkbench({
           {addProjectOpen ? (
             <div
               data-testid="mobile-add-project-drawer"
-              className="mb-3 space-y-2 rounded-xl border border-[#1e444e] bg-[#0c3540] p-3 text-xs"
+              className="mb-3 space-y-2 rounded-xl border border-border bg-card p-3 text-xs"
             >
-              <div className="font-medium text-[#e6f0f2]">
+              <div className="font-medium text-primary">
                 Register Git Project
               </div>
               {projError ? (
@@ -835,7 +857,7 @@ export function MobileAntigravityWorkbench({
               ) : null}
               {discoveredRepos.length > 0 ? (
                 <div className="space-y-1">
-                  <div className="text-[11px] text-[#6b8184]">
+                  <div className="text-[11px] text-secondary">
                     Discovered local repositories:
                   </div>
                   {discoveredRepos.slice(0, 6).map((repo) => (
@@ -846,12 +868,12 @@ export function MobileAntigravityWorkbench({
                       onClick={() =>
                         void handleRegisterProject(repo.name, repo.repo_path)
                       }
-                      className="flex w-full items-center justify-between rounded-lg border border-[#133b45] bg-[#06303b] px-2.5 py-1.5 text-left"
+                      className="flex w-full items-center justify-between rounded-lg border border-border bg-surface px-2.5 py-1.5 text-left"
                     >
-                      <span className="font-medium text-[#c9d8db]">
+                      <span className="font-medium text-primary">
                         {repo.name}
                       </span>
-                      <span className="truncate max-w-[140px] font-mono text-[10px] text-[#586e75]">
+                      <span className="truncate max-w-[140px] font-mono text-[10px] text-disabled">
                         {repo.repo_path}
                       </span>
                     </button>
@@ -863,14 +885,14 @@ export function MobileAntigravityWorkbench({
                 value={newProjName}
                 onChange={(e) => setNewProjName(e.target.value)}
                 placeholder="Project name"
-                className="w-full rounded-lg border border-[#133b45] bg-[#002b36] px-2.5 py-1.5 text-xs text-[#c9d8db] outline-none"
+                className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs text-primary outline-none"
               />
               <input
                 type="text"
                 value={newProjPath}
                 onChange={(e) => setNewProjPath(e.target.value)}
                 placeholder="/absolute/path/to/repo"
-                className="w-full rounded-lg border border-[#133b45] bg-[#002b36] px-2.5 py-1.5 font-mono text-xs text-[#c9d8db] outline-none"
+                className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-xs text-primary outline-none"
               />
               <button
                 type="button"
@@ -883,7 +905,7 @@ export function MobileAntigravityWorkbench({
                     newProjPath,
                   )
                 }
-                className="w-full rounded-lg bg-[#268bd2] py-1.5 font-medium text-[#002b36] disabled:opacity-40"
+                className="w-full rounded-lg bg-accent-bg py-1.5 font-medium text-on-accent disabled:opacity-40"
               >
                 {projBusy ? 'Registering…' : 'Register Project'}
               </button>
@@ -910,8 +932,8 @@ export function MobileAntigravityWorkbench({
                         className={cn(
                           'size-4 shrink-0',
                           isSelectedProj
-                            ? 'text-[#268bd2]'
-                            : 'text-[#586e75]',
+                            ? 'text-accent'
+                            : 'text-disabled',
                         )}
                         fill="none"
                         stroke="currentColor"
@@ -924,8 +946,8 @@ export function MobileAntigravityWorkbench({
                         className={cn(
                           'truncate text-[15px]',
                           isSelectedProj
-                            ? 'font-medium text-[#c9d8db]'
-                            : 'font-normal text-[#6b8184]',
+                            ? 'font-medium text-primary'
+                            : 'font-normal text-secondary',
                         )}
                       >
                         {project.name}
@@ -939,7 +961,7 @@ export function MobileAntigravityWorkbench({
                       onClick={() =>
                         void onCreateSessionInProject(project.id)
                       }
-                      className="flex size-8 items-center justify-center rounded-lg text-[#6b8184] active:bg-[#0c3540] disabled:opacity-40"
+                      className="flex size-8 items-center justify-center rounded-lg text-secondary active:bg-muted disabled:opacity-40"
                     >
                       <span className="text-lg leading-none">+</span>
                     </button>
@@ -947,7 +969,7 @@ export function MobileAntigravityWorkbench({
 
                   <div className="flex flex-col pl-4">
                     {projSessions.length === 0 ? (
-                      <div className="px-2.5 py-1.5 text-xs text-[#586e75]">
+                      <div className="px-2.5 py-1.5 text-xs text-disabled">
                         No sessions yet — tap + to start work in {project.name}
                       </div>
                     ) : (
@@ -963,15 +985,15 @@ export function MobileAntigravityWorkbench({
                             className={cn(
                               'flex min-h-11 w-full items-center justify-between gap-3 rounded-xl px-2.5 py-2 text-left transition-colors',
                               isCurrent
-                                ? 'bg-[#0c3540]/70 text-[#c9d8db]'
-                                : 'text-[#839496] active:bg-[#0c3540]',
+                                ? 'bg-card/70 text-primary'
+                                : 'text-secondary active:bg-muted',
                             )}
                           >
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-[15px]">
                                 {sessionDisplayTitle(session)}
                               </div>
-                              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[#586e75]">
+                              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-disabled">
                                 <span>
                                   {session.mode === 'team'
                                     ? 'Team Graph'
@@ -981,11 +1003,11 @@ export function MobileAntigravityWorkbench({
                             </div>
                             {isCurrent && waitingForResponse ? (
                               <span
-                                className="size-2.5 shrink-0 rounded-full bg-[#268bd2]"
+                                className="size-2.5 shrink-0 rounded-full bg-accent-bg"
                                 aria-label="Running"
                               />
                             ) : (
-                              <span className="shrink-0 text-xs text-[#586e75] tabular-nums">
+                              <span className="shrink-0 text-xs text-disabled tabular-nums">
                                 {formatCompactAge(session.updatedAt) || 'open'}
                               </span>
                             )}
@@ -999,8 +1021,8 @@ export function MobileAntigravityWorkbench({
             })}
 
             {totalObservedCount > 0 ? (
-              <section className="mt-2 border-t border-[#133b45] pt-2">
-                <div className="px-1 py-1 text-xs font-medium text-[#586e75]">
+              <section className="mt-2 border-t border-border pt-2">
+                <div className="px-1 py-1 text-xs font-medium text-disabled">
                   Local Agent CLI History
                 </div>
                 {services
@@ -1021,7 +1043,7 @@ export function MobileAntigravityWorkbench({
                               void loadObservedForService(svc.service)
                             }
                           }}
-                          className="flex min-h-9 w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs text-[#586e75] active:bg-[#0c3540]"
+                          className="flex min-h-9 w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs text-disabled active:bg-muted"
                         >
                           <span>
                             {svc.display_name} ({svc.observed_sessions_count})
@@ -1035,12 +1057,12 @@ export function MobileAntigravityWorkbench({
                             {observedList.map((obs) => (
                               <div
                                 key={obs.session_id}
-                                className="rounded-lg border border-[#133b45] bg-[#06303b] px-2.5 py-2 text-xs text-[#839496]"
+                                className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs text-secondary"
                               >
-                                <div className="line-clamp-2 text-[#93a1a1]">
+                                <div className="line-clamp-2 text-secondary">
                                   {obs.preview || obs.session_id}
                                 </div>
-                                <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-[#586e75]">
+                                <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-disabled">
                                   <span className="truncate">
                                     {obs.cwd || obs.service}
                                   </span>
@@ -1062,7 +1084,7 @@ export function MobileAntigravityWorkbench({
 
         {/* Bottom Antigravity Composer Card on Home — Model Picker & Single/Team Inside Input Box */}
         <div className="shrink-0 px-3 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          <div className="rounded-[24px] border border-[#1e444e] bg-[#0c3540] px-3.5 pt-3 pb-2.5">
+          <div className="rounded-[24px] border border-border bg-card px-3.5 pt-3 pb-2.5">
             <textarea
               rows={1}
               data-testid="mobile-home-composer"
@@ -1079,13 +1101,13 @@ export function MobileAntigravityWorkbench({
                   ? 'Describe a goal to split across parallel agents…'
                   : 'Ask anything, or assign a task…'
               }
-              className="min-h-[26px] max-h-28 w-full resize-none bg-transparent text-[15px] leading-[22px] text-[#c9d8db] placeholder:text-[#586e75] outline-none"
+              className="min-h-[26px] max-h-28 w-full resize-none bg-transparent text-[15px] leading-[22px] text-primary placeholder:text-disabled outline-none"
             />
             <div className="mt-2 flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-1.5">
                 <div
                   data-testid="mobile-home-mode-toggle"
-                  className="flex shrink-0 items-center rounded-lg border border-[#1e444e] bg-[#002b36] p-0.5 text-[11px]"
+                  className="flex shrink-0 items-center rounded-lg border border-border bg-surface p-0.5 text-[11px]"
                 >
                   <button
                     type="button"
@@ -1093,8 +1115,8 @@ export function MobileAntigravityWorkbench({
                     className={cn(
                       'rounded-md px-1.5 py-0.5 font-medium',
                       sessionMode === 'single'
-                        ? 'bg-[#133b45] text-[#e6f0f2]'
-                        : 'text-[#6b8184]',
+                        ? 'bg-muted text-primary'
+                        : 'text-secondary',
                     )}
                   >
                     Single
@@ -1105,8 +1127,8 @@ export function MobileAntigravityWorkbench({
                     className={cn(
                       'rounded-md px-1.5 py-0.5 font-medium',
                       sessionMode === 'team'
-                        ? 'bg-[#268bd2]/25 text-[#e6f0f2]'
-                        : 'text-[#6b8184]',
+                        ? 'bg-accent-muted text-primary'
+                        : 'text-secondary',
                     )}
                   >
                     Team
@@ -1119,13 +1141,13 @@ export function MobileAntigravityWorkbench({
                     data-testid="mobile-home-composer-service"
                     value={selectedService}
                     onChange={(e) => void onSelectService(e.target.value)}
-                    className="min-w-0 truncate bg-transparent text-xs font-medium text-[#839496] outline-none"
+                    className="min-w-0 truncate bg-transparent text-xs font-medium text-secondary outline-none"
                   >
                     {services.map((svc) => (
                       <option
                         key={svc.service}
                         value={svc.service}
-                        className="bg-[#002b36] text-[#c9d8db]"
+                        className="bg-surface text-primary"
                       >
                         {svc.display_name}{' '}
                         {svc.mode === 'dispatch'
@@ -1135,7 +1157,7 @@ export function MobileAntigravityWorkbench({
                     ))}
                   </select>
                 ) : (
-                  <span className="truncate text-xs text-[#839496]">
+                  <span className="truncate text-xs text-secondary">
                     Parallel agents
                   </span>
                 )}
@@ -1149,8 +1171,8 @@ export function MobileAntigravityWorkbench({
                 className={cn(
                   'flex size-8 shrink-0 items-center justify-center rounded-full transition-colors',
                   homeDraft.trim() && !sending
-                    ? 'bg-[#268bd2] text-[#002b36]'
-                    : 'bg-[#133b45] text-[#586e75]',
+                    ? 'bg-accent-bg text-on-accent'
+                    : 'bg-muted text-disabled',
                 )}
               >
                 <svg
@@ -1192,13 +1214,13 @@ export function MobileAntigravityWorkbench({
   return (
     <div
       data-testid="mobile-session-screen"
-      className="relative flex h-dvh w-full flex-col overflow-hidden bg-[#002b36] text-[#c9d8db]"
+      className="relative flex h-dvh w-full flex-col overflow-hidden bg-surface text-primary"
     >
       <header
         data-testid="mobile-session-top-bar"
         className={cn(
-          'z-50 flex h-12 shrink-0 items-center gap-1.5 border-b border-[#133b45] px-2 transition-colors',
-          mobileDetailOpen ? 'bg-[#002028]' : 'bg-[#002b36]',
+          'z-50 flex h-12 shrink-0 items-center gap-1.5 border-b border-border px-2 transition-colors',
+          mobileDetailOpen ? 'bg-body' : 'bg-surface',
         )}
       >
         <button
@@ -1210,7 +1232,7 @@ export function MobileAntigravityWorkbench({
             onChangeMobileDetailOpen(false)
             onChangeMobileView('sessions')
           }}
-          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-[#839496] active:bg-[#0c3540]"
+          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-secondary active:bg-muted"
         >
           <svg
             viewBox="0 0 20 20"
@@ -1232,19 +1254,19 @@ export function MobileAntigravityWorkbench({
 
         <div
           data-testid="mobile-session-header-title"
-          className="min-w-0 flex-1 truncate px-0.5 text-[14px] font-medium text-[#c9d8db]"
+          className="min-w-0 flex-1 truncate px-0.5 text-[14px] font-medium text-primary"
         >
           {activeTitle}
         </div>
 
-        <div className="relative flex shrink-0 items-center gap-0.5 rounded-xl border border-[#133b45] bg-[#0c3540]/80 p-0.5">
+        <div className="relative flex shrink-0 items-center gap-0.5 rounded-xl border border-border bg-card/80 p-0.5">
           <button
             type="button"
             data-testid="mobile-session-more-button"
             aria-label="Session actions"
             aria-expanded={moreMenuOpen}
             onClick={() => setMoreMenuOpen((prev) => !prev)}
-            className="flex size-8 items-center justify-center rounded-lg text-[#839496] active:bg-[#133b45]"
+            className="flex size-8 items-center justify-center rounded-lg text-secondary active:bg-muted"
           >
             <svg
               viewBox="0 0 20 20"
@@ -1259,7 +1281,7 @@ export function MobileAntigravityWorkbench({
           </button>
 
           {moreMenuOpen ? (
-            <div className="absolute right-10 top-10 z-50 w-52 rounded-xl border border-[#1e444e] bg-[#0c3540] p-1 shadow-xl">
+            <div className="absolute right-10 top-10 z-50 w-52 rounded-xl border border-border bg-card p-1 shadow-xl">
               <button
                 type="button"
                 data-testid="mobile-menu-start-demo"
@@ -1268,10 +1290,10 @@ export function MobileAntigravityWorkbench({
                   setMoreMenuOpen(false)
                   void onRunSimpleTask(selectedService)
                 }}
-                className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs text-[#c9d8db] active:bg-[#133b45] disabled:opacity-40"
+                className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs text-primary active:bg-muted disabled:opacity-40"
               >
                 <span>{busyDemoService ? 'Starting…' : 'Start Demo'}</span>
-                <span className="text-[#586e75]">{selectedService}</span>
+                <span className="text-disabled">{selectedService}</span>
               </button>
               <button
                 type="button"
@@ -1280,7 +1302,7 @@ export function MobileAntigravityWorkbench({
                   setMoreMenuOpen(false)
                   togglePinnedSession(activeCanonicalKey)
                 }}
-                className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs text-[#c9d8db] active:bg-[#133b45]"
+                className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs text-primary active:bg-muted"
               >
                 <span>
                   {isCurrentSessionPinned ? 'Unpin session' : 'Pin session'}
@@ -1294,7 +1316,7 @@ export function MobileAntigravityWorkbench({
                   setMoreMenuOpen(false)
                   onExportMarkdown()
                 }}
-                className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs text-[#c9d8db] active:bg-[#133b45] disabled:opacity-40"
+                className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs text-primary active:bg-muted disabled:opacity-40"
               >
                 <span>Export Markdown</span>
               </button>
@@ -1316,13 +1338,13 @@ export function MobileAntigravityWorkbench({
             className={cn(
               'relative flex size-8 items-center justify-center rounded-lg transition-colors',
               mobileDetailOpen
-                ? 'bg-[#1a414a] text-[#e6f0f2]'
-                : 'text-[#839496] active:bg-[#133b45]',
+                ? 'bg-muted text-primary'
+                : 'text-secondary active:bg-muted',
             )}
           >
             <PanelFooterIcon active={mobileDetailOpen} />
             {!mobileDetailOpen && (needsReviewCount > 0 || activeRunCount > 0) ? (
-              <span className="absolute right-1 top-1 size-1.5 rounded-full bg-[#268bd2]" />
+              <span className="absolute right-1 top-1 size-1.5 rounded-full bg-accent-bg" />
             ) : null}
           </button>
         </div>
@@ -1387,8 +1409,8 @@ export function MobileAntigravityWorkbench({
         </div>
 
         {/* Bottom Antigravity Session Composer — Agent/Model + Single/Team Inside Input Box */}
-        <div className="z-10 shrink-0 bg-[#002b36] px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          <div className="rounded-[24px] border border-[#1e444e] bg-[#0c3540] px-3.5 pt-2.5 pb-2.5">
+        <div className="z-10 shrink-0 bg-surface px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className="rounded-[24px] border border-border bg-card px-3.5 pt-2.5 pb-2.5">
             <AttachmentPreviewList
               attachments={attachments}
               onRemove={(id) =>
@@ -1411,7 +1433,7 @@ export function MobileAntigravityWorkbench({
                   ? 'Describe a goal to split across parallel agents…'
                   : 'Ask anything…'
               }
-              className="min-h-[26px] max-h-32 w-full resize-none bg-transparent text-[15px] leading-[22px] text-[#c9d8db] placeholder:text-[#586e75] outline-none"
+              className="min-h-[26px] max-h-32 w-full resize-none bg-transparent text-[15px] leading-[22px] text-primary placeholder:text-disabled outline-none"
             />
             <div className="mt-2 flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-1.5">
@@ -1422,12 +1444,12 @@ export function MobileAntigravityWorkbench({
                   disabled={sending}
                   buttonProps={{
                     className:
-                      'rounded-full text-[#839496] hover:bg-[#133b45] size-7',
+                      'rounded-full text-secondary hover:bg-muted size-7',
                   }}
                 />
                 <div
                   data-testid="mobile-session-mode-toggle"
-                  className="flex shrink-0 items-center rounded-lg border border-[#1e444e] bg-[#002b36] p-0.5 text-[11px]"
+                  className="flex shrink-0 items-center rounded-lg border border-border bg-surface p-0.5 text-[11px]"
                 >
                   <button
                     type="button"
@@ -1435,8 +1457,8 @@ export function MobileAntigravityWorkbench({
                     className={cn(
                       'rounded-md px-1.5 py-0.5 font-medium',
                       sessionMode === 'single'
-                        ? 'bg-[#133b45] text-[#e6f0f2]'
-                        : 'text-[#6b8184]',
+                        ? 'bg-muted text-primary'
+                        : 'text-secondary',
                     )}
                   >
                     Single
@@ -1447,8 +1469,8 @@ export function MobileAntigravityWorkbench({
                     className={cn(
                       'rounded-md px-1.5 py-0.5 font-medium',
                       sessionMode === 'team'
-                        ? 'bg-[#268bd2]/25 text-[#e6f0f2]'
-                        : 'text-[#6b8184]',
+                        ? 'bg-accent-muted text-primary'
+                        : 'text-secondary',
                     )}
                   >
                     Team
@@ -1461,13 +1483,13 @@ export function MobileAntigravityWorkbench({
                     data-testid="mobile-session-service-select"
                     value={selectedService}
                     onChange={(e) => void onSelectService(e.target.value)}
-                    className="min-w-0 truncate bg-transparent text-xs font-medium text-[#839496] outline-none"
+                    className="min-w-0 truncate bg-transparent text-xs font-medium text-secondary outline-none"
                   >
                     {services.map((svc) => (
                       <option
                         key={svc.service}
                         value={svc.service}
-                        className="bg-[#002b36] text-[#c9d8db]"
+                        className="bg-surface text-primary"
                       >
                         {svc.display_name}{' '}
                         {svc.mode === 'dispatch'
@@ -1477,7 +1499,7 @@ export function MobileAntigravityWorkbench({
                     ))}
                   </select>
                 ) : (
-                  <span className="truncate text-xs text-[#839496]">
+                  <span className="truncate text-xs text-secondary">
                     Parallel agents
                   </span>
                 )}
@@ -1499,8 +1521,8 @@ export function MobileAntigravityWorkbench({
                   (sessionDraft.trim().length > 0 ||
                     attachments.some((a) => !a.error && a.base64)) &&
                     !sending
-                    ? 'bg-[#268bd2] text-[#002b36]'
-                    : 'bg-[#133b45] text-[#586e75]',
+                    ? 'bg-accent-bg text-on-accent'
+                    : 'bg-muted text-disabled',
                 )}
               >
                 <svg
@@ -1527,9 +1549,9 @@ export function MobileAntigravityWorkbench({
       {mobileDetailOpen ? (
         <div
           data-testid="mobile-detail-sheet"
-          className="absolute inset-x-0 top-12 bottom-0 z-40 flex flex-col bg-[#002028]/85"
+          className="absolute inset-x-0 top-12 bottom-0 z-40 flex flex-col bg-overlay/85"
         >
-          <div className="flex flex-1 min-h-0 flex-col overflow-hidden rounded-t-2xl border-t border-[#1e444e] bg-[#002b36]">
+          <div className="flex flex-1 min-h-0 flex-col overflow-hidden rounded-t-2xl border-t border-border bg-surface">
             <button
               type="button"
               data-testid="mobile-detail-close-handle"
@@ -1537,10 +1559,10 @@ export function MobileAntigravityWorkbench({
               onClick={() => onChangeMobileDetailOpen(false)}
               className="flex w-full shrink-0 items-center justify-center py-2.5"
             >
-              <span className="h-1 w-9 rounded-full bg-[#1e444e]" />
+              <span className="h-1 w-9 rounded-full bg-muted" />
             </button>
 
-            <div className="flex shrink-0 items-center justify-between border-b border-[#133b45] px-3 pb-2.5">
+            <div className="flex shrink-0 items-center justify-between border-b border-border px-3 pb-2.5">
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
@@ -1550,8 +1572,8 @@ export function MobileAntigravityWorkbench({
                   className={cn(
                     'flex size-8 items-center justify-center rounded-lg border transition-colors',
                     detailTab === 'overview'
-                      ? 'border-[#27535e] bg-[#1a414a] text-[#e6f0f2]'
-                      : 'border-transparent text-[#6b8184] active:bg-[#0c3540]',
+                      ? 'border-border-strong bg-muted text-primary'
+                      : 'border-transparent text-secondary active:bg-muted',
                   )}
                 >
                   <svg
@@ -1578,8 +1600,8 @@ export function MobileAntigravityWorkbench({
                   className={cn(
                     'flex size-8 items-center justify-center rounded-lg border transition-colors',
                     detailTab === 'queue'
-                      ? 'border-[#27535e] bg-[#1a414a] text-[#e6f0f2]'
-                      : 'border-transparent text-[#6b8184] active:bg-[#0c3540]',
+                      ? 'border-border-strong bg-muted text-primary'
+                      : 'border-transparent text-secondary active:bg-muted',
                   )}
                 >
                   <svg
@@ -1603,8 +1625,8 @@ export function MobileAntigravityWorkbench({
                   className={cn(
                     'flex size-8 items-center justify-center rounded-lg border transition-colors',
                     detailTab === 'runs'
-                      ? 'border-[#27535e] bg-[#1a414a] text-[#e6f0f2]'
-                      : 'border-transparent text-[#6b8184] active:bg-[#0c3540]',
+                      ? 'border-border-strong bg-muted text-primary'
+                      : 'border-transparent text-secondary active:bg-muted',
                   )}
                 >
                   <svg
@@ -1625,7 +1647,7 @@ export function MobileAntigravityWorkbench({
                 </button>
               </div>
 
-              <span className="truncate max-w-[120px] font-mono text-[11px] text-[#586e75]">
+              <span className="truncate max-w-[120px] font-mono text-[11px] text-disabled">
                 {activeProject?.name || 'autoplan'}
               </span>
             </div>
@@ -1648,13 +1670,13 @@ export function MobileAntigravityWorkbench({
                             prev === 'agents' ? null : 'agents',
                           )
                         }
-                        className="flex min-h-10 w-full items-center gap-2 text-left text-sm text-[#6b8184]"
+                        className="flex min-h-10 w-full items-center gap-2 text-left text-sm text-secondary"
                       >
                         <span>Lead Agents</span>
-                        <span className="rounded-full bg-[#0b343f] px-2 py-0.5 text-xs text-[#839496] tabular-nums">
+                        <span className="rounded-full bg-card px-2 py-0.5 text-xs text-secondary tabular-nums">
                           {services.length}
                         </span>
-                        <span className="text-xs text-[#586e75]">
+                        <span className="text-xs text-disabled">
                           {openSection === 'agents' ? '▾' : '›'}
                         </span>
                       </button>
@@ -1664,20 +1686,20 @@ export function MobileAntigravityWorkbench({
                             <div
                               key={svc.service}
                               data-testid={`mobile-agent-card-${svc.service}`}
-                              className="rounded-xl border border-[#133b45] bg-[#06303b] p-3 text-xs"
+                              className="rounded-xl border border-border bg-surface p-3 text-xs"
                             >
                               <div className="flex items-center justify-between gap-2">
-                                <span className="font-medium text-[#c9d8db]">
+                                <span className="font-medium text-primary">
                                   {svc.display_name}
                                 </span>
                                 <span
                                   data-testid={`mobile-agent-mode-${svc.service}`}
-                                  className="rounded bg-[#0c3540] px-1.5 py-0.5 font-mono text-[11px] text-[#839496]"
+                                  className="rounded bg-card px-1.5 py-0.5 font-mono text-[11px] text-secondary"
                                 >
                                   {svc.mode}
                                 </span>
                               </div>
-                              <div className="mt-1 text-[11px] text-[#6b8184]">
+                              <div className="mt-1 text-[11px] text-secondary">
                                 {svc.default_model || 'default'} ·{' '}
                                 {svc.observed_sessions_count} local sessions
                               </div>
@@ -1692,7 +1714,7 @@ export function MobileAntigravityWorkbench({
                                   onClick={() =>
                                     void onRunSimpleTask(svc.service)
                                   }
-                                  className="rounded-lg border border-[#27535e] bg-[#1a414a] px-2.5 py-1.5 font-medium text-[#e6f0f2] disabled:opacity-35"
+                                  className="rounded-lg border border-border-strong bg-muted px-2.5 py-1.5 font-medium text-primary disabled:opacity-35"
                                 >
                                   {busyDemoService === svc.service
                                     ? 'Starting…'
@@ -1706,7 +1728,7 @@ export function MobileAntigravityWorkbench({
                     </div>
 
                     <div>
-                      <div className="flex min-h-10 items-center gap-2 text-sm text-[#6b8184]">
+                      <div className="flex min-h-10 items-center gap-2 text-sm text-secondary">
                         <button
                           type="button"
                           data-testid="mobile-overview-queue-row"
@@ -1718,10 +1740,10 @@ export function MobileAntigravityWorkbench({
                           className="flex items-center gap-2 text-left"
                         >
                           <span>Review Queue</span>
-                          <span className="rounded-full bg-[#0b343f] px-2 py-0.5 text-xs text-[#839496] tabular-nums">
+                          <span className="rounded-full bg-card px-2 py-0.5 text-xs text-secondary tabular-nums">
                             {items.length}
                           </span>
-                          <span className="text-xs text-[#586e75]">
+                          <span className="text-xs text-disabled">
                             {openSection === 'queue' ? '▾' : '›'}
                           </span>
                         </button>
@@ -1730,7 +1752,7 @@ export function MobileAntigravityWorkbench({
                           data-testid="mobile-queue-filter"
                           value={queueFilter}
                           onChange={(e) => setQueueFilter(e.target.value)}
-                          className="ml-1 rounded-md border border-[#1e444e] bg-[#0c3540] px-2 py-1 text-xs text-[#93a1a1] outline-none"
+                          className="ml-1 rounded-md border border-border bg-card px-2 py-1 text-xs text-secondary outline-none"
                         >
                           <option value="">All items</option>
                           <option value="needs_review">Needs review</option>
@@ -1755,25 +1777,25 @@ export function MobileAntigravityWorkbench({
                               <div
                                 key={item.id}
                                 data-testid={`mobile-queue-item-${item.id}`}
-                                className="rounded-xl border border-[#133b45] bg-[#06303b] p-3 text-xs"
+                                className="rounded-xl border border-border bg-surface p-3 text-xs"
                               >
                                 <div className="flex items-start justify-between gap-2">
-                                  <span className="font-medium text-[#c9d8db]">
+                                  <span className="font-medium text-primary">
                                     {item.title}
                                   </span>
                                   <span
                                     data-testid={`mobile-queue-status-${item.id}`}
-                                    className="shrink-0 rounded bg-[#0c3540] px-1.5 py-0.5 font-mono text-[11px] text-[#93a1a1]"
+                                    className="shrink-0 rounded bg-card px-1.5 py-0.5 font-mono text-[11px] text-secondary"
                                   >
                                     {item.status}
                                   </span>
                                 </div>
-                                <div className="mt-1 text-[11px] text-[#6b8184] tabular-nums">
+                                <div className="mt-1 text-[11px] text-secondary tabular-nums">
                                   P{item.priority} · {item.kind} ·{' '}
                                   {item.source_agent}
                                 </div>
                                 {item.result.test ? (
-                                  <div className="mt-1.5 font-mono text-[11px] text-[#839496]">
+                                  <div className="mt-1.5 font-mono text-[11px] text-secondary">
                                     Test exit{' '}
                                     {String(item.result.test.exit_code)} (
                                     {item.result.test.passed
@@ -1783,7 +1805,7 @@ export function MobileAntigravityWorkbench({
                                   </div>
                                 ) : null}
                                 {item.result.merged_commit ? (
-                                  <div className="mt-1 font-mono text-[11px] text-[#7aae66]">
+                                  <div className="mt-1 font-mono text-[11px] text-success">
                                     Landed: {item.result.merged_commit}
                                   </div>
                                 ) : null}
@@ -1795,7 +1817,7 @@ export function MobileAntigravityWorkbench({
                                     onClick={() =>
                                       void decideQueueItem(item.id, 'approve')
                                     }
-                                    className="rounded-lg bg-[#268bd2] px-2.5 py-1 font-medium text-[#002b36] disabled:border disabled:border-[#133b45] disabled:bg-[#0c3540] disabled:text-[#586e75] disabled:opacity-60"
+                                    className="rounded-lg bg-accent-bg px-2.5 py-1 font-medium text-on-accent disabled:border disabled:border-border disabled:bg-muted disabled:text-disabled disabled:opacity-60"
                                   >
                                     Approve
                                   </button>
@@ -1805,7 +1827,7 @@ export function MobileAntigravityWorkbench({
                                     onClick={() =>
                                       void decideQueueItem(item.id, 'reject')
                                     }
-                                    className="rounded-lg border border-[#1e444e] px-2.5 py-1 text-[#839496] disabled:opacity-30"
+                                    className="rounded-lg border border-border px-2.5 py-1 text-secondary disabled:opacity-30"
                                   >
                                     Reject
                                   </button>
@@ -1815,7 +1837,7 @@ export function MobileAntigravityWorkbench({
                                       onClick={() =>
                                         void wakeQueueItem(item.id)
                                       }
-                                      className="rounded-lg border border-[#1e444e] px-2.5 py-1 text-[#839496]"
+                                      className="rounded-lg border border-border px-2.5 py-1 text-secondary"
                                     >
                                       Wake
                                     </button>
@@ -1826,7 +1848,7 @@ export function MobileAntigravityWorkbench({
                                       onClick={() =>
                                         void decideQueueItem(item.id, 'snooze')
                                       }
-                                      className="rounded-lg border border-[#1e444e] px-2.5 py-1 text-[#839496] disabled:opacity-30"
+                                      className="rounded-lg border border-border px-2.5 py-1 text-secondary disabled:opacity-30"
                                     >
                                       Snooze
                                     </button>
@@ -1836,7 +1858,7 @@ export function MobileAntigravityWorkbench({
                             )
                           })}
                           {items.length === 0 ? (
-                            <div className="py-2 text-xs text-[#586e75]">
+                            <div className="py-2 text-xs text-disabled">
                               No queue items match this filter.
                             </div>
                           ) : null}
@@ -1853,13 +1875,13 @@ export function MobileAntigravityWorkbench({
                             prev === 'runs' ? null : 'runs',
                           )
                         }
-                        className="flex min-h-10 w-full items-center gap-2 text-left text-sm text-[#6b8184]"
+                        className="flex min-h-10 w-full items-center gap-2 text-left text-sm text-secondary"
                       >
                         <span>Background Runs</span>
-                        <span className="rounded-full bg-[#0b343f] px-2 py-0.5 text-xs text-[#839496] tabular-nums">
+                        <span className="rounded-full bg-card px-2 py-0.5 text-xs text-secondary tabular-nums">
                           {runs.length}
                         </span>
-                        <span className="text-xs text-[#586e75]">
+                        <span className="text-xs text-disabled">
                           {openSection === 'runs' ? '▾' : '›'}
                         </span>
                       </button>
@@ -1869,21 +1891,21 @@ export function MobileAntigravityWorkbench({
                             <div
                               key={run.id}
                               data-testid={`mobile-run-card-${run.id}`}
-                              className="rounded-xl border border-[#133b45] bg-[#06303b] p-3 text-xs"
+                              className="rounded-xl border border-border bg-surface p-3 text-xs"
                             >
                               <div className="flex items-center justify-between gap-2">
-                                <span className="font-mono font-medium text-[#c9d8db]">
+                                <span className="font-mono font-medium text-primary">
                                   {run.service} · {run.id}
                                 </span>
                                 <span
                                   data-testid={`mobile-run-state-${run.id}`}
-                                  className="rounded bg-[#0c3540] px-1.5 py-0.5 font-mono text-[11px] text-[#93a1a1]"
+                                  className="rounded bg-card px-1.5 py-0.5 font-mono text-[11px] text-secondary"
                                 >
                                   {run.state}
                                 </span>
                               </div>
                               {run.branch ? (
-                                <div className="mt-1 truncate font-mono text-[11px] text-[#6b8184]">
+                                <div className="mt-1 truncate font-mono text-[11px] text-secondary">
                                   {run.branch}
                                 </div>
                               ) : null}
@@ -1892,7 +1914,7 @@ export function MobileAntigravityWorkbench({
                                 <button
                                   type="button"
                                   onClick={() => void stopAgentRun(run.id)}
-                                  className="mt-2 rounded-lg border border-[#1e444e] px-2.5 py-1 text-[#c9d8db]"
+                                  className="mt-2 rounded-lg border border-border px-2.5 py-1 text-primary"
                                 >
                                   Stop run
                                 </button>
@@ -1912,13 +1934,13 @@ export function MobileAntigravityWorkbench({
                             prev === 'observed' ? null : 'observed',
                           )
                         }
-                        className="flex min-h-10 w-full items-center gap-2 text-left text-sm text-[#6b8184]"
+                        className="flex min-h-10 w-full items-center gap-2 text-left text-sm text-secondary"
                       >
                         <span>Connected Agent Stores</span>
-                        <span className="rounded-full bg-[#0b343f] px-2 py-0.5 text-xs text-[#839496] tabular-nums">
+                        <span className="rounded-full bg-card px-2 py-0.5 text-xs text-secondary tabular-nums">
                           {totalObservedCount}
                         </span>
-                        <span className="text-xs text-[#586e75]">
+                        <span className="text-xs text-disabled">
                           {openSection === 'observed' ? '▾' : '›'}
                         </span>
                       </button>
@@ -1930,7 +1952,7 @@ export function MobileAntigravityWorkbench({
                           >
                             <svg
                               viewBox="0 0 20 20"
-                              className="size-4 shrink-0 text-[#586e75]"
+                              className="size-4 shrink-0 text-disabled"
                               fill="none"
                               stroke="currentColor"
                               strokeWidth={1.5}
@@ -1938,15 +1960,15 @@ export function MobileAntigravityWorkbench({
                             >
                               <path d="M5 3.5h7l3.5 3.5v9.5a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 16.5V5A1.5 1.5 0 0 1 5 3.5Z" />
                             </svg>
-                            <span className="shrink-0 text-[#839496]">
+                            <span className="shrink-0 text-secondary">
                               {svc.service}
                             </span>
-                            <span className="min-w-0 truncate text-xs text-[#586e75]">
+                            <span className="min-w-0 truncate text-xs text-disabled">
                               {svc.store_path}
                             </span>
                           </div>
                         ))}
-                        <div className="pt-1 text-[11px] text-[#586e75]">
+                        <div className="pt-1 text-[11px] text-disabled">
                           Chief LLM: {chiefLlmStatus || 'deterministic'}
                         </div>
                       </div>
@@ -1968,20 +1990,20 @@ export function MobileAntigravityWorkbench({
                           className={cn(
                             'rounded-xl border p-3 text-xs',
                             isSel
-                              ? 'border-[#27535e] bg-[#0c3540]'
-                              : 'border-[#133b45] bg-[#06303b]',
+                              ? 'border-border-strong bg-card'
+                              : 'border-border bg-surface',
                           )}
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <span className="font-medium text-[#c9d8db]">
+                            <span className="font-medium text-primary">
                               {item.title}
                             </span>
-                            <span className="rounded bg-[#002b36] px-1.5 py-0.5 font-mono text-[11px] text-[#93a1a1]">
+                            <span className="rounded bg-surface px-1.5 py-0.5 font-mono text-[11px] text-secondary">
                               {item.status}
                             </span>
                           </div>
                           {item.recommendation ? (
-                            <div className="mt-1.5 text-[#839496]">
+                            <div className="mt-1.5 text-secondary">
                               {item.recommendation}
                             </div>
                           ) : null}
@@ -1992,7 +2014,7 @@ export function MobileAntigravityWorkbench({
                                 e.stopPropagation()
                                 void decideQueueItem(item.id, 'approve')
                               }}
-                              className="mt-2 rounded-lg bg-[#268bd2] px-3 py-1 font-medium text-[#002b36]"
+                              className="mt-2 rounded-lg bg-accent-bg px-3 py-1 font-medium text-on-accent"
                             >
                               Approve & Land
                             </button>
@@ -2008,17 +2030,17 @@ export function MobileAntigravityWorkbench({
                     {runs.map((run) => (
                       <div
                         key={run.id}
-                        className="rounded-xl border border-[#133b45] bg-[#06303b] p-3 text-xs"
+                        className="rounded-xl border border-border bg-surface p-3 text-xs"
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="font-mono font-medium text-[#c9d8db]">
+                          <span className="font-mono font-medium text-primary">
                             {run.service} · {run.id}
                           </span>
-                          <span className="rounded bg-[#0c3540] px-1.5 py-0.5 font-mono text-[11px] text-[#93a1a1]">
+                          <span className="rounded bg-card px-1.5 py-0.5 font-mono text-[11px] text-secondary">
                             {run.state}
                           </span>
                         </div>
-                        <div className="mt-1 text-[11px] text-[#6b8184] tabular-nums">
+                        <div className="mt-1 text-[11px] text-secondary tabular-nums">
                           {run.model || 'default'}
                           {typeof run.metadata.duration_s === 'number'
                             ? ` · ${run.metadata.duration_s}s`
@@ -2028,14 +2050,14 @@ export function MobileAntigravityWorkbench({
                             : ''}
                         </div>
                         {run.response_text ? (
-                          <pre className="mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-[#133b45] bg-[#002b36] p-2 font-mono text-[11px] text-[#93a1a1]">
+                          <pre className="mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-surface p-2 font-mono text-[11px] text-secondary">
                             {run.response_text}
                           </pre>
                         ) : null}
                       </div>
                     ))}
                     {runs.length === 0 ? (
-                      <div className="py-4 text-center text-xs text-[#586e75]">
+                      <div className="py-4 text-center text-xs text-disabled">
                         No agent runs yet.
                       </div>
                     ) : null}
