@@ -4,6 +4,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -361,7 +362,7 @@ def test_plannotator_portfolio_chapters_and_annotations_e2e(page: Page):
         expect(compile_btn).to_be_visible()
         compile_btn.click()
         rev_input = page.locator('[data-testid="gate-revision-input"]')
-        expect(rev_input).to_contain_value("Operator Review Annotations")
+        expect(rev_input).to_have_value(re.compile("Operator Review Annotations"))
         _maybe_screenshot(page, "astryx_guided_gate_studio.png")
 
         with page.expect_response(
