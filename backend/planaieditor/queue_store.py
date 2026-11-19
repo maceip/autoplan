@@ -302,6 +302,29 @@ class QueueStore:
                     guard_summary_json TEXT NOT NULL DEFAULT '{}',
                     updated_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS ui_preferences (
+                    key TEXT PRIMARY KEY,
+                    value_json TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS workflow_annotations (
+                    id TEXT PRIMARY KEY,
+                    workflow_id TEXT NOT NULL,
+                    project_id TEXT DEFAULT '',
+                    round_num INTEGER NOT NULL DEFAULT 1,
+                    kind TEXT NOT NULL DEFAULT 'comment',
+                    target_type TEXT NOT NULL DEFAULT 'diff_file',
+                    target_id TEXT DEFAULT '',
+                    file_path TEXT DEFAULT '',
+                    line_range TEXT DEFAULT '',
+                    selected_text TEXT DEFAULT '',
+                    comment_text TEXT NOT NULL DEFAULT '',
+                    resolved INTEGER NOT NULL DEFAULT 0,
+                    author TEXT DEFAULT 'operator',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_wf_annotations_wf ON workflow_annotations(workflow_id);
                 """
             )
             self._run_migrations()
@@ -1799,3 +1822,278 @@ class QueueStore:
                 (session_key, int(limit)),
             ).fetchall()
         return [self._row_to_chat_message(row) for row in rows]
+
+    # ---- UI Preferences & Astryx Theme Persistence ----------------------
+
+    _UI_THEME_SLUGS = frozenset({"neutral", "stone", "matcha", "butter", "chocolate"})
+    _UI_COLOR_MODES = frozenset({"dark", "light", "system"})
+    _UI_PLANS_VIEWS = frozenset({"cards", "rows"})
+    _UI_PREF_DEFAULTS: Dict[str, Any] = {
+        "theme_slug": "neutral",
+        "color_mode": "dark",
+        "plans_view_mode": "cards",
+        "pinned_plan_ids": [],
+        "collapsed_project_ids": [],
+    }
+
+    def get_ui_preferences(self) -> Dict[str, Any]:
+        prefs = {
+            "theme_slug": "neutral",
+            "color_mode": "dark",
+            "plans_view_mode": "cards",
+            "pinned_plan_ids": [],
+            "collapsed_project_ids": [],
+        }
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT key, value_json FROM ui_preferences"
+            ).fetchall()
+        for row in rows:
+            k = str(row["key"])
+            if k not in self._UI_PREF_DEFAULTS:
+                continue
+            try:
+                val = json.loads(row["value_json"])
+            except Exception:
+                continue
+            prefs[k] = val
+        return prefs
+
+    def update_ui_preferences(self, patch: Dict[str, Any]) -> Dict[str, Any]:
+        current = self.get_ui_preferences()
+        now = _now()
+        validated: Dict[str, Any] = {}
+        if "theme_slug" in patch:
+            slug = str(patch["theme_slug"] or "").strip().lower()
+            if slug not in self._UI_THEME_SLUGS:
+                raise ValueError(
+                    f"Invalid theme_slug '{slug}'; expected one of {sorted(self._UI_THEME_SLUGS)}"
+                )
+            validated["theme_slug"] = slug
+        if "color_mode" in patch:
+            mode = str(patch["color_mode"] or "").strip().lower()
+            if mode not in self._UI_COLOR_MODES:
+                raise ValueError(
+                    f"Invalid color_mode '{mode}'; expected one of {sorted(self._UI_COLOR_MODES)}"
+                )
+            validated["color_mode"] = mode
+        if "plans_view_mode" in patch:
+            view = str(patch["plans_view_mode"] or "").strip().lower()
+            if view not in self._UI_PLANS_VIEWS:
+                raise ValueError(
+                    f"Invalid plans_view_mode '{view}'; expected one of {sorted(self._UI_PLANS_VIEWS)}"
+                )
+            validated["plans_view_mode"] = view
+        if "pinned_plan_ids" in patch:
+            raw_pins = patch["pinned_plan_ids"]
+            if not isinstance(raw_pins, list):
+                raise ValueError("pinned_plan_ids must be a list of strings")
+            validated["pinned_plan_ids"] = list(
+                dict.fromkeys(str(x).strip() for x in raw_pins if str(x).strip())
+            )
+        if "collapsed_project_ids" in patch:
+            raw_col = patch["collapsed_project_ids"]
+            if not isinstance(raw_col, list):
+                raise ValueError("collapsed_project_ids must be a list of strings")
+            validated["collapsed_project_ids"] = list(
+                dict.fromkeys(str(x).strip() for x in raw_col if str(x).strip())
+            )
+
+        if validated:
+            with self._lock:
+                for k, val in validated.items():
+                    self._conn.execute(
+                        """INSERT INTO ui_preferences (key, value_json, updated_at)
+                           VALUES (?, ?, ?)
+                           ON CONFLICT(key) DO UPDATE SET
+                             value_json = excluded.value_json,
+                             updated_at = excluded.updated_at""",
+                        (k, json.dumps(val), now),
+                    )
+                self._conn.commit()
+        return {**current, **validated}
+
+    # ---- Guided Review Chapters & Plan Annotations ----------------------
+
+    _ANNOTATION_KINDS = frozenset({"comment", "deletion", "must_change"})
+    _ANNOTATION_TARGETS = frozenset(
+        {"diff_file", "diff_hunk", "chapter", "plan_node", "summary"}
+    )
+
+    def _row_to_annotation(self, row: sqlite3.Row) -> Dict[str, Any]:
+        raw = dict(row)
+        raw["resolved"] = bool(raw.get("resolved"))
+        return raw
+
+    def list_workflow_annotations(
+        self, workflow_id: str, include_resolved: bool = True
+    ) -> List[Dict[str, Any]]:
+        clause = "workflow_id = ?" if include_resolved else "workflow_id = ? AND resolved = 0"
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM workflow_annotations WHERE {clause} ORDER BY created_at ASC",
+                (workflow_id,),
+            ).fetchall()
+        return [self._row_to_annotation(r) for r in rows]
+
+    def create_workflow_annotation(
+        self, workflow_id: str, data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        wf = self.get_workflow(workflow_id)
+        if not wf:
+            raise ValueError(f"Workflow '{workflow_id}' not found")
+        kind = str(data.get("kind") or "comment").strip().lower()
+        if kind not in self._ANNOTATION_KINDS:
+            raise ValueError(
+                f"Invalid annotation kind '{kind}'; expected one of {sorted(self._ANNOTATION_KINDS)}"
+            )
+        target_type = str(data.get("target_type") or "diff_file").strip().lower()
+        if target_type not in self._ANNOTATION_TARGETS:
+            target_type = "diff_file"
+        comment_text = str(data.get("comment_text") or "").strip()
+        if not comment_text and kind != "deletion":
+            raise ValueError("comment_text is required for comment and must_change annotations")
+        ann_id = f"ann_{uuid.uuid4().hex[:10]}"
+        now = _now()
+        round_num = int(data.get("round_num") or wf.get("round") or 1)
+        project_id = str(data.get("project_id") or wf.get("project_id") or "").strip()
+        target_id = str(data.get("target_id") or "").strip()
+        file_path = str(data.get("file_path") or "").strip()
+        line_range = str(data.get("line_range") or "").strip()
+        selected_text = str(data.get("selected_text") or "").strip()[:1000]
+        author = str(data.get("author") or "operator").strip() or "operator"
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO workflow_annotations (
+                    id, workflow_id, project_id, round_num, kind, target_type,
+                    target_id, file_path, line_range, selected_text, comment_text,
+                    resolved, author, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
+                (
+                    ann_id,
+                    workflow_id,
+                    project_id,
+                    round_num,
+                    kind,
+                    target_type,
+                    target_id,
+                    file_path,
+                    line_range,
+                    selected_text,
+                    comment_text,
+                    author,
+                    now,
+                    now,
+                ),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM workflow_annotations WHERE id = ?", (ann_id,)
+            ).fetchone()
+        return self._row_to_annotation(row)
+
+    def update_workflow_annotation(
+        self, ann_id: str, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        sets: List[str] = []
+        params: List[Any] = []
+        if "resolved" in fields and fields["resolved"] is not None:
+            sets.append("resolved = ?")
+            params.append(1 if bool(fields["resolved"]) else 0)
+        if "comment_text" in fields and fields["comment_text"] is not None:
+            sets.append("comment_text = ?")
+            params.append(str(fields["comment_text"]).strip())
+        if "kind" in fields and fields["kind"] is not None:
+            kind = str(fields["kind"]).strip().lower()
+            if kind not in self._ANNOTATION_KINDS:
+                raise ValueError(f"Invalid annotation kind '{kind}'")
+            sets.append("kind = ?")
+            params.append(kind)
+        if not sets:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT * FROM workflow_annotations WHERE id = ?", (ann_id,)
+                ).fetchone()
+            return self._row_to_annotation(row) if row else None
+        sets.append("updated_at = ?")
+        params.extend([_now(), ann_id])
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE workflow_annotations SET {', '.join(sets)} WHERE id = ?",
+                params,
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM workflow_annotations WHERE id = ?", (ann_id,)
+            ).fetchone()
+        return self._row_to_annotation(row) if row else None
+
+    def delete_workflow_annotation(self, ann_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM workflow_annotations WHERE id = ?", (ann_id,)
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def resolve_workflow_annotations(self, workflow_id: str) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE workflow_annotations SET resolved = 1, updated_at = ? WHERE workflow_id = ? AND resolved = 0",
+                (_now(), workflow_id),
+            )
+            self._conn.commit()
+        return int(cur.rowcount or 0)
+
+    def compile_workflow_annotations_markdown(
+        self, workflow_id: str, unresolved_only: bool = True
+    ) -> str:
+        anns = self.list_workflow_annotations(
+            workflow_id, include_resolved=not unresolved_only
+        )
+        if not anns:
+            return ""
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for a in anns:
+            key = a.get("file_path") or a.get("target_id") or "General Plan"
+            grouped.setdefault(str(key), []).append(a)
+        lines: List[str] = ["## Operator Review Annotations"]
+        for target, items in grouped.items():
+            lines.append(f"\n### {target}")
+            for item in items:
+                tag = item["kind"].upper().replace("_", " ")
+                loc = f" (lines {item['line_range']})" if item.get("line_range") else ""
+                note = item.get("comment_text") or "Remove highlighted section"
+                snippet = (
+                    f" — `{item['selected_text'][:120]}`"
+                    if item.get("selected_text")
+                    else ""
+                )
+                lines.append(f"- [{tag}]{loc}: {note}{snippet}")
+        return "\n".join(lines).strip()
+
+    def get_workflow_reviewed_chapters(self, workflow_id: str) -> Dict[str, bool]:
+        wf = self.get_workflow(workflow_id)
+        if not wf:
+            return {}
+        raw = (wf.get("result") or {}).get("reviewed_chapters")
+        if not isinstance(raw, dict):
+            return {}
+        return {str(k): bool(v) for k, v in raw.items()}
+
+    def set_workflow_chapter_reviewed(
+        self, workflow_id: str, chapter_id: str, reviewed: bool
+    ) -> Dict[str, bool]:
+        clean_id = str(chapter_id or "").strip()
+        if not clean_id:
+            raise ValueError("chapter_id is required")
+        with self._lock:
+            wf = self.get_workflow(workflow_id)
+            if not wf:
+                raise ValueError(f"Workflow '{workflow_id}' not found")
+            result = dict(wf.get("result") or {})
+            chapters = dict(result.get("reviewed_chapters") or {})
+            chapters[clean_id] = bool(reviewed)
+            result["reviewed_chapters"] = chapters
+            self.update_workflow(workflow_id, result=result)
+        return {str(k): bool(v) for k, v in chapters.items()}

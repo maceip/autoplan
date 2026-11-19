@@ -41,6 +41,187 @@ _ALLOWED_FROM = {
     "snooze": {"needs_review", "queued", "triaged"},
 }
 
+_UI_EXTENSIONS = (".tsx", ".ts", ".jsx", ".js", ".svelte", ".css", ".html", ".scss")
+_TEST_MARKERS = ("test_", "_test.", ".test.", ".spec.", "/tests/", "__tests__/")
+
+
+def _parse_git_diff_files(diff_text: str) -> List[Dict[str, Any]]:
+    """Split a unified `git diff` string into per-file diff entries with real line counts."""
+    if not diff_text.strip():
+        return []
+    chunks: List[Dict[str, Any]] = []
+    current_path = ""
+    current_lines: List[str] = []
+
+    def _flush() -> None:
+        nonlocal current_path, current_lines
+        if not current_lines:
+            return
+        adds = 0
+        dels = 0
+        for ln in current_lines:
+            if ln.startswith("+++") or ln.startswith("---"):
+                continue
+            if ln.startswith("+"):
+                adds += 1
+            elif ln.startswith("-"):
+                dels += 1
+        chunks.append(
+            {
+                "path": current_path or "patch",
+                "additions": adds,
+                "deletions": dels,
+                "diff_chunk": "\n".join(current_lines),
+            }
+        )
+        current_path = ""
+        current_lines = []
+
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            _flush()
+            parts = line.split(" ")
+            b_part = parts[-1] if len(parts) >= 4 else ""
+            current_path = b_part[2:] if b_part.startswith("b/") else b_part
+            current_lines = [line]
+        else:
+            if not current_path and line.startswith("+++ b/"):
+                current_path = line[6:].strip()
+            current_lines.append(line)
+    _flush()
+    return chunks
+
+
+def _classify_diff_bucket(path: str) -> str:
+    low = path.lower()
+    if any(tok in low for tok in _TEST_MARKERS) or low.endswith((".json", ".toml", ".yaml", ".yml", ".md", ".lock")):
+        return "verification"
+    if low.endswith(_UI_EXTENSIONS) and ("src/" in low or "components/" in low or "routes/" in low or "apps/" in low):
+        return "ui"
+    return "core"
+
+
+def _build_guided_chapters_and_round_diffs(
+    wf: Dict[str, Any],
+    item: Optional[Dict[str, Any]],
+    changed_files: List[str],
+    diff_text: str,
+    test_report: Dict[str, Any],
+    reality_scan: Dict[str, Any],
+    secret_scan: Dict[str, Any],
+    policy_guardian: Dict[str, Any],
+    critic_review: Dict[str, Any],
+    traj_row: Dict[str, Any],
+    decisions: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Assemble Plannotator-style Guided Review chapters (core first) and round history from real artifacts."""
+    wf_res = dict(wf.get("result") or {})
+    reviewed_map = dict(wf_res.get("reviewed_chapters") or {})
+    handoffs = list(wf_res.get("handoffs") or [])
+    parsed_files = _parse_git_diff_files(diff_text)
+    file_by_path = {f["path"]: f for f in parsed_files}
+    for fpath in changed_files:
+        if fpath not in file_by_path:
+            file_by_path[fpath] = {
+                "path": fpath,
+                "additions": 0,
+                "deletions": 0,
+                "diff_chunk": "",
+            }
+    all_files = list(file_by_path.values())
+
+    lane_directives = [
+        h
+        for h in handoffs
+        if isinstance(h, dict) and "Directive" in str(h.get("task_type") or "")
+    ]
+    chapters: List[Dict[str, Any]] = [
+        {
+            "id": "ch-architecture",
+            "title": "Plan Scope & Module Ownership",
+            "rationale": wf.get("goal") or (item or {}).get("title") or wf.get("title") or "Workflow scope",
+            "files": [],
+            "handoffs": lane_directives[:8],
+            "metadata": {
+                "graph_type": wf.get("graph_type") or "single",
+                "round": int(wf.get("round") or 1),
+                "max_rounds": int(wf.get("max_rounds") or 3),
+                "changed_files_count": len(all_files),
+            },
+            "reviewed": bool(reviewed_map.get("ch-architecture", False)),
+        }
+    ]
+
+    buckets = [
+        ("ch-core", "Core Implementation & Backend Logic", "Primary runtime, state, and domain changes.", "core"),
+        ("ch-ui", "Interface & Design System Surface", "Components, routes, tokens, and interactive views.", "ui"),
+        ("ch-verification", "Tests, Config & Glue", "Automated verification suites, schemas, and configuration.", "verification"),
+    ]
+    for ch_id, title, rationale, bucket_key in buckets:
+        bucket_files = [f for f in all_files if _classify_diff_bucket(f["path"]) == bucket_key]
+        if not bucket_files:
+            continue
+        chapters.append(
+            {
+                "id": ch_id,
+                "title": title,
+                "rationale": rationale,
+                "files": bucket_files,
+                "handoffs": [],
+                "reviewed": bool(reviewed_map.get(ch_id, False)),
+            }
+        )
+
+    chapters.append(
+        {
+            "id": "ch-gates",
+            "title": "Boundary Gates & Critic Audit",
+            "rationale": "Deterministic test runner, Law-2 reality & secret scans, PolicyGuardian, and Critic findings.",
+            "files": [],
+            "handoffs": [
+                h
+                for h in handoffs
+                if isinstance(h, dict)
+                and any(
+                    tok in str(h.get("task_type") or "")
+                    for tok in ("Gate", "Critic", "Verification", "Synthesis")
+                )
+            ][:8],
+            "gates": {
+                "test_report": test_report,
+                "reality_scan": reality_scan,
+                "secret_scan": secret_scan,
+                "policy_guardian": policy_guardian,
+                "critic_review": critic_review,
+                "trajectory_steps": int(traj_row.get("step_count") or 0),
+            },
+            "reviewed": bool(reviewed_map.get("ch-gates", False)),
+        }
+    )
+
+    for idx, ch in enumerate(chapters, start=1):
+        ch["index_label"] = f"{idx:02d} / {len(chapters):02d}"
+
+    max_round = max(1, int(wf.get("round") or 1))
+    round_history: List[Dict[str, Any]] = []
+    for r in range(1, max_round + 1):
+        r_handoffs = [
+            h for h in handoffs if isinstance(h, dict) and int(h.get("round_num") or 1) == r
+        ]
+        round_history.append(
+            {
+                "round_num": r,
+                "handoffs_count": len(r_handoffs),
+                "handoff_types": [
+                    f"{h.get('from_node', '')}->{h.get('to_node', '')} ({h.get('task_type', '')})"
+                    for h in r_handoffs[-6:]
+                ],
+                "decisions": decisions[r - 1 : r] if r - 1 < len(decisions) else [],
+            }
+        )
+
+    return chapters, round_history
+
 _LOCALHOST_ORIGINS = {
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -400,6 +581,21 @@ def setup_queue(
             or wf_res.get("critic_review")
             or {}
         )
+        chapters, round_history = _build_guided_chapters_and_round_diffs(
+            wf=wf,
+            item=item,
+            changed_files=changed_files,
+            diff_text=diff_text,
+            test_report=test_report,
+            reality_scan=reality_scan,
+            secret_scan=secret_scan,
+            policy_guardian=policy_guardian,
+            critic_review=critic_review,
+            traj_row=traj_row,
+            decisions=decisions,
+        )
+        annotations = store.list_workflow_annotations(wf_id)
+        compiled_annotations = store.compile_workflow_annotations_markdown(wf_id)
 
         return jsonify(
             {
@@ -415,6 +611,10 @@ def setup_queue(
                 "policy_guardian": policy_guardian,
                 "critic_review": critic_review,
                 "trajectory": traj_row,
+                "chapters": chapters,
+                "round_history": round_history,
+                "annotations": annotations,
+                "compiled_annotations_markdown": compiled_annotations,
             }
         )
 
@@ -547,6 +747,14 @@ def setup_queue(
             )
 
         if gate_event == "FORCE_REVISION":
+            include_annotations = bool(data.get("include_annotations", False))
+            compiled_md = (
+                store.compile_workflow_annotations_markdown(wf_id)
+                if include_annotations or not note
+                else ""
+            )
+            if compiled_md:
+                note = f"{note}\n\n{compiled_md}".strip() if note else compiled_md
             if not note:
                 return (
                     jsonify(
@@ -607,6 +815,8 @@ def setup_queue(
                         revision_note=note,
                         reset_branch=reset_branch,
                     )
+                if compiled_md:
+                    store.resolve_workflow_annotations(wf_id)
             except (PermissionError, ValueError) as exc:
                 store.update_item(item["id"], status="needs_review")
                 return jsonify({"success": False, "error": str(exc)}), 409
@@ -678,6 +888,234 @@ def setup_queue(
         except (PermissionError, ValueError) as exc:
             return jsonify({"success": False, "error": str(exc)}), 409
         return jsonify({"success": True, "workflow": wf}), 201
+
+    # ---- Cross-Product Plans Portfolio, Guided Chapters, Annotations & UI Prefs ----
+
+    @app.route("/api/ui/preferences", methods=["GET", "PATCH"])
+    def ui_preferences_endpoint():
+        if request.method == "GET":
+            return jsonify({"success": True, "preferences": store.get_ui_preferences()})
+        patch = request.get_json(silent=True) or {}
+        try:
+            prefs = store.update_ui_preferences(patch)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        on_system_event("ui_preferences_updated", {"preferences": prefs})
+        return jsonify({"success": True, "preferences": prefs})
+
+    @app.route("/api/planai/workflows/<wf_id>/annotations", methods=["GET", "POST"])
+    def planai_workflow_annotations(wf_id: str):
+        wf = store.get_workflow(wf_id)
+        if not wf:
+            return jsonify({"success": False, "error": "Workflow not found"}), 404
+        if request.method == "GET":
+            anns = store.list_workflow_annotations(wf_id)
+            return jsonify(
+                {
+                    "success": True,
+                    "annotations": anns,
+                    "compiled_markdown": store.compile_workflow_annotations_markdown(wf_id),
+                }
+            )
+        data = request.get_json(silent=True) or {}
+        try:
+            ann = store.create_workflow_annotation(wf_id, data)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        on_system_event(
+            "workflow_annotation_updated",
+            {"workflow_id": wf_id, "annotation": ann},
+        )
+        return jsonify(
+            {
+                "success": True,
+                "annotation": ann,
+                "compiled_markdown": store.compile_workflow_annotations_markdown(wf_id),
+            }
+        ), 201
+
+    @app.route("/api/planai/workflows/<wf_id>/annotations/<ann_id>", methods=["PATCH", "DELETE"])
+    def planai_workflow_annotation_detail(wf_id: str, ann_id: str):
+        if request.method == "DELETE":
+            deleted = store.delete_workflow_annotation(ann_id)
+            if not deleted:
+                return jsonify({"success": False, "error": "Annotation not found"}), 404
+            on_system_event(
+                "workflow_annotation_updated",
+                {"workflow_id": wf_id, "deleted_id": ann_id},
+            )
+            return jsonify({"success": True, "deleted_id": ann_id})
+        data = request.get_json(silent=True) or {}
+        try:
+            updated = store.update_workflow_annotation(
+                ann_id,
+                resolved=data.get("resolved"),
+                comment_text=data.get("comment_text"),
+                kind=data.get("kind"),
+            )
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        if not updated:
+            return jsonify({"success": False, "error": "Annotation not found"}), 404
+        on_system_event(
+            "workflow_annotation_updated",
+            {"workflow_id": wf_id, "annotation": updated},
+        )
+        return jsonify({"success": True, "annotation": updated})
+
+    @app.route("/api/planai/workflows/<wf_id>/chapters", methods=["POST"])
+    def planai_workflow_chapter_reviewed(wf_id: str):
+        data = request.get_json(silent=True) or {}
+        chapter_id = str(data.get("chapter_id") or "").strip()
+        reviewed = bool(data.get("reviewed", False))
+        try:
+            chapters_map = store.set_workflow_chapter_reviewed(
+                wf_id, chapter_id, reviewed
+            )
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        on_system_event(
+            "planai_workflow_updated",
+            {"workflow": store.get_workflow(wf_id) or {"id": wf_id}},
+        )
+        return jsonify({"success": True, "reviewed_chapters": chapters_map})
+
+    @app.route("/api/planai/portfolio", methods=["GET"])
+    def planai_portfolio():
+        projects = store.list_projects()
+        proj_by_id = {p["id"]: p for p in projects}
+        workflows = store.list_workflows(limit=200)
+        sessions = store.list_chat_sessions(limit=200)
+        sess_by_key = {s["key"]: s for s in sessions}
+        items = store.list_items()
+        item_by_id = {it["id"]: it for it in items}
+        prefs = store.get_ui_preferences()
+        pinned_set = set(prefs.get("pinned_plan_ids") or [])
+        collapsed_set = set(prefs.get("collapsed_project_ids") or [])
+
+        now_list: List[Dict[str, Any]] = []
+        pinned_list: List[Dict[str, Any]] = []
+        plans_by_project: Dict[str, List[Dict[str, Any]]] = {p["id"]: [] for p in projects}
+
+        for wf in workflows:
+            pid = str(wf.get("project_id") or "")
+            proj = proj_by_id.get(pid)
+            sess_key = str(wf.get("session_key") or "")
+            sess = sess_by_key.get(sess_key)
+            q_item = item_by_id.get(str(wf.get("queue_item_id") or ""))
+            wf_res = dict(wf.get("result") or {})
+            wf_state = str(wf.get("state") or "running")
+            is_waiting = wf_state == "waiting_gate" or (
+                q_item is not None and q_item.get("status") == "needs_review"
+            )
+            action_state = (
+                "your_move"
+                if is_waiting
+                else ("working" if wf_state == "running" else wf_state)
+            )
+            handoffs = list(wf_res.get("handoffs") or [])
+            preview_steps: List[str] = []
+            for h in handoffs:
+                if not isinstance(h, dict):
+                    continue
+                payload = h.get("payload") or {}
+                step_txt = (
+                    payload.get("objective")
+                    or payload.get("role")
+                    or payload.get("summary")
+                    or f"{h.get('from_node', '')} -> {h.get('to_node', '')}"
+                )
+                clean_step = str(step_txt).strip()
+                if clean_step and clean_step not in preview_steps:
+                    preview_steps.append(clean_step[:90])
+                if len(preview_steps) >= 4:
+                    break
+            if not preview_steps:
+                for node in wf.get("nodes") or []:
+                    if not isinstance(node, dict):
+                        continue
+                    lbl = str(node.get("label") or "").strip()
+                    st = str(node.get("state") or "idle")
+                    if lbl and lbl not in {"AbortedTerminal"}:
+                        preview_steps.append(f"{lbl} ({st})")
+                    if len(preview_steps) >= 4:
+                        break
+
+            active_node_label = str(wf.get("current_state") or "").strip()
+            for node in reversed(wf.get("nodes") or []):
+                if isinstance(node, dict) and node.get("state") in {"running", "waiting_gate"}:
+                    active_node_label = str(node.get("label") or active_node_label)
+                    break
+
+            merged_sha = str(wf_res.get("merged_commit") or "").strip()
+            if action_state == "your_move":
+                status_line = f"Your move · Round {wf.get('round', 1)}/{wf.get('max_rounds', 3)}"
+            elif action_state == "working":
+                status_line = (
+                    f"Working · {active_node_label}" if active_node_label else "Working"
+                )
+            elif merged_sha:
+                status_line = f"Landed · {merged_sha[:8]}"
+            else:
+                status_line = wf_state.replace("_", " ").capitalize()
+
+            changed_files = wf_res.get("changed_files") or (
+                (q_item.get("result") or {}).get("changed_files") if q_item else []
+            ) or []
+            anns = store.list_workflow_annotations(wf["id"], include_resolved=False)
+
+            card = {
+                "id": wf["id"],
+                "project_id": pid,
+                "project_name": (proj or {}).get("name") or pid or "Workspace",
+                "session_key": sess_key,
+                "session_friendly_id": (sess or {}).get("friendlyId") or "",
+                "graph_type": wf.get("graph_type") or "teamwork",
+                "title": wf.get("title") or wf.get("goal") or "Workflow Plan",
+                "goal": wf.get("goal") or "",
+                "state": wf_state,
+                "action_state": action_state,
+                "status_line": status_line,
+                "round": int(wf.get("round") or 1),
+                "max_rounds": int(wf.get("max_rounds") or 3),
+                "pinned": wf["id"] in pinned_set,
+                "preview_steps": preview_steps,
+                "changed_files_count": len(changed_files),
+                "handoffs_count": len(handoffs),
+                "open_annotations_count": len(anns),
+                "created_at": wf.get("created_at"),
+                "updated_at": wf.get("updated_at"),
+            }
+            if pid in plans_by_project:
+                plans_by_project[pid].append(card)
+            if action_state in {"your_move", "working"}:
+                now_list.append(card)
+            if card["pinned"]:
+                pinned_list.append(card)
+
+        by_project: List[Dict[str, Any]] = []
+        for proj in projects:
+            pid = proj["id"]
+            p_plans = plans_by_project.get(pid, [])
+            by_project.append(
+                {
+                    "project": proj,
+                    "collapsed": pid in collapsed_set,
+                    "plans": p_plans,
+                    "active_count": sum(1 for p in p_plans if p["action_state"] == "working"),
+                    "gate_count": sum(1 for p in p_plans if p["action_state"] == "your_move"),
+                }
+            )
+
+        return jsonify(
+            {
+                "success": True,
+                "now": now_list,
+                "pinned": pinned_list,
+                "by_project": by_project,
+                "preferences": prefs,
+            }
+        )
 
     # ---- Evolution & Continuous Learning API ----------------------------
 

@@ -22,5 +22,18 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@astryxdesign/core": "0.7.16",
+    "@astryxdesign/theme-butter": "0.7.16",
+    "@astryxdesign/theme-chocolate": "0.7.16",
+    "@astryxdesign/theme-matcha": "0.7.16",
+    "@astryxdesign/theme-neutral": "0.7.16",
+    "@astryxdesign/theme-stone": "0.7.16",
+    "@stylexjs/stylex": "^0.19.1",
+    "lucide-react": "^1.76.0"
+  },
+  "devDependencies": {
+    "@astryxdesign/cli": "0.7.16"
   }
 }
