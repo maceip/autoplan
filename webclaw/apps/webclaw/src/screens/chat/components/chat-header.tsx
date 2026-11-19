@@ -53,8 +53,18 @@ function ChatHeaderComponent({
       className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border bg-surface px-3 text-primary"
     >
       <div className="flex min-w-0 items-center gap-2">
-        {isSidebarCollapsed && !showSidebarButton ? (
+        {!showSidebarButton ? (
           <div className="flex items-center gap-1.5">
+            {onToggleSidebarCollapse ? (
+              <IconButton
+                variant="ghost"
+                size="sm"
+                label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                tooltip={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                icon={<PanelLeft className="size-4" />}
+                onClick={onToggleSidebarCollapse}
+              />
+            ) : null}
             <Link
               to="/chat/$sessionKey"
               params={{ sessionKey: 'new' }}
@@ -64,16 +74,6 @@ function ChatHeaderComponent({
               <WebClawIconBig className="size-4.5 rounded-sm" />
               <span>autobot</span>
             </Link>
-            {onToggleSidebarCollapse ? (
-              <IconButton
-                variant="ghost"
-                size="sm"
-                label="Expand sidebar"
-                tooltip="Expand sidebar"
-                icon={<PanelLeft className="size-4" />}
-                onClick={onToggleSidebarCollapse}
-              />
-            ) : null}
           </div>
         ) : null}
 
