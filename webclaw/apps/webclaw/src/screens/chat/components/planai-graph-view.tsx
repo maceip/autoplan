@@ -168,10 +168,10 @@ function humanStateLabel(state: PlanAINode['state']): string {
 }
 
 function stateDotClasses(state: PlanAINode['state']): string {
-  if (state === 'running') return 'bg-[#268bd2]'
-  if (state === 'succeeded') return 'bg-[#7aae66]'
-  if (state === 'failed') return 'bg-red-500'
-  return 'bg-primary-400'
+  if (state === 'running') return 'bg-info'
+  if (state === 'succeeded') return 'bg-success'
+  if (state === 'failed') return 'bg-error'
+  return 'bg-disabled'
 }
 
 export function PlanAIGraphView({
@@ -258,7 +258,7 @@ export function PlanAIGraphView({
       className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-surface text-xs text-primary-900"
     >
       {/* Single thin 40px action bar — max 2 adjacent labels per primary label */}
-      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-primary-200 px-3.5">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3.5">
         <div className="flex min-w-0 items-center gap-2">
           <select
             aria-label="Select run"

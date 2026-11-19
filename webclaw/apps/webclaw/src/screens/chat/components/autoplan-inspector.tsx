@@ -588,7 +588,7 @@ export function AutoplanInspector({
     <aside
       data-testid="autoplan-inspector"
       style={{ width: `${width}px` }}
-      className="relative flex h-full shrink-0 border-l border-primary-200 bg-surface text-xs text-primary-900"
+      className="relative flex h-full shrink-0 bg-surface text-xs text-primary"
     >
       <div
         role="separator"
@@ -601,7 +601,7 @@ export function AutoplanInspector({
           document.body.style.cursor = 'ew-resize'
           document.body.style.userSelect = 'none'
         }}
-        className="w-1 cursor-ew-resize hover:bg-primary-300 shrink-0"
+        className="w-1 cursor-ew-resize bg-border/60 hover:bg-border-strong shrink-0 transition-colors"
       />
 
       <div className="flex min-w-0 flex-1 flex-col h-full overflow-hidden">
@@ -682,25 +682,25 @@ export function AutoplanInspector({
                     key={`${doc.ts}-${idx}`}
                     data-testid={`handoff-doc-${idx}`}
                     className={cn(
-                      'rounded-lg border border-primary-400 bg-primary-50 transition-shadow',
+                      'rounded-xl border transition-colors',
                       idx === handoffDocs.length - 1
-                        ? 'shadow-[0_0_0_1px_rgba(56,189,248,0.7),0_0_22px_rgba(56,189,248,0.55)]'
-                        : 'shadow-[0_0_12px_rgba(56,189,248,0.28)]',
+                        ? 'border-accent/60 bg-accent-muted/35 shadow-sm'
+                        : 'border-border bg-card shadow-xs',
                     )}
                   >
-                    <div className="flex items-baseline justify-between gap-2 border-b border-primary-200 px-3 py-2">
+                    <div className="flex items-baseline justify-between gap-2 border-b border-border px-3 py-2">
                       <div className="min-w-0">
-                        <div className="truncate text-xs font-semibold text-primary-950">
+                        <div className="truncate text-xs font-semibold text-primary">
                           {doc.from_node} → {doc.to_node}
                         </div>
                         <div
                           data-testid={`handoff-doc-type-${idx}`}
-                          className="font-mono text-[11px] text-primary-700"
+                          className="font-mono text-[11px] text-secondary"
                         >
                           {doc.task_type}
                         </div>
                       </div>
-                      <div className="shrink-0 text-right text-[11px] text-primary-600 tabular-nums">
+                      <div className="shrink-0 text-right text-[11px] text-secondary tabular-nums">
                         <div>#{idx + 1} · round {doc.round_num}</div>
                         <div>{new Date(doc.ts * 1000).toLocaleTimeString()}</div>
                       </div>
