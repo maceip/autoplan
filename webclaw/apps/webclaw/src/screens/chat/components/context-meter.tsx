@@ -1,10 +1,8 @@
 import { memo, useMemo } from 'react'
-import {
-  PreviewCard,
-  PreviewCardPopup,
-  PreviewCardTrigger,
-} from '@/components/ui/preview-card'
-import { buttonVariants } from '@/components/ui/button'
+import { Gauge } from 'lucide-react'
+import { Button } from '@astryxdesign/core/Button'
+import { Popover } from '@astryxdesign/core/Popover'
+import { Text } from '@astryxdesign/core/Text'
 import { cn } from '@/lib/utils'
 
 type ContextMeterProps = {
@@ -18,71 +16,73 @@ function ContextMeterComponent({ usedTokens, maxTokens }: ContextMeterProps) {
       typeof usedTokens !== 'number' ||
       typeof maxTokens !== 'number' ||
       maxTokens <= 0
-    )
+    ) {
       return {
-        percentage: 0,
-        usedLabel: '',
-        leftPercentage: 0,
+        percentage: null as number | null,
+        usedLabel: null as string | null,
+        leftPercentage: null as number | null,
       }
-    const pct = Math.min((usedTokens / maxTokens) * 100, 100)
-    const fmt = (n: number) =>
-      n >= 1000 ? `${(n / 1000).toFixed(0)}K` : String(n)
+    }
+    const rawPct = (usedTokens / maxTokens) * 100
+    const clampedPct = Math.max(0, Math.min(100, Math.round(rawPct)))
+    const leftPct = Math.max(0, Math.min(100, 100 - clampedPct))
+    const formattedUsed = usedTokens.toLocaleString()
+    const formattedMax = maxTokens.toLocaleString()
     return {
-      percentage: pct,
-      usedLabel: `${fmt(usedTokens)} / ${fmt(maxTokens)} tokens used`,
-      leftPercentage: Math.max(0, 100 - pct),
+      percentage: clampedPct,
+      usedLabel: `${formattedUsed} / ${formattedMax} context used`,
+      leftPercentage: leftPct,
     }
   }, [usedTokens, maxTokens])
 
-  if (usedLabel.length === 0) return null
+  if (percentage === null || usedLabel === null || leftPercentage === null) {
+    return null
+  }
+
+  const barTone =
+    percentage >= 85
+      ? 'bg-error'
+      : percentage >= 65
+        ? 'bg-warning'
+        : 'bg-accent-bg'
 
   return (
-    <PreviewCard>
-      <PreviewCardTrigger
-        className={cn(
-          buttonVariants({ size: 'icon-sm', variant: 'ghost' }),
-          'text-primary-800 hover:bg-primary-100',
-        )}
-      >
-        <div className="size-4 text-primary-200">
-          <svg
-            viewBox="0 0 36 36"
-            className="size-4 -rotate-90"
-            aria-hidden="true"
-          >
-            <circle
-              cx="18"
-              cy="18"
-              r="15.5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="4"
-              className="text-primary-300"
-            />
-            <circle
-              cx="18"
-              cy="18"
-              r="15.5"
-              fill="none"
-              stroke="currentColor"
-              className="text-primary-600"
-              strokeWidth="4"
-              strokeLinecap="round"
-              strokeDasharray={`${(percentage / 100) * 97.4} 97.4`}
-            />
-          </svg>
-        </div>
-      </PreviewCardTrigger>
-      <PreviewCardPopup align="end" sideOffset={0} className="w-52 px-2 py-1">
-        <div className="space-y-0.5 text-xs text-primary-900">
-          <div className="text-primary-950 font-[450]">Context window:</div>
-          <div className="tabular-nums text-primary-700">
-            {percentage.toFixed(0)}% used ({leftPercentage.toFixed(0)}% left)
+    <Popover
+      placement="below"
+      alignment="end"
+      width={240}
+      padding={3}
+      label="Context usage"
+      content={
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <Text type="supporting" weight="semibold">
+              Context Window
+            </Text>
+            <span className="font-mono text-xs text-secondary tabular-nums">
+              {percentage}%
+            </span>
           </div>
-          <div className="tabular-nums text-primary-700">{usedLabel}</div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className={cn('h-full rounded-full transition-all', barTone)}
+              style={{ width: `${percentage}%` }}
+            />
+          </div>
+          <Text type="supporting" color="secondary" display="block">
+            {usedLabel} · {leftPercentage}% left
+          </Text>
         </div>
-      </PreviewCardPopup>
-    </PreviewCard>
+      }
+    >
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={<Gauge className="size-3.5" />}
+        label={`${percentage}%`}
+        aria-label={`Context usage: ${percentage}%`}
+      />
+    </Popover>
   )
 }
 

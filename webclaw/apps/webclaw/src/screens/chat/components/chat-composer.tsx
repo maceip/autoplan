@@ -1,6 +1,5 @@
 import { memo, useCallback, useRef, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { ArrowUp02Icon } from '@hugeicons/core-free-icons'
+import { ArrowUp } from 'lucide-react'
 import type { Ref } from 'react'
 
 import type { AgentServiceInfo } from './autoplan-inspector'
@@ -159,11 +158,11 @@ function ChatComposerComponent({
               />
 
               {services.length > 0 && onSelectService ? (
-                <div className="relative flex h-7 items-center rounded-md px-1.5 hover:bg-primary-100 transition-colors">
+                <div className="relative flex h-7 items-center rounded-md px-1.5 hover:bg-muted transition-colors">
                   <span
                     className={cn(
                       'size-1.5 shrink-0 rounded-full',
-                      canDispatchSelected ? 'bg-[#7aae66]' : 'bg-primary-500',
+                      canDispatchSelected ? 'bg-success' : 'bg-disabled',
                     )}
                     aria-hidden="true"
                   />
@@ -172,13 +171,13 @@ function ChatComposerComponent({
                     data-testid="agent-service-selector"
                     value={selectedService}
                     onChange={(e) => onSelectService(e.target.value)}
-                    className="h-full max-w-[168px] cursor-pointer truncate appearance-none bg-transparent pl-1.5 pr-4 text-xs font-medium text-primary-800 hover:text-primary-950 outline-none"
+                    className="h-full max-w-[168px] cursor-pointer truncate appearance-none bg-transparent pl-1.5 pr-4 text-xs font-medium text-primary hover:text-accent outline-none"
                   >
                     {services.map((svc) => (
                       <option
                         key={svc.service}
                         value={svc.service}
-                        className="bg-surface text-primary-900"
+                        className="bg-card text-primary"
                       >
                         {svc.display_name}
                         {svc.mode === 'observe_only' ? ' (read-only)' : ''}
@@ -187,7 +186,7 @@ function ChatComposerComponent({
                   </select>
                   <svg
                     viewBox="0 0 16 16"
-                    className="pointer-events-none absolute right-1 size-3 text-primary-500"
+                    className="pointer-events-none absolute right-1 size-3 text-secondary"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth={1.75}
@@ -203,7 +202,7 @@ function ChatComposerComponent({
                   data-testid="composer-mode-toggle"
                   role="group"
                   aria-label="Execution mode"
-                  className="flex h-6 items-center rounded-md bg-primary-100 p-0.5 text-[11px]"
+                  className="flex h-6 items-center rounded-md border border-border bg-muted p-0.5 text-[11px]"
                 >
                   <button
                     type="button"
@@ -213,8 +212,8 @@ function ChatComposerComponent({
                     className={cn(
                       'rounded px-2 py-0.5 font-medium transition-colors',
                       sessionMode === 'single'
-                        ? 'bg-surface text-primary-950 shadow-2xs'
-                        : 'text-primary-600 hover:text-primary-900',
+                        ? 'bg-card text-primary shadow-sm'
+                        : 'text-secondary hover:text-primary',
                     )}
                   >
                     Single
@@ -227,8 +226,8 @@ function ChatComposerComponent({
                     className={cn(
                       'rounded px-2 py-0.5 font-medium transition-colors',
                       sessionMode === 'team'
-                        ? 'bg-surface text-primary-950 shadow-2xs'
-                        : 'text-primary-600 hover:text-primary-900',
+                        ? 'bg-card text-primary shadow-sm'
+                        : 'text-secondary hover:text-primary',
                     )}
                   >
                     Team
@@ -253,11 +252,7 @@ function ChatComposerComponent({
                     className={cn('rounded-full', triggerProps.className)}
                     aria-label="Send message"
                   >
-                    <HugeiconsIcon
-                      icon={ArrowUp02Icon}
-                      size={18}
-                      strokeWidth={1.6}
-                    />
+                    <ArrowUp className="size-4" />
                   </Button>
                 )}
               />

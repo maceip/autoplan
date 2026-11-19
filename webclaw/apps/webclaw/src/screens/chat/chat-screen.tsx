@@ -103,6 +103,18 @@ export function ChatScreen({
   const [isRedirecting, setIsRedirecting] = useState(false)
   const [newChatService, setNewChatService] = useState<string>('')
   const [newChatProjectId, setNewChatProjectId] = useState<string>('')
+
+  useEffect(() => {
+    try {
+      const saved = window.sessionStorage.getItem('autoplan-selected-project')
+      if (saved) {
+        window.sessionStorage.removeItem('autoplan-selected-project')
+        setNewChatProjectId(saved)
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeFriendlyId])
   const [newChatMode, setNewChatMode] = useState<'single' | 'team'>('single')
   const [busyDemoService, setBusyDemoService] = useState<string | null>(null)
   const [dispatchError, setDispatchError] = useState<string>('')

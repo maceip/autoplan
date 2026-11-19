@@ -1,23 +1,9 @@
-'use client'
-
-import { useCallback, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Download01Icon } from '@hugeicons/core-free-icons'
-
-import {
-  MenuContent,
-  MenuItem,
-  MenuRoot,
-  MenuTrigger,
-} from '@/components/ui/menu'
-import {
-  TooltipContent,
-  TooltipProvider,
-  TooltipRoot,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { buttonVariants } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { useState } from 'react'
+import { Download } from 'lucide-react'
+import { IconButton } from '@astryxdesign/core/IconButton'
+import { Item } from '@astryxdesign/core/Item'
+import { List } from '@astryxdesign/core/List'
+import { Popover } from '@astryxdesign/core/Popover'
 
 type ExportFormat = 'markdown' | 'json' | 'text'
 
@@ -34,57 +20,44 @@ const formats: Array<{ format: ExportFormat; label: string; ext: string }> = [
 
 export function ExportMenu({ onExport, disabled }: ExportMenuProps) {
   const [open, setOpen] = useState(false)
-  const handleOpenChange = useCallback(
-    function handleOpenChange(nextOpen: boolean) {
-      if (disabled) return
-      setOpen(nextOpen)
-    },
-    [disabled],
-  )
 
   return (
-    <MenuRoot open={disabled ? false : open} onOpenChange={handleOpenChange}>
-      <TooltipProvider>
-        <TooltipRoot>
-          <TooltipTrigger
-            render={
-              <MenuTrigger
-                type="button"
-                className={cn(
-                  buttonVariants({ size: 'icon-sm', variant: 'ghost' }),
-                )}
-                aria-label="Download conversation"
-                aria-disabled={disabled ? true : undefined}
-              >
-                <HugeiconsIcon
-                  icon={Download01Icon}
-                  size={20}
-                  strokeWidth={1.5}
-                />
-              </MenuTrigger>
-            }
-          />
-          <TooltipContent side="top">Download</TooltipContent>
-        </TooltipRoot>
-      </TooltipProvider>
-      <MenuContent side="bottom" align="end">
-        {formats.map(function renderFormat({ format, label, ext }) {
-          return (
-            <MenuItem
+    <Popover
+      isOpen={open}
+      onOpenChange={setOpen}
+      isEnabled={!disabled}
+      placement="below"
+      alignment="end"
+      width={190}
+      padding={1}
+      label="Export conversation"
+      content={
+        <List density="compact" hasDividers={false}>
+          {formats.map(({ format, label, ext }) => (
+            <Item
               key={format}
-              onClick={function onClick() {
+              as="li"
+              label={label}
+              endContent={
+                <span className="font-mono text-xs text-secondary">{ext}</span>
+              }
+              onClick={() => {
+                setOpen(false)
                 onExport(format)
               }}
-              className="justify-between"
-            >
-              <span>{label}</span>
-              <span className="text-xs text-primary-600 tabular-nums">
-                {ext}
-              </span>
-            </MenuItem>
-          )
-        })}
-      </MenuContent>
-    </MenuRoot>
+            />
+          ))}
+        </List>
+      }
+    >
+      <IconButton
+        variant="ghost"
+        size="sm"
+        label="Export conversation"
+        tooltip={disabled ? 'Nothing to export' : 'Export conversation'}
+        isDisabled={disabled}
+        icon={<Download className="size-3.5" />}
+      />
+    </Popover>
   )
 }

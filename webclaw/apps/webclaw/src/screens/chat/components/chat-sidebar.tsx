@@ -4,6 +4,7 @@ import {
   Settings01Icon,
   SidebarLeft01Icon,
 } from '@hugeicons/core-free-icons'
+import { Layers } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
@@ -260,7 +261,7 @@ function ChatSidebarComponent({
       initial={false}
       animate={{ width: isCollapsed ? 48 : 272 }}
       transition={transition}
-      className="border-r border-primary-200 h-full overflow-hidden bg-primary-100 flex flex-col"
+      className="border-r border-border h-full overflow-hidden bg-surface flex flex-col"
     >
       {!hideBrandHeader ? (
         <motion.div
@@ -314,6 +315,14 @@ function ChatSidebarComponent({
 
       {isCollapsed ? (
         <div className="flex flex-col items-center gap-1.5 pt-2.5">
+          <Link
+            to="/plans"
+            data-testid="sidebar-plans-link"
+            aria-label="Plans Portfolio"
+            className="flex size-8 items-center justify-center rounded-md text-secondary transition-colors hover:bg-muted hover:text-primary"
+          >
+            <Layers className="size-4" />
+          </Link>
           <Button
             size="icon-sm"
             variant="ghost"
@@ -336,6 +345,19 @@ function ChatSidebarComponent({
         </div>
       ) : (
         <>
+          <div className="px-2.5 pt-2">
+            <Link
+              to="/plans"
+              data-testid="sidebar-plans-link"
+              className="flex items-center justify-between rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-primary shadow-xs transition-colors hover:bg-muted"
+            >
+              <span className="flex items-center gap-2">
+                <Layers className="size-3.5 text-accent" />
+                <span>Plans Portfolio</span>
+              </span>
+              <span className="text-[10px] text-secondary">All</span>
+            </Link>
+          </div>
           <div className="flex items-center justify-between px-3 pt-3 pb-1.5">
             <span className="text-xs font-medium text-primary-600">
               Projects
@@ -561,7 +583,7 @@ function ChatSidebarComponent({
         onSelect={handleSearchSelect}
       />
 
-      <div className="flex items-center justify-between gap-1.5 border-t border-primary-200 bg-primary-100 px-2.5 py-2">
+      <div className="flex items-center justify-between gap-1.5 border-t border-border bg-surface px-2.5 py-2">
         <Button
           variant="ghost"
           size="sm"

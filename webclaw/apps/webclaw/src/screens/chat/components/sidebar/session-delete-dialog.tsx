@@ -1,13 +1,4 @@
-'use client'
-
-import {
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogRoot,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { AlertDialog } from '@astryxdesign/core/AlertDialog'
 
 type SessionDeleteDialogProps = {
   open: boolean
@@ -25,20 +16,18 @@ export function SessionDeleteDialog({
   onCancel,
 }: SessionDeleteDialogProps) {
   return (
-    <AlertDialogRoot open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
-        <div className="p-4">
-          <AlertDialogTitle className="mb-1">Delete Session</AlertDialogTitle>
-          <AlertDialogDescription className="mb-4">
-            Are you sure you want to delete "{sessionTitle}"? This action cannot
-            be undone.
-          </AlertDialogDescription>
-          <div className="flex justify-end gap-2">
-            <AlertDialogCancel onClick={onCancel}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onConfirm}>Delete</AlertDialogAction>
-          </div>
-        </div>
-      </AlertDialogContent>
-    </AlertDialogRoot>
+    <AlertDialog
+      isOpen={open}
+      onOpenChange={(nextOpen) => {
+        onOpenChange(nextOpen)
+        if (!nextOpen) onCancel()
+      }}
+      title="Delete session"
+      description={`Remove "${sessionTitle}" from your session list?`}
+      cancelLabel="Cancel"
+      actionLabel="Delete"
+      actionVariant="destructive"
+      onAction={onConfirm}
+    />
   )
 }

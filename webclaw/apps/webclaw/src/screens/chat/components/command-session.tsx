@@ -1,42 +1,18 @@
-'use client'
-
-import { Fragment, useMemo, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { ArrowDown01Icon, ArrowUp01Icon } from '@hugeicons/core-free-icons'
-import {
-  Command,
-  CommandCollection,
-  CommandDialog,
-  CommandDialogPopup,
-  CommandFooter,
-  CommandGroup,
-  CommandGroupLabel,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandPanel,
-  CommandSeparator,
-} from '@/components/ui/command'
-import { useAutocompleteFilter } from '@/components/ui/autocomplete'
+import { useEffect, useMemo, useState } from 'react'
+import { MessageSquare, Search } from 'lucide-react'
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
+import { EmptyState } from '@astryxdesign/core/EmptyState'
+import { Item } from '@astryxdesign/core/Item'
+import { List } from '@astryxdesign/core/List'
+import { Text } from '@astryxdesign/core/Text'
+import { TextInput } from '@astryxdesign/core/TextInput'
 
 type CommandSession = {
   key: string
   friendlyId: string
-  label?: string
   title?: string
   derivedTitle?: string
-}
-
-type CommandSessionItem = {
-  value: string
-  label: string
-  friendlyId: string
-  session: CommandSession
-}
-
-type CommandSessionGroup = {
-  value: string
-  items: Array<CommandSessionItem>
+  label?: string
 }
 
 type CommandSessionProps = {
@@ -58,109 +34,112 @@ function CommandSessionDialog({
   onOpenChange,
   onSelect,
 }: CommandSessionProps) {
-  const [value, setValue] = useState('')
-  const filter = useAutocompleteFilter({ sensitivity: 'base' })
+  const [query, setQuery] = useState('')
+  const [activeIndex, setActiveIndex] = useState(0)
 
-  const groupedItems = useMemo<Array<CommandSessionGroup>>(() => {
-    return [
-      {
-        value: 'Sessions',
-        items: sessions.map((session) => ({
-          value: session.key,
-          label: getSessionLabel(session),
-          friendlyId: session.friendlyId,
-          session,
-        })),
-      },
-    ]
-  }, [sessions])
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return sessions
+    return sessions.filter((s) => {
+      const lbl = getSessionLabel(s).toLowerCase()
+      return (
+        lbl.includes(q) ||
+        s.friendlyId.toLowerCase().includes(q) ||
+        s.key.toLowerCase().includes(q)
+      )
+    })
+  }, [query, sessions])
 
-  const filteredGroups = useMemo(() => {
-    const query = value.trim()
-    if (!query) return groupedItems
-
-    return groupedItems
-      .map((group) => ({
-        ...group,
-        items: group.items.filter((item) =>
-          filter.contains(item, query, (target) => target.label),
-        ),
-      }))
-      .filter((group) => group.items.length > 0)
-  }, [filter, groupedItems, value])
-
-  const isEmpty = filteredGroups.length === 0
+  useEffect(() => {
+    setActiveIndex(0)
+  }, [query, open])
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange}>
-      <CommandDialogPopup className="mx-auto self-center">
-        <Command
-          items={groupedItems}
-          value={value}
-          onValueChange={setValue}
-          mode="none"
-        >
-          <CommandInput placeholder="Search sessions" />
-          <CommandPanel className="flex min-h-0 flex-1 flex-col">
-            {isEmpty ? (
-              <div className="h-72 min-h-0 flex items-center justify-center text-sm text-primary-600">
-                No sessions found.
-              </div>
-            ) : (
-              <CommandList className="h-72 min-h-0">
-                {filteredGroups.map((group, index) => (
-                  <Fragment key={`${group.value}-${index}`}>
-                    <CommandGroup items={group.items}>
-                      <CommandGroupLabel>{group.value}</CommandGroupLabel>
-                      <CommandCollection>
-                        {(item) => (
-                          <CommandItem
-                            key={item.value}
-                            value={item.label}
-                            onClick={() => onSelect(item.session)}
-                            className="gap-2"
-                          >
-                            <span className="text-sm font-[450] line-clamp-1">
-                              {item.label}
-                            </span>
-                          </CommandItem>
-                        )}
-                      </CommandCollection>
-                    </CommandGroup>
-                    {index < filteredGroups.length - 1 ? (
-                      <CommandSeparator />
-                    ) : null}
-                  </Fragment>
-                ))}
-              </CommandList>
-            )}
-          </CommandPanel>
-          <CommandFooter>
-            <div className="flex items-center gap-4 text-primary-700">
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1 rounded-md border border-primary-200 bg-surface px-2 py-1 text-[11px] font-medium text-primary-700">
-                  <HugeiconsIcon icon={ArrowUp01Icon} size={14} strokeWidth={1.5} />
-                  <HugeiconsIcon icon={ArrowDown01Icon} size={14} strokeWidth={1.5} />
-                </span>
-                <span>Navigate</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="rounded-md border border-primary-200 bg-surface px-2 py-1 text-[11px] font-medium text-primary-700">
-                  Enter
-                </span>
-                <span>Open</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 text-primary-700">
-              <span className="rounded-md border border-primary-200 bg-surface px-2 py-1 text-[11px] font-medium text-primary-700">
-                Esc
-              </span>
-              <span>Close</span>
-            </div>
-          </CommandFooter>
-        </Command>
-      </CommandDialogPopup>
-    </CommandDialog>
+    <Dialog
+      isOpen={open}
+      onOpenChange={(nextOpen) => {
+        onOpenChange(nextOpen)
+        if (!nextOpen) setQuery('')
+      }}
+      width={500}
+      padding={0}
+      purpose="info"
+    >
+      <div
+        className="flex flex-col"
+        onKeyDown={(e) => {
+          if (filtered.length === 0) return
+          if (e.key === 'ArrowDown') {
+            e.preventDefault()
+            setActiveIndex((idx) => (idx + 1) % filtered.length)
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault()
+            setActiveIndex((idx) => (idx - 1 + filtered.length) % filtered.length)
+          } else if (e.key === 'Enter') {
+            const chosen = filtered[activeIndex]
+            if (chosen) {
+              e.preventDefault()
+              onSelect(chosen)
+            }
+          }
+        }}
+      >
+        <DialogHeader
+          title="Jump to session"
+          onOpenChange={onOpenChange}
+          hasDivider={false}
+        />
+        <div className="px-4 pb-3">
+          <TextInput
+            label="Search sessions"
+            isLabelHidden
+            value={query}
+            onChange={(val) => setQuery(val)}
+            placeholder="Search sessions..."
+            hasAutoFocus
+            hasClear
+            startIcon={<Search className="size-4" />}
+            width="100%"
+          />
+        </div>
+        <div className="max-h-72 overflow-y-auto border-t border-border px-2 py-2">
+          {filtered.length === 0 ? (
+            <EmptyState
+              isCompact
+              title="No sessions found"
+              description="Try another search keyword or create a new session."
+            />
+          ) : (
+            <List density="compact" hasDividers={false}>
+              {filtered.map((session, idx) => (
+                <Item
+                  key={session.key}
+                  as="li"
+                  label={getSessionLabel(session)}
+                  description={session.friendlyId}
+                  isHighlighted={idx === activeIndex}
+                  startContent={
+                    <MessageSquare
+                      className="size-4 text-secondary"
+                      aria-hidden="true"
+                    />
+                  }
+                  onClick={() => onSelect(session)}
+                />
+              ))}
+            </List>
+          )}
+        </div>
+        <div className="flex items-center justify-between border-t border-border bg-surface px-4 py-2">
+          <Text type="supporting" color="secondary">
+            Up / Down to select · Enter to open
+          </Text>
+          <Text type="supporting" color="secondary">
+            Esc to close
+          </Text>
+        </div>
+      </div>
+    </Dialog>
   )
 }
 
