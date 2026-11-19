@@ -967,6 +967,16 @@ export function InlinePlanAIDag({
     if (!activeWorkflow) return
     setChapterBusyId(chapterId)
     setGateError('')
+    setDetail((prev) =>
+      prev
+        ? {
+            ...prev,
+            chapters: (prev.chapters || []).map((ch) =>
+              ch.id === chapterId ? { ...ch, reviewed } : ch,
+            ),
+          }
+        : prev,
+    )
     try {
       const res = await fetch(
         `/api/autoplan/planai/workflows/${activeWorkflow.id}/chapters`,
@@ -977,6 +987,16 @@ export function InlinePlanAIDag({
         },
       )
       if (!res.ok) {
+        setDetail((prev) =>
+          prev
+            ? {
+                ...prev,
+                chapters: (prev.chapters || []).map((ch) =>
+                  ch.id === chapterId ? { ...ch, reviewed: !reviewed } : ch,
+                ),
+              }
+            : prev,
+        )
         const errData = (await res.json().catch(() => ({}))) as {
           error?: string
         }
@@ -985,6 +1005,16 @@ export function InlinePlanAIDag({
       }
       await fetchWorkflowDetail(activeWorkflow.id)
     } catch (err) {
+      setDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              chapters: (prev.chapters || []).map((ch) =>
+                ch.id === chapterId ? { ...ch, reviewed: !reviewed } : ch,
+              ),
+            }
+          : prev,
+      )
       setGateError(err instanceof Error ? err.message : 'Network error')
     } finally {
       setChapterBusyId('')
