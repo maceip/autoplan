@@ -18,3 +18,7 @@ backend/planaieditor/static_frontend/
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# Keynote backups and the deck toolkit's build output
+*.key.bak-*
+preso/_deck/out/

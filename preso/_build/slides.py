@@ -75,7 +75,7 @@ def slide2():
 
     # ---- left: discard
     x = M
-    s.pic(texb("magenta", 34, 34, 18, 0.26), x, 394, 34, 34)
+    s.pic(texb("magenta", 34, 34, 20, 0.16), x, 394, 34, 34)
     label(s, x + 44, 398, 500, "DISCARD", MAGENTA, 20, 0.22)
     s.text(x, 436, 720, "Human coordination friction", F_DISPLAY, 40, WHITE, track=-0.01)
 
@@ -99,7 +99,7 @@ def slide2():
 
     # ---- right: keep
     x = 960
-    s.pic(texb("green", 34, 34, 18, 0.26), x, 394, 34, 34)
+    s.pic(texb("green", 34, 34, 20, 0.16), x, 394, 34, 34)
     label(s, x + 44, 398, 500, "KEEP", GREEN, 20, 0.22)
     s.text(x, 436, 800, "Four computational primitives", F_DISPLAY, 40, WHITE, track=-0.01)
 
@@ -166,10 +166,10 @@ def slide3():
     arrow_h(s, M + 310, 548, gy + gh // 2, WHITE, 0.5)
 
     # gate
-    s.pic(texb("yellow", 372, gh + 28, 48, 0.24), 560, gy - 14, 372, gh + 28)
+    s.pic(texb("yellow", 372, gh + 28, 56, 0.13), 560, gy - 14, 372, gh + 28)
     s.text(584, gy + 2, 320, "DETERMINISTIC GATE", F_MONO, 19, BLACK, track=0.16, caps=True)
     s.text(584, gy + 36, 330, "tests · AST + secret scan\n· PolicyGuardian A–M",
-           F_SANS, 21, "#201E00", line=1.32)
+           F_SANS, 21, BLACK, line=1.32)
 
     arrow_h(s, 942, 1108, gy + gh // 2, WHITE, 0.5)
 
@@ -228,7 +228,7 @@ def slide4():
 
     eyebrow(s, M, 148, "STRUCTURED HANDOFFS")
     headline(s, 186, "Distributed leadership,\nzero shared transcripts", 70, WHITE, w=1240, line=1.02)
-    s.text(M, 330, 1200,
+    s.text(M, 348, 1200,
            "Artifacts go forward. Escalations come back. No worker ever reads "
            "another worker's reasoning.",
            F_SANS, 24, "#A6A6A6", line=1.34)
@@ -245,11 +245,12 @@ def slide4():
     gap = 26
     x = M
     xs = []
-    for title, sub, w in nodes:
-        accent = YELLOW if "CHIEF" in title else None
-        card(s, x, cy, w, ch, accent=accent)
-        label(s, x + 20, cy + 22, w - 40, title, WHITE, 17, 0.14)
-        s.text(x + 20, cy + 52, w - 40, sub, F_MONO, 14, "#8E8E8E", line=1.28)
+    hues = ["yellow", "blue", "green", "orange", "magenta"]
+    for i, (title, sub, w) in enumerate(nodes):
+        card(s, x, cy, w, ch)
+        s.pic(texb(hues[i], w, 7, 16, 0.10), x, cy, w, 7)
+        label(s, x + 20, cy + 26, w - 40, title, WHITE, 17, 0.14)
+        s.text(x + 20, cy + 56, w - 40, sub, F_MONO, 14, "#8E8E8E", line=1.28)
         xs.append((x, w))
         x += w + gap
 
@@ -334,12 +335,12 @@ def slide5():
     label(s, 410, top + 20, 214, "FAN-OUT", WHITE, 16, 0.14)
     s.text(410, top + 46, 214, "SubAgentHub · max 128", F_MONO, 16, "#C9C9C9")
 
-    lanes = [("subagent_1", "Claude · backend", "blue", WHITE, "#D8ECFB"),
-             ("subagent_2", "Codex · frontend", "orange", "#1A0C02", "#3A1E06"),
-             ("subagent_N", "Gemini · tests", "green", "#06180B", "#14401C")]
+    lanes = [("subagent_1", "Claude · backend", "blue", BLACK, "#0A2436"),
+             ("subagent_2", "Codex · frontend", "orange", BLACK, "#3A1E06"),
+             ("subagent_N", "Gemini · tests", "green", BLACK, "#0E3316")]
     for i, (n, r, col, fg, sub) in enumerate(lanes):
         yy = 372 + i * 76
-        s.pic(texb(col, 310, 64, 36, 0.24), 700, yy, 310, 64)
+        s.pic(texb(col, 310, 64, 42, 0.13), 700, yy, 310, 64)
         s.text(718, yy + 9, 274, n, F_MONO, 18, fg)
         s.text(718, yy + 34, 274, r, F_SANS, 17, sub)
         s.arrow(646, mid, 696, yy + 32, WHITE, 0.34, 1.4, 7)
@@ -535,12 +536,12 @@ def slide7():
         s.rule(M, y - 16, W - 2 * M, WHITE, 0.12 if i < 4 else 0.30, 1.0)
 
     # close: full-bleed colour field, black type — the theme's own move
-    s.pic(texb("yellow", 1920, 190, 58, 0.24), 0, 756, 1920, 190)
+    s.pic(texb("yellow", 1920, 190, 70, 0.13), 0, 756, 1920, 190)
     s.text(M, 782, 1660,
            "Stop building multi-agent systems as group chats. Keep the typed handoffs "
            "and the fork/join. Put a gate where the human used to stand.",
            F_DISPLAY, 27, BLACK, line=1.24, track=-0.004)
-    s.text(M, 868, 1500,
+    s.text(M, 886, 1500,
            "DEMO  ·  POST /API/PLANAI/TEAMWORK  ·  fork, gate, x2 badge, merge",
            F_MONO, 16, "#2A2800", track=0.14, caps=True)
 
